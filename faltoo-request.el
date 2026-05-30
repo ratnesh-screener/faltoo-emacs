@@ -5,6 +5,7 @@
 (require 'faltoo-bridge)
 (require 'faltoo-chat)
 (require 'faltoo-ui)
+(require 'faltoo-faces)
 
 (defun faltoo-request--event-text (event)
   (or (alist-get 'text event) ""))
@@ -18,7 +19,8 @@
     (cond
      ((string= class "answer")
       (setq faltoo-last-assistant-message (concat faltoo-last-assistant-message text))
-      (when popup-buffer (faltoo-popup-append popup-buffer text))
+      (when popup-buffer
+        (faltoo-popup-append popup-buffer (propertize text 'face 'faltoo-popup-assistant-face)))
       (faltoo-chat-append-stream text))
      ((member class '("status" "tool"))
       (when (and on-submitted (string-prefix-p "Submitted" text))
