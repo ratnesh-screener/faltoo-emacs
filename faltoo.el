@@ -10,6 +10,7 @@
 (require 'faltoo-ask)
 (require 'faltoo-comments)
 (require 'faltoo-review)
+(require 'faltoo-quit)
 
 (defvar faltoo-command-map
   (let ((map (make-sparse-keymap)))

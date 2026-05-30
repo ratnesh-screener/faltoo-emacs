@@ -152,3 +152,10 @@
      (faltoo-review-stop)
      (should-not faltoo-review-mode)
      (should-not buffer-read-only))))
+
+(ert-deftest faltoo-quit-guard-detects-pending-review-comments ()
+  "Quit guard sees pending review comments as work that should not be lost."
+  (let ((faltoo-submitting nil)
+        (faltoo-comments (list (make-faltoo-comment :file "x" :path "x" :start 1 :end 1 :text "note"))))
+    (should (faltoo-has-pending-work-p))
+    (should (equal (faltoo-pending-work-labels) '("1 pending review comment(s)")))))
