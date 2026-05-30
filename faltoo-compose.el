@@ -7,8 +7,8 @@
 (require 'faltoo-faces)
 
 (defun faltoo-compose-insert-title (title)
-  "Insert Org popup TITLE."
-  (insert "* " title "\n"))
+  "Insert Markdown popup TITLE."
+  (insert "# " title "\n"))
 
 (defun faltoo-compose-insert-meta (label value)
   "Insert metadata LABEL with VALUE."
@@ -17,23 +17,23 @@
           "\n"))
 
 (defun faltoo-compose-insert-section (title)
-  "Insert Org section TITLE."
-  (insert "\n** " title "\n\n"))
+  "Insert Markdown section TITLE."
+  (insert "\n## " title "\n\n"))
 
 (defun faltoo-compose-insert-code (code)
-  "Insert CODE as an Org source block."
-  (insert "#+begin_src text\n")
+  "Insert CODE as a Markdown code block."
+  (insert "```text\n")
   (let ((start (point)))
     (insert code)
     (add-text-properties start (point) '(face faltoo-popup-code-face)))
-  (insert "\n#+end_src\n"))
+  (insert "\n```\n"))
 
 (defun faltoo-compose-insert-help (text)
   "Insert dim help TEXT."
   (insert "\n" (propertize text 'face 'faltoo-popup-meta-face) "\n"))
 
 (defun faltoo-compose-set-message (buffer title text &optional read-only)
-  "Replace BUFFER with Org TITLE and TEXT."
+  "Replace BUFFER with Markdown TITLE and TEXT."
   (with-current-buffer buffer
     (let ((inhibit-read-only t))
       (setq buffer-read-only nil)

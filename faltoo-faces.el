@@ -9,7 +9,7 @@
   "Face for Faltoo popup code context.")
 
 (defface faltoo-popup-assistant-face
-  '((t :inherit default))
+  '((t :inherit faltoo-chat-assistant-face))
   "Face for assistant response text.")
 
 (defface faltoo-review-comment-face
@@ -17,8 +17,12 @@
   "Face for pending Faltoo review comment lines.")
 
 (defface faltoo-chat-user-face
+  '((t :inherit region))
+  "Theme-aware primary face for user blocks in the Faltoo transcript.")
+
+(defface faltoo-chat-assistant-face
   '((t :inherit secondary-selection))
-  "Theme-aware face for user blocks in the Faltoo transcript.")
+  "Theme-aware secondary face for assistant blocks in the Faltoo transcript.")
 
 (defface faltoo-chat-tool-face
   '((t :inherit font-lock-comment-face))

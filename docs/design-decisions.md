@@ -161,14 +161,14 @@ It is used for viewing full conversation history, searching/copying responses, r
 
 ### Transcript Format
 
-Use Org formatting in `org-mode` so transcript and popups inherit the user's Org styling:
+Use Markdown formatting in `markdown-mode` because model output is Markdown. Enable local pretty Markdown settings (`markdown-hide-markup`, native code block fontification, whole-heading fontification) rather than maintaining a Markdown-to-Org converter:
 
-```org
-* User
+```markdown
+# User
 
 Can you review the unstaged changes?
 
-* Assistant
+# Assistant
 
 I will inspect the files.
 
@@ -177,22 +177,22 @@ I will inspect the files.
 
 The main issue is...
 
-* User
+# User
 
 Can you also check `tests/foo_test.py`?
 ```
 
 A streaming response may render as:
 
-```org
-* Assistant · streaming
+```markdown
+# Assistant · streaming
 
 Submitting message...
 ```
 
 Tool/status events should be compact by default and must not create their own transcript headings:
 
-```org
+```markdown
 - reading `foo.py`
 - running tests
 ```
@@ -232,7 +232,7 @@ Rationale:
 
 MVP prompt detection can be heading-based:
 
-- User writes under the latest `* User` heading.
+- User writes under the latest `# User` heading.
 - `C-c C-c` sends the text under the latest user heading that has no following assistant response.
 
 This can later be made more robust with text properties/markers if needed.
@@ -515,7 +515,7 @@ append-message
 Behavior:
 
 - Insert/render user prompt in `*Faltoo*`.
-- Add an `* Assistant · streaming` section.
+- Add an `# Assistant · streaming` section.
 - Start async bridge process.
 - Stream JSONL events into the chat buffer.
 - On completion, reload canonical persisted messages and rerender.
@@ -955,7 +955,7 @@ Use `diff-hl` as the base Git highlighting package and integrate/extend highligh
 Implemented preference:
 
 - Keep it editable/interactable like `gptel`.
-- Render canonical history plus an editable `* User` prompt at the bottom.
+- Render canonical history plus an editable `# User` prompt at the bottom.
 - `C-c C-c` submits only the current prompt.
 
 The source-buffer workflow remains primary either way.
