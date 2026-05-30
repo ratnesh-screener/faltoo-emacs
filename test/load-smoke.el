@@ -2,6 +2,7 @@
 (add-to-list 'load-path default-directory)
 (defun posframe-show (&rest _args))
 (defun posframe-hide-all ())
+(defun posframe-hide (&rest _args))
 (provide 'posframe)
 (defun magit-stage-file (&rest _args))
 (defun magit-unstage-file (&rest _args))

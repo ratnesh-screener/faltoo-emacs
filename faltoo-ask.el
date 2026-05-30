@@ -10,6 +10,7 @@
 
 (defvar-local faltoo-ask-context nil)
 (defvar-local faltoo-ask-question-marker nil)
+(defvar-local faltoo-ask-sent nil)
 (defvar faltoo-ask-last-context nil)
 
 (defvar faltoo-ask-mode-map
@@ -58,7 +59,8 @@
          (buf (faltoo-popup-buffer faltoo-popup-buffer #'faltoo-ask-mode)))
     (setq faltoo-ask-last-context context)
     (with-current-buffer buf
-      (setq faltoo-ask-context context)
+      (setq faltoo-ask-context context
+            faltoo-ask-sent nil)
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert (string-join (faltoo-ask--prompt-lines context) "\n"))
@@ -90,8 +92,11 @@
          (question (faltoo-ask--question-text))
          (message (faltoo-ask--message context question))
          (buf (current-buffer)))
+    (when faltoo-ask-sent
+      (user-error "This Ask has already been sent"))
     (when (string-empty-p question)
       (user-error "Question is empty"))
+    (setq faltoo-ask-sent t)
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (goto-char (point-max))

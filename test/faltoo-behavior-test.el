@@ -5,6 +5,7 @@
 
 (defun posframe-show (&rest _args) nil)
 (defun posframe-hide-all () nil)
+(defun posframe-hide (&rest _args) nil)
 (provide 'posframe)
 
 (defun magit-stage-file (&rest _args) nil)

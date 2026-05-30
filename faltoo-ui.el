@@ -19,7 +19,7 @@
 (defun faltoo-popup-close ()
   "Close the active Faltoo posframe."
   (interactive)
-  (posframe-hide-all))
+  (posframe-hide (current-buffer)))
 
 (defun faltoo-popup-buffer (name mode)
   "Return popup buffer NAME in MODE."
