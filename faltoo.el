@@ -48,11 +48,6 @@
   (interactive)
   (find-file (faltoo-bridge-messages-path)))
 
-(defun faltoo-tree ()
-  "Compatibility alias for opening Faltoo messages JSON."
-  (interactive)
-  (faltoo-open-messages-json))
-
 (faltoo-mode 1)
 
 (provide 'faltoo)

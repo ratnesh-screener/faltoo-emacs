@@ -651,7 +651,6 @@ Behavior:
 
 This is portable and more Emacs-native.
 
-A compatibility alias `faltoo-tree` can be provided if useful.
 
 ## Keybinding Philosophy
 

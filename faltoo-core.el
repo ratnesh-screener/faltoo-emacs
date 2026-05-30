@@ -17,7 +17,6 @@
 (defvar faltoo-review-files nil)
 (defvar faltoo-current-review-index 0)
 (defvar faltoo-last-assistant-message "")
-(defvar faltoo-stream-target nil)
 (defvar faltoo-after-reload-review-buffers-hook nil
   "Hook run after Faltoo reloads review buffers from disk.")
 
