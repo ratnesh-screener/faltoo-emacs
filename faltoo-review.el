@@ -4,12 +4,15 @@
 (require 'subr-x)
 (require 'magit)
 (require 'diff-hl)
+(require 'faltoo-faces)
 (require 'faltoo-core)
 (require 'faltoo-bridge)
 (require 'faltoo-comments)
 (require 'faltoo-ask)
 
 (defvar-local faltoo-review--saved-read-only nil)
+(defvar-local faltoo-review--saved-header-line-format nil)
+(defvar-local faltoo-review--saved-diff-hl-highlight-function nil)
 
 (defvar faltoo-review-mode-map
   (let ((map (make-sparse-keymap)))
@@ -36,17 +39,39 @@
     (define-key map (kbd "C-c f H r") #'faltoo-revert-current-hunk)
     map))
 
+(defun faltoo-diff-hl-highlight-line (overlay type _shape)
+  "Highlight the full changed line for diff-hl OVERLAY of TYPE."
+  (save-excursion
+    (goto-char (overlay-start overlay))
+    (move-overlay overlay (line-beginning-position) (line-beginning-position 2))
+    (overlay-put overlay 'face
+                 (pcase type
+                   ('insert 'faltoo-diff-insert-line-face)
+                   ('delete 'faltoo-diff-delete-line-face)
+                   (_ 'faltoo-diff-change-line-face)))))
+
+(defun faltoo-review-header-line ()
+  "Return visible review header text."
+  (concat " Faltoo Review " (faltoo-review-lighter)
+          "  ·  C-c f a ask  ·  C-c f c comment  ·  C-c f x stop"))
+
 (define-minor-mode faltoo-review-mode
   "Minor mode for Faltoo code review buffers."
   :lighter (:eval (faltoo-review-lighter))
   :keymap faltoo-review-mode-map
   (if faltoo-review-mode
       (progn
-        (setq faltoo-review--saved-read-only buffer-read-only)
+        (setq faltoo-review--saved-read-only buffer-read-only
+              faltoo-review--saved-header-line-format header-line-format
+              faltoo-review--saved-diff-hl-highlight-function diff-hl-highlight-function)
         (setq buffer-read-only t)
+        (setq-local header-line-format (faltoo-review-header-line))
+        (setq-local diff-hl-highlight-function #'faltoo-diff-hl-highlight-line)
         (diff-hl-mode 1)
         (faltoo-comments-refresh))
-    (setq buffer-read-only faltoo-review--saved-read-only)))
+    (setq buffer-read-only faltoo-review--saved-read-only
+          header-line-format faltoo-review--saved-header-line-format)
+    (setq-local diff-hl-highlight-function faltoo-review--saved-diff-hl-highlight-function)))
 
 (defun faltoo-review-file-p (file)
   "Return non-nil when FILE is in current review set."

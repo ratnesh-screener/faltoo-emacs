@@ -80,3 +80,9 @@ Emacs asks before quitting while a Faltoo request is running or review comments 
 Ask and comment popups use `posframe`. The header shows file/range context, code is shown above the editable question/comment area, and the footer lists the important keys.
 
 Pending review-comment lines are highlighted and marked with `●`.
+
+## Full-line Git highlights
+
+Inside `faltoo-review-mode`, `diff-hl` is configured buffer-locally to highlight full changed lines instead of only the gutter.
+
+Review buffers also show a header line like `Faltoo Review Faltoo[1/N]` so the review state is visible even if the modeline hides minor modes.

@@ -10,6 +10,7 @@
 (defun magit-diff-working-tree (&rest _args))
 (defun magit-refresh (&rest _args))
 (provide 'magit)
+(defvar diff-hl-highlight-function nil)
 (define-minor-mode diff-hl-mode "")
 (defun diff-hl-update ())
 (defun diff-hl-stage-current-hunk ())

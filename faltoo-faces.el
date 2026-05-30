@@ -28,5 +28,17 @@
   '((t :inherit warning :weight bold))
   "Face for pending Faltoo review comment markers.")
 
+(defface faltoo-diff-insert-line-face
+  '((t :extend t :background "#12381f"))
+  "Face for inserted Git lines in Faltoo review buffers.")
+
+(defface faltoo-diff-change-line-face
+  '((t :extend t :background "#39330f"))
+  "Face for changed Git lines in Faltoo review buffers.")
+
+(defface faltoo-diff-delete-line-face
+  '((t :extend t :background "#3a1717"))
+  "Face for deleted Git lines in Faltoo review buffers.")
+
 (provide 'faltoo-faces)
 ;;; faltoo-faces.el ends here

@@ -34,15 +34,19 @@
     buf))
 
 (defun faltoo-popup-show (buffer &optional width height)
-  "Show BUFFER in a posframe near point."
+  "Show BUFFER in a focusable bordered posframe near point."
   (let ((frame (posframe-show buffer
                               :position (point)
                               :width (or width 100)
                               :height (or height 24)
-                              :border-width 1
-                              :internal-border-width 1
-                              :respect-header-line t)))
-    (select-frame-set-input-focus frame)))
+                              :border-width 2
+                              :border-color "#888888"
+                              :internal-border-width 2
+                              :internal-border-color "#222222"
+                              :respect-header-line t
+                              :accept-focus t)))
+    (select-frame-set-input-focus frame)
+    (select-window (frame-selected-window frame))))
 
 (defun faltoo-popup-set-lines (buffer lines)
   "Replace BUFFER contents with LINES."

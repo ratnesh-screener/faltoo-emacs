@@ -16,6 +16,7 @@
 (defun magit-refresh (&rest _args) nil)
 (provide 'magit)
 
+(defvar diff-hl-highlight-function nil)
 (define-minor-mode diff-hl-mode "")
 (defun diff-hl-update () nil)
 (defun diff-hl-stage-current-hunk () nil)

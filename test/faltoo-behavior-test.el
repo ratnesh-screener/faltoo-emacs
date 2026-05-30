@@ -15,6 +15,7 @@
 (defun magit-refresh (&rest _args) nil)
 (provide 'magit)
 
+(defvar diff-hl-highlight-function nil)
 (define-minor-mode diff-hl-mode "")
 (defun diff-hl-update () nil)
 (defun diff-hl-stage-current-hunk () nil)
@@ -159,3 +160,34 @@
         (faltoo-comments (list (make-faltoo-comment :file "x" :path "x" :start 1 :end 1 :text "note"))))
     (should (faltoo-has-pending-work-p))
     (should (equal (faltoo-pending-work-labels) '("1 pending review comment(s)")))))
+
+(ert-deftest faltoo-popup-show-creates-focusable-bordered-posframe ()
+  "Faltoo input popups are focusable and have a visible border."
+  (let (captured-args)
+    (cl-letf (((symbol-function 'posframe-show)
+               (lambda (&rest args)
+                 (setq captured-args args)
+                 (selected-frame)))
+              ((symbol-function 'select-frame-set-input-focus) (lambda (&rest _args) nil)))
+      (faltoo-popup-show (get-buffer-create "*Faltoo Popup Test*") 80 20))
+    (should (plist-get (cdr captured-args) :accept-focus))
+    (should (> (plist-get (cdr captured-args) :border-width) 0))
+    (should (plist-get (cdr captured-args) :border-color))))
+
+(ert-deftest faltoo-review-mode-shows-visible-review-header ()
+  "Review buffers show a visible Faltoo file index even when modeline hides minor modes."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (file _root)
+     (setq faltoo-review-files (list (file-truename file)))
+     (faltoo-review-mode 1)
+     (should header-line-format)
+     (should (string-match-p "Faltoo.*1/1" header-line-format)))))
+
+(ert-deftest faltoo-review-mode-uses-full-line-diff-highlighting ()
+  "Review buffers ask diff-hl to highlight full changed lines, not only the gutter."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (faltoo-review-mode 1)
+     (should (eq diff-hl-highlight-function #'faltoo-diff-hl-highlight-line)))))
