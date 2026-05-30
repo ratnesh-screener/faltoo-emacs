@@ -435,7 +435,7 @@ Data model should include:
 - file line number end
 - selected/current code text
 - user comment text
-- optional markers/overlays for Emacs-side tracking
+- markers/overlays for Emacs-side tracking
 
 ### Comment Types
 
@@ -736,7 +736,7 @@ This matches the important property of the Neovim workflow: the user reviews a r
 
 ### Diff Display in Source Buffers
 
-Use `diff-hl` as the preferred optional integration for in-buffer Git change indicators.
+Use `diff-hl` as the required integration for in-buffer Git change indicators.
 
 Rationale:
 
@@ -747,19 +747,19 @@ Rationale:
 - It integrates with Magit via `magit-post-refresh-hook`.
 - It preserves normal source-buffer navigation and editing features.
 
-Faltoo should not require `diff-hl` for its core operation, but when available it should enable or cooperate with it in `faltoo-review-mode` buffers.
+Faltoo requires `diff-hl` for the intended review workflow and enables it in `faltoo-review-mode` buffers.
 
 Potential integration commands:
 
 ```elisp
-faltoo-next-change       ; delegate to diff-hl-next-hunk when available
-faltoo-prev-change       ; delegate to diff-hl-previous-hunk when available
-faltoo-show-change       ; delegate to diff-hl-show-hunk when available
-faltoo-stage-hunk        ; delegate to diff-hl-stage-current-hunk when available
-faltoo-revert-hunk       ; delegate to diff-hl-revert-hunk when available, with confirmation
+faltoo-next-change       ; delegate to diff-hl-next-hunk through required dependency
+faltoo-prev-change       ; delegate to diff-hl-previous-hunk through required dependency
+faltoo-show-change       ; delegate to diff-hl-show-hunk through required dependency
+faltoo-stage-hunk        ; delegate to diff-hl-stage-current-hunk through required dependency
+faltoo-revert-hunk       ; delegate to diff-hl-revert-hunk through required dependency, with confirmation
 ```
 
-These commands should be optional/convenience wrappers. They should not make Faltoo a replacement for Magit.
+These commands are convenience wrappers. They should not make Faltoo a replacement for Magit.
 
 ### Magit Role
 
@@ -781,9 +781,9 @@ Faltoo must not auto-stage assistant edits.
 
 Staging/unstaging should be available from the source review buffer, but delegated to existing Git tooling:
 
-- File-level stage: prefer Magit (`magit-stage-file`) when available; otherwise run `git add -- <file>`.
-- File-level unstage: prefer Magit (`magit-unstage-file`) when available; otherwise run `git restore --staged -- <file>`, with `git reset -q HEAD -- <file>` as fallback.
-- Hunk-level operations: delegate to `diff-hl` commands when available. If `diff-hl` cannot perform the requested hunk action, open/fallback to Magit diff rather than implementing custom patch application.
+- File-level stage: prefer Magit (`magit-stage-file`) through required dependency; otherwise run `git add -- <file>`.
+- File-level unstage: prefer Magit (`magit-unstage-file`) through required dependency; otherwise run `git restore --staged -- <file>`, with `git reset -q HEAD -- <file>` as fallback.
+- Hunk-level operations: delegate to `diff-hl` commands. If a complex index state does not map cleanly from the source buffer, open Magit diff rather than implementing custom patch application.
 
 Faltoo should provide wrapper commands such as:
 
@@ -808,7 +808,7 @@ After FaltooBot responds and possibly edits files:
 2. Refresh Git change indicators.
 3. Keep review files in the Faltoo review set.
 4. Let the user inspect changes in source buffers and/or Magit.
-5. Let the user stage/unstage explicitly using Magit, Git CLI wrappers, or optional `diff-hl` hunk commands.
+5. Let the user stage/unstage explicitly using Magit, `diff-hl` hunk commands.
 
 ### MVP Scope
 
@@ -816,12 +816,12 @@ MVP should implement:
 
 - `faltoo-review-unstaged`: open unstaged files as ordinary source buffers.
 - `faltoo-review-mode`: source-buffer review minor mode.
-- Optional `diff-hl` cooperation if installed.
+- `diff-hl` cooperation in review buffers.
 - Commands to jump between Faltoo comments.
-- Commands to jump between Git hunks when `diff-hl` is available.
+- Commands to jump between Git hunks through `diff-hl`.
 - Commands to stage/unstage the current file from the review buffer.
-- Optional hunk-level stage/unstage/revert wrappers via `diff-hl` when available.
-- Command to open Magit status if Magit is available.
+- Hunk-level stage/unstage/revert wrappers via `diff-hl`.
+- Command to open Magit status.
 
 MVP should not implement:
 
