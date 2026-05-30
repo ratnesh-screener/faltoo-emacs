@@ -19,8 +19,6 @@
 
 (define-derived-mode faltoo-popup-mode org-mode "Faltoo-Popup"
   "Mode for Faltoo popup buffers."
-  (setq-local cursor-type 'box)
-  (setq-local cursor-in-non-selected-windows 'box)
   (setq-local mode-line-format nil)
   (setq-local truncate-lines nil))
 
@@ -58,10 +56,6 @@
                                 :border-color "#888888"
                                 :internal-border-width 2
                                 :internal-border-color "#222222"
-                                :override-parameters
-                                `((cursor-color . ,(or (face-background 'cursor nil t)
-                                                       (cdr (assq 'cursor-color (frame-parameters)))
-                                                       "white")))
                                 :respect-header-line t
                                 :accept-focus t)))
       (select-frame-set-input-focus frame)

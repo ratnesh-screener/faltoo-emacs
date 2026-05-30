@@ -229,9 +229,7 @@
     (should (eq (plist-get (cdr captured-args) :cursor) 'box))
     (should (plist-get (cdr captured-args) :tty-non-selected-cursor))
     (with-current-buffer popup
-      (should (eq (plist-get (cdr captured-args) :window-point) (point))))
-    (should (alist-get 'cursor-color
-                       (plist-get (cdr captured-args) :override-parameters)))))
+      (should (eq (plist-get (cdr captured-args) :window-point) (point))))))
 
 (ert-deftest faltoo-popup-show-creates-focusable-bordered-posframe ()
   "Scenario: Faltoo popups are focusable and visibly bordered."
