@@ -21,6 +21,8 @@
     (define-key map (kbd "c") #'faltoo-comment)
     (define-key map (kbd "C") #'faltoo-file-comment)
     (define-key map (kbd "s") #'faltoo-submit-review-comments)
+    (define-key map (kbd "m") #'faltoo-comments-summary)
+    (define-key map (kbd "d") #'faltoo-delete-current-comment)
     (define-key map (kbd "h") #'faltoo-chat)
     (define-key map (kbd "u") #'faltoo-review-unstaged)
     (define-key map (kbd "x") #'faltoo-review-stop)

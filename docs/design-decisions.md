@@ -376,6 +376,8 @@ faltoo-review-off
 faltoo-comment
 faltoo-file-comment
 faltoo-submit-review-comments
+faltoo-comments-summary
+faltoo-delete-current-comment
 faltoo-next-comment
 faltoo-prev-comment
 ```
@@ -494,9 +496,11 @@ Provide:
 ```elisp
 faltoo-next-comment
 faltoo-prev-comment
+faltoo-comments-summary
+faltoo-delete-current-comment
 ```
 
-These should navigate pending comments in the current buffer.
+These should navigate, inspect, edit, and delete pending comments before submission.
 
 ## Submitting
 
@@ -660,8 +664,10 @@ C-c f c   faltoo-comment
 C-c f C   faltoo-file-comment
 C-c f a   faltoo-ask
 C-c f h   faltoo-chat
-C-c f s   faltoo-submit-review-comments or faltoo-submit
-C-c f r   faltoo-open-unstaged
+C-c f s   faltoo-submit-review-comments
+C-c f m   faltoo-comments-summary
+C-c f d   faltoo-delete-current-comment
+C-c f u   faltoo-review-unstaged
 C-c f n   faltoo-next-comment
 C-c f p   faltoo-prev-comment
 ```

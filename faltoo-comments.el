@@ -12,6 +12,7 @@
 (cl-defstruct faltoo-comment file path start end code text overlay)
 
 (defvar faltoo-comments nil)
+(defvar faltoo-comments-buffer-name "*Faltoo Comments*")
 
 (defvar-local faltoo-comment-target nil)
 (defvar-local faltoo-comment-text-marker nil)
@@ -25,6 +26,18 @@
 
 (define-derived-mode faltoo-comment-mode faltoo-popup-mode "Faltoo-Comment"
   "Mode for composing Faltoo review comments.")
+
+(defvar faltoo-comments-summary-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map special-mode-map)
+    (define-key map (kbd "RET") #'faltoo-comments-summary-jump)
+    (define-key map (kbd "e") #'faltoo-comments-summary-edit)
+    (define-key map (kbd "d") #'faltoo-comments-summary-delete)
+    (define-key map (kbd "g") #'faltoo-comments-summary-refresh)
+    map))
+
+(define-derived-mode faltoo-comments-summary-mode special-mode "Faltoo-Comments"
+  "Mode for pending Faltoo review comments.")
 
 (defun faltoo-comments-count ()
   (length faltoo-comments))
@@ -93,7 +106,7 @@
           (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
           (faltoo-compose-insert-section "Code")
           (faltoo-compose-insert-code code))
-        (faltoo-compose-insert-help "C-c C-c save · C-c C-k/q close · C-c C-f file")
+        (faltoo-compose-insert-help "C-c C-c save · C-c C-k/C-g close · C-c C-f file")
         (faltoo-compose-insert-section "Comment")
         (setq faltoo-comment-text-marker (point-marker))
         (when existing (insert (faltoo-comment-text existing)))
@@ -129,6 +142,94 @@
                   (cons 'code (faltoo-comment-code comment))
                   (cons 'comment (faltoo-comment-text comment))))
           comments))
+
+(defun faltoo-comments--display-range (comment)
+  (let ((start (faltoo-comment-start comment))
+        (end (faltoo-comment-end comment)))
+    (cond
+     ((= start 0) "file")
+     ((= start end) (format "line %d" start))
+     (t (format "lines %d-%d" start end)))))
+
+(defun faltoo-comments-summary-render ()
+  "Render pending review comments into `faltoo-comments-buffer-name'."
+  (let ((buf (get-buffer-create faltoo-comments-buffer-name)))
+    (with-current-buffer buf
+      (faltoo-comments-summary-mode)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "Pending Faltoo comments\n\n")
+        (if faltoo-comments
+            (dolist (comment (reverse faltoo-comments))
+              (let ((start (point)))
+                (insert (format "%s:%s\n"
+                                (faltoo-comment-file comment)
+                                (faltoo-comments--display-range comment)))
+                (insert (string-trim (faltoo-comment-text comment)) "\n")
+                (insert "RET jump · e edit · d delete\n\n")
+                (add-text-properties start (point) (list 'faltoo-comment comment))))
+          (insert "No pending comments.\n"))
+        (goto-char (point-min))))
+    buf))
+
+(defun faltoo-comments-summary ()
+  "Show pending Faltoo review comments."
+  (interactive)
+  (pop-to-buffer (faltoo-comments-summary-render)))
+
+(defun faltoo-comments-summary-refresh ()
+  "Refresh pending Faltoo review comments summary."
+  (interactive)
+  (faltoo-comments-summary-render))
+
+(defun faltoo-comments--comment-at-point ()
+  (or (get-text-property (point) 'faltoo-comment)
+      (get-text-property (line-beginning-position) 'faltoo-comment)
+      (when buffer-file-name
+        (faltoo-comments--existing (faltoo-current-file) (line-number-at-pos) (line-number-at-pos)))))
+
+(defun faltoo-comments--goto-source (comment)
+  (let ((buf (find-buffer-visiting (faltoo-comment-path comment))))
+    (if buf
+        (switch-to-buffer buf)
+      (find-file (faltoo-comment-path comment))))
+  (goto-char (point-min))
+  (when (> (faltoo-comment-start comment) 0)
+    (forward-line (1- (faltoo-comment-start comment)))))
+
+(defun faltoo-comments-summary-jump ()
+  "Jump from the summary to the comment source."
+  (interactive)
+  (let ((comment (faltoo-comments--comment-at-point)))
+    (unless comment (user-error "No Faltoo comment at point"))
+    (faltoo-comments--goto-source comment)))
+
+(defun faltoo-comments-summary-edit ()
+  "Edit the pending comment at point."
+  (interactive)
+  (let ((comment (faltoo-comments--comment-at-point)))
+    (unless comment (user-error "No Faltoo comment at point"))
+    (faltoo-comments--goto-source comment)
+    (if (= (faltoo-comment-start comment) 0)
+        (faltoo-file-comment)
+      (faltoo-comment))))
+
+(defun faltoo-delete-current-comment ()
+  "Delete the pending Faltoo comment at point."
+  (interactive)
+  (let ((comment (faltoo-comments--comment-at-point)))
+    (unless comment (user-error "No Faltoo comment at point"))
+    (when (overlayp (faltoo-comment-overlay comment))
+      (delete-overlay (faltoo-comment-overlay comment)))
+    (setq faltoo-comments (delq comment faltoo-comments))
+    (faltoo-comments-refresh)
+    (message "Faltoo: %d pending comment(s)" (length faltoo-comments))))
+
+(defun faltoo-comments-summary-delete ()
+  "Delete the pending comment at point and refresh the summary."
+  (interactive)
+  (faltoo-delete-current-comment)
+  (faltoo-comments-summary-render))
 
 (defun faltoo-submit-review-comments ()
   "Submit pending review comments to FaltooBot."

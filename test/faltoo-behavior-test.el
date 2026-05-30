@@ -296,6 +296,72 @@
      (should (= (faltoo-comment-start (car faltoo-comments)) 0))
      (should-not (faltoo-comment-overlay (car faltoo-comments))))))
 
+(ert-deftest faltoo-comments-summary-renders-pending-comments ()
+  "Scenario: Pending comments can be reviewed before submission."
+  (let ((faltoo-comments
+         (list (make-faltoo-comment :file "sample.py"
+                                    :path "/repo/sample.py"
+                                    :start 2
+                                    :end 3
+                                    :text "tighten this up"))))
+    ;; Given there is a pending range comment.
+
+    ;; When rendering the comments summary.
+    (let ((buf (faltoo-comments-summary-render)))
+
+      ;; Then the summary shows target, range, text, and actions.
+      (with-current-buffer buf
+        (should (string-match-p "sample.py:lines 2-3" (buffer-string)))
+        (should (string-match-p "tighten this up" (buffer-string)))
+        (should (string-match-p "RET jump" (buffer-string)))))))
+
+(ert-deftest faltoo-comments-summary-jumps-to-comment-source ()
+  "Scenario: Comments summary jumps back to the source line."
+  (faltoo-test--with-temp-git-file
+   '("one" "two" "three")
+   (lambda (file _root)
+     ;; Given the summary is showing a pending comment on line 2.
+     (let ((faltoo-comments
+            (list (make-faltoo-comment :file "sample.py"
+                                       :path (file-truename file)
+                                       :start 2
+                                       :end 2
+                                       :text "check this"))))
+       (with-current-buffer (faltoo-comments-summary-render)
+         (search-forward "sample.py")
+
+         ;; When jumping from the summary.
+         (faltoo-comments-summary-jump))
+
+       ;; Then the source file is selected at the comment line.
+       (should (equal (file-truename buffer-file-name) (file-truename file)))
+       (should (= (line-number-at-pos) 2))))))
+
+(ert-deftest faltoo-delete-current-comment-removes-pending-comment-and-overlay ()
+  "Scenario: Deleting the current pending comment clears its source marker."
+  (faltoo-test--with-temp-git-file
+   '("one" "two" "three")
+   (lambda (file _root)
+     ;; Given line 2 has a pending comment marker.
+     (let ((comment (make-faltoo-comment :file "sample.py"
+                                         :path (file-truename file)
+                                         :start 2
+                                         :end 2
+                                         :text "remove me")))
+       (setq faltoo-comments (list comment))
+       (faltoo-comments-refresh)
+       (goto-char (point-min))
+       (forward-line 1)
+       (let ((overlay (faltoo-comment-overlay comment)))
+         (should (overlayp overlay))
+
+         ;; When deleting the current pending comment.
+         (faltoo-delete-current-comment)
+
+         ;; Then the comment and overlay are gone.
+         (should-not faltoo-comments)
+         (should-not (overlay-buffer overlay)))))))
+
 (ert-deftest faltoo-comment-empty-comment-does-not-capture-help-text ()
   "Scenario: Comment help text is not saved as a review comment."
   (faltoo-test--with-temp-git-file
