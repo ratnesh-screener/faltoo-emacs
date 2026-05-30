@@ -3,18 +3,16 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'faltoo-core)
-(require 'faltoo-bridge)
 (require 'faltoo-ui)
 (require 'faltoo-chat)
 (require 'faltoo-request)
 (require 'faltoo-ask)
+(require 'faltoo-compose)
+(require 'faltoo-faces)
 
 (cl-defstruct faltoo-comment file path start end code text overlay)
 
 (defvar faltoo-comments nil)
-(defface faltoo-review-comment-face
-  '((t :inherit highlight))
-  "Face for pending Faltoo review comments.")
 
 (defvar-local faltoo-comment-target nil)
 (defvar-local faltoo-comment-text-marker nil)
@@ -60,7 +58,7 @@
               (forward-line (1+ (- (faltoo-comment-end comment) (faltoo-comment-start comment))))
               (let ((overlay (make-overlay beg (line-beginning-position))))
                 (overlay-put overlay 'face 'faltoo-review-comment-face)
-                (overlay-put overlay 'before-string (propertize "●" 'face 'warning))
+                (overlay-put overlay 'before-string (propertize "● " 'face 'faltoo-review-comment-marker-face))
                 (setf (faltoo-comment-overlay comment) overlay)))))))))
 
 (defun faltoo-comments-refresh ()
@@ -90,13 +88,16 @@
       (setq faltoo-comment-target target)
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (format "File: %s\n" file))
+        (faltoo-compose-insert-title (if file-level "Faltoo File Comment" "Faltoo Review Comment"))
+        (faltoo-compose-insert-meta "File" file)
         (unless file-level
-          (insert (if (= start end) (format "Line: %d\n" start) (format "Lines: %d-%d\n" start end)))
-          (insert "\nCode:\n```\n" code "\n```\n"))
-        (insert "\nComment:\n\n")
+          (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
+          (faltoo-compose-insert-section "Code")
+          (faltoo-compose-insert-code code))
+        (faltoo-compose-insert-section "Comment")
         (setq faltoo-comment-text-marker (point-marker))
-        (when existing (insert (faltoo-comment-text existing)))))
+        (when existing (insert (faltoo-comment-text existing)))
+        (faltoo-compose-insert-help "C-c C-c save · C-c C-k/q close · C-c C-f file")))
     (faltoo-popup-show buf 90 24)))
 
 (defun faltoo-file-comment ()

@@ -3,10 +3,10 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'faltoo-core)
-(require 'faltoo-bridge)
 (require 'faltoo-ui)
 (require 'faltoo-chat)
 (require 'faltoo-request)
+(require 'faltoo-compose)
 
 (defvar-local faltoo-ask-context nil)
 (defvar-local faltoo-ask-question-marker nil)
@@ -38,18 +38,20 @@
           :end (line-number-at-pos)
           :code (string-trim-right (thing-at-point 'line t)))))
 
-(defun faltoo-ask--prompt-lines (context)
+(defun faltoo-ask--insert-prompt (context)
+  "Insert Ask popup content for CONTEXT."
   (let ((file (plist-get context :file))
         (start (plist-get context :start))
         (end (plist-get context :end))
         (code (plist-get context :code)))
-    (append (list (format "File: %s" file)
-                  (if (= start end) (format "Line: %d" start) (format "Lines: %d-%d" start end))
-                  ""
-                  "Code:"
-                  "```")
-            (split-string code "\n")
-            (list "```" "" "Question:" ""))))
+    (faltoo-compose-insert-title "Ask Faltoo")
+    (faltoo-compose-insert-meta "File" file)
+    (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
+    (faltoo-compose-insert-section "Code")
+    (faltoo-compose-insert-code code)
+    (faltoo-compose-insert-section "Question")
+    (setq faltoo-ask-question-marker (point-marker))
+    (faltoo-compose-insert-help "C-c C-c send · C-c C-k/q close · C-c C-f file · C-c / command")))
 
 (defun faltoo-ask ()
   "Ask Faltoo about active region or current line."
@@ -63,8 +65,7 @@
             faltoo-ask-sent nil)
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (string-join (faltoo-ask--prompt-lines context) "\n"))
-        (setq faltoo-ask-question-marker (point-marker))))
+        (faltoo-ask--insert-prompt context)))
     (faltoo-popup-show buf 100 28)))
 
 (defun faltoo-ask-region ()
@@ -100,11 +101,7 @@
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (goto-char (point-max))
-        (insert "
-
-Assistant:
-
-")))
+        (faltoo-compose-insert-section "Assistant")))
     (faltoo-request-message message buf)))
 
 (defun faltoo-insert-file-reference ()

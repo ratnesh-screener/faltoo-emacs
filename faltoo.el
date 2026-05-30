@@ -4,7 +4,9 @@
 
 (require 'faltoo-core)
 (require 'faltoo-bridge)
+(require 'faltoo-faces)
 (require 'faltoo-ui)
+(require 'faltoo-compose)
 (require 'faltoo-chat)
 (require 'faltoo-request)
 (require 'faltoo-ask)

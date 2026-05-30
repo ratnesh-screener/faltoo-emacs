@@ -14,7 +14,10 @@
     map))
 
 (define-derived-mode faltoo-popup-mode text-mode "Faltoo-Popup"
-  "Mode for Faltoo popup buffers.")
+  "Mode for Faltoo popup buffers."
+  (setq-local cursor-type 'bar)
+  (setq-local mode-line-format nil)
+  (setq-local truncate-lines nil))
 
 (defun faltoo-popup-close ()
   "Close the active Faltoo posframe."

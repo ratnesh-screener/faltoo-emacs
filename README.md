@@ -67,10 +67,16 @@ C-c /     insert slash command, Ask only
 
 - Source buffers are the primary UI.
 - `*Faltoo*` is transcript/history and receives long review streams.
-- Ask responses stream in the posframe near code.
+- Ask responses stream in the posframe near code, including compact status/tool lines.
 - Review-comment submission streams to `*Faltoo*` and status/mode-line.
 - Faltoo never auto-stages changes.
 
 ## Quit guard
 
 Emacs asks before quitting while a Faltoo request is running or review comments are pending.
+
+## Popup UI
+
+Ask and comment popups use `posframe`. The header shows file/range context, code is shown above the editable question/comment area, and the footer lists the important keys.
+
+Pending review-comment lines are highlighted and marked with `●`.
