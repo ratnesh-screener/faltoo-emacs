@@ -94,6 +94,7 @@
          (question (faltoo-ask--question-text))
          (message (faltoo-ask--message context question))
          (buf (current-buffer)))
+    (faltoo-request-ensure-idle)
     (when faltoo-ask-sent
       (user-error "This Ask has already been sent"))
     (when (string-empty-p question)

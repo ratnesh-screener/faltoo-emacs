@@ -7,6 +7,7 @@
 (require 'faltoo-compose)
 
 (declare-function faltoo-request-message "faltoo-request")
+(declare-function faltoo-request-ensure-idle "faltoo-request")
 
 (defvar-local faltoo-chat-prompt-marker nil)
 
@@ -72,6 +73,7 @@
   "Send the current `*Faltoo*' prompt."
   (interactive)
   (let ((text (faltoo-chat--prompt-text)))
+    (faltoo-request-ensure-idle)
     (when (string-empty-p text)
       (user-error "Prompt is empty"))
     (goto-char (point-max))

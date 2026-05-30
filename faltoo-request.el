@@ -13,6 +13,11 @@
 (defun faltoo-request--event-class (event)
   (or (alist-get 'classes event) (alist-get 'type event) ""))
 
+(defun faltoo-request-ensure-idle ()
+  "Signal when another Faltoo request is already running."
+  (when faltoo-submitting
+    (user-error "Faltoo request already running")))
+
 (defun faltoo-request--route-event (event popup-buffer on-submitted)
   (let ((class (faltoo-request--event-class event))
         (text (faltoo-request--event-text event)))
@@ -32,6 +37,7 @@
 
 (defun faltoo-request-stream (args payload chat-title &optional popup-buffer on-submitted on-done)
   "Run Faltoo bridge ARGS with PAYLOAD and route stream output."
+  (faltoo-request-ensure-idle)
   (setq faltoo-submitting t
         faltoo-last-assistant-message "")
   (faltoo-set-status chat-title)

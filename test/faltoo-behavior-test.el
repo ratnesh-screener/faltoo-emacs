@@ -170,6 +170,21 @@
          (should (string-match-p "hello from assistant" (buffer-string))))
        (kill-buffer popup)))))
 
+;;; Request specs
+
+(ert-deftest faltoo-request-rejects-overlapping-streams ()
+  "Scenario: Faltoo does not start a second request while one is running."
+  (let ((faltoo-submitting t)
+        (bridge-called nil))
+    ;; Given a Faltoo request is already running.
+
+    ;; When another message is submitted.
+    (cl-letf (((symbol-function 'faltoo-bridge-stream)
+               (lambda (&rest _args) (setq bridge-called t))))
+      ;; Then the request is rejected before touching the bridge.
+      (should-error (faltoo-request-message "second request") :type 'user-error)
+      (should-not bridge-called))))
+
 ;;; Popup specs
 
 (ert-deftest faltoo-popup-mode-does-not-bind-q ()
@@ -417,6 +432,16 @@
     ;; Then comments are encoded as a JSON array of objects.
     (should (equal (alist-get 'filename (aref (alist-get 'comments captured-payload) 0))
                    "faltoo.el"))))
+
+(ert-deftest faltoo-review-mode-keybindings-keep-comment-management-on-prefix ()
+  "Scenario: Review buffers keep comment management on the Faltoo prefix."
+  ;; Given review-mode keybindings are active.
+
+  ;; Then C-c f d deletes a pending comment and C-c f m shows pending comments.
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "C-c f d"))
+              #'faltoo-delete-current-comment))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "C-c f m"))
+              #'faltoo-comments-summary)))
 
 ;;; Review mode specs
 

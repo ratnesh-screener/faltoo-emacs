@@ -667,6 +667,7 @@ C-c f h   faltoo-chat
 C-c f s   faltoo-submit-review-comments
 C-c f m   faltoo-comments-summary
 C-c f d   faltoo-delete-current-comment
+C-c f D   faltoo-magit-diff-current-file
 C-c f u   faltoo-review-unstaged
 C-c f n   faltoo-next-comment
 C-c f p   faltoo-prev-comment
