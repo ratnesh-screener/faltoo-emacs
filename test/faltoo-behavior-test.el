@@ -51,6 +51,40 @@
             ((symbol-function 'faltoo-popup-close) (lambda () nil)))
     (funcall body)))
 
+;;; Chat specs
+
+(ert-deftest faltoo-chat-opens-editable-user-prompt ()
+  "Scenario: Transcript opens with an editable user prompt."
+  (let ((messages '(((role . "assistant") (text . "hello")))))
+    ;; Given persisted Faltoo messages exist.
+
+    ;; When rendering the transcript.
+    (let ((buf (faltoo-chat-render messages)))
+
+      ;; Then the buffer is editable and point starts in the user prompt.
+      (with-current-buffer buf
+        (should (derived-mode-p 'faltoo-chat-mode))
+        (should-not buffer-read-only)
+        (should (markerp faltoo-chat-prompt-marker))
+        (should (= (point) faltoo-chat-prompt-marker))
+        (should (string-match-p "# User" (buffer-string)))))))
+
+(ert-deftest faltoo-chat-send-submits-current-user-prompt ()
+  "Scenario: Sending from transcript submits only the current prompt."
+  (let (captured-text)
+    ;; Given the transcript has history and a typed prompt.
+    (with-current-buffer (faltoo-chat-render '(((role . "assistant") (text . "old answer"))))
+      (insert "please continue")
+
+      ;; When sending the prompt.
+      (cl-letf (((symbol-function 'faltoo-request-message)
+                 (lambda (text &optional _popup _on-done)
+                   (setq captured-text text))))
+        (faltoo-chat-send)))
+
+    ;; Then only the current prompt is submitted, not transcript history.
+    (should (equal captured-text "please continue"))))
+
 ;;; Ask specs
 
 (ert-deftest faltoo-ask-uses-current-line-when-region-is-not-active ()

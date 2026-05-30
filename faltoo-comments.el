@@ -6,7 +6,6 @@
 (require 'faltoo-ui)
 (require 'faltoo-chat)
 (require 'faltoo-request)
-(require 'faltoo-ask)
 (require 'faltoo-compose)
 (require 'faltoo-faces)
 

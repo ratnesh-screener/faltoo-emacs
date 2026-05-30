@@ -105,27 +105,6 @@
         (faltoo-compose-insert-section "Assistant")))
     (faltoo-request-message message buf)))
 
-(defun faltoo-insert-file-reference ()
-  "Insert a backtick file reference using Git tracked/untracked files."
-  (interactive)
-  (let* ((default-directory (faltoo-workspace))
-         (files (split-string (shell-command-to-string "git ls-files --cached --others --exclude-standard") "\n" t))
-         (file (completing-read "File: " files nil t)))
-    (insert "`" file "`")))
-
-(defun faltoo-insert-slash-command ()
-  "Insert a saved Faltoo slash command."
-  (interactive)
-  (let* ((commands (faltoo-bridge-slash-commands))
-         (labels (mapcar (lambda (cmd)
-                           (let ((name (alist-get 'command cmd))
-                                 (preview (or (alist-get 'preview cmd) "")))
-                             (if (string-empty-p preview) name (format "%s — %s" name preview))))
-                         commands))
-         (choice (completing-read "Command: " labels nil t))
-         (index (cl-position choice labels :test #'string=)))
-    (insert (alist-get 'command (nth index commands)))))
-
 (defun faltoo-show-last-response ()
   "Show latest assistant message in a posframe."
   (interactive)

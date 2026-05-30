@@ -208,7 +208,7 @@ Reasons:
 - It is Emacs-native.
 - It is easy to search/copy/edit/save.
 - It is simpler than managing a read-only transcript with a separate editable prompt region.
-- `g`/refresh can always restore canonical history from FaltooBot if the local buffer was edited.
+- `C-c C-r` refresh can always restore canonical history from FaltooBot if the local buffer was edited.
 
 Canonical history remains FaltooBot's persisted session. Local edits to `*Faltoo*` are UI edits unless an explicit save/export feature is later added.
 
@@ -243,14 +243,9 @@ Initial preferred keys:
 
 ```text
 C-c C-c   send current prompt
-C-c RET   send current prompt, optional alias
+C-c C-r   refresh from FaltooBot session
 C-c C-f   insert file reference
 C-c /     insert slash command
-g         refresh from FaltooBot session
-r         create/jump to reply prompt at bottom
-s         submit pending review comments
-R         open unstaged files
-q         quit-window
 ```
 
 Because the transcript is editable, avoid overusing plain single-letter keys where they interfere with normal text entry. Plain keys are acceptable only when point is not in editable prompt text or if the mode design makes that safe.
@@ -262,9 +257,9 @@ Ask should be source-buffer-first. Users should be able to ask about the current
 Preferred UI:
 
 - Use `posframe` for Ask popups.
-- The popup should appear near the relevant code and include target context: file, line/range, and selected code when applicable.
+- The popup should appear centered and include target context: file, line/range, and selected code when applicable.
 - `C-c C-c` sends immediately.
-- `C-c C-k` cancels.
+- `C-c C-k`/`C-g` cancels.
 - `C-c C-f` inserts a file reference.
 - `C-c /` inserts a slash command.
 
@@ -284,7 +279,7 @@ Streaming response behavior:
 - Batched review-comment submissions should not stream full responses in a popup by default; they should stream to `*Faltoo*` and show lightweight progress in the mode-line/minibuffer.
 - Background/tool-heavy requests should use `*Faltoo*` for full stream details and lightweight status near code.
 - Every exchange should be appended to/persisted in the FaltooBot session and visible in `*Faltoo*` history.
-- Ask popups can provide follow-up/reply keys later, but MVP can close after completion or allow manual close with `q`/`C-c C-k`.
+- Ask popups can provide follow-up/reply keys later, but MVP can close after completion with `C-g`/`C-c C-k`. Do not bind plain `q` in editable popups.
 
 Stream location policy:
 
@@ -308,8 +303,8 @@ faltoo-show-last-response
 Behavior:
 
 - Fetch/use the latest assistant message from the current Faltoo session.
-- Display it in a read-only `posframe` near the current buffer/point.
-- Keybindings in the popup should include `q`/`C-g` to close and `r` to open an Ask follow-up if practical.
+- Display it in a read-only centered `posframe`.
+- Keybindings in the popup should include `C-g`/`C-c C-k` to close and `r` to open an Ask follow-up if practical. Do not bind plain `q` globally because popup modes share editable text behavior.
 - This is for quick recall; full history remains in `*Faltoo*`.
 
 ## File References
@@ -921,14 +916,15 @@ Do not implement defun/file/buffer context for MVP.
 
 ### Ask Popup Lifecycle
 
-Ask uses `posframe` input near code.
+Ask uses centered `posframe` input while keeping focus on code.
 
 MVP behavior:
 
 - `C-c C-c` sends immediately.
 - Response streams in the same popup.
 - Popup remains open after completion until closed.
-- `q`/`C-g` closes.
+- `C-g`/`C-c C-k` closes and returns focus to the source window.
+- Plain `q` is not a close key because it must remain typeable in editable popups.
 
 Future follow-up support should be easy to add. Keep the popup/session plumbing structured so a later `r`/reply action can reuse the last interaction context.
 
@@ -951,10 +947,11 @@ Use `diff-hl` as the base Git highlighting package and integrate/extend highligh
 
 `*Faltoo*` remains the full transcript/history buffer.
 
-Preference:
+Implemented preference:
 
-- Keep it editable/interactable like `gptel` if this is cheap.
-- If editable transcript requires extra complexity, make it read-only initially.
+- Keep it editable/interactable like `gptel`.
+- Render canonical history plus an editable `# User` prompt at the bottom.
+- `C-c C-c` submits only the current prompt.
 
 The source-buffer workflow remains primary either way.
 
