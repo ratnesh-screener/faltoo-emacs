@@ -8,9 +8,12 @@ from pathlib import Path
 import sys
 from typing import Any
 
+SHELL_COMMAND_SEPARATOR = "\n\n<!-- shell-command -->\n\n"
+
 from faltoobot.faltoochat.git import get_unstaged_files, is_git_workspace  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.review_api import Review, reviews_prompt  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.slash_commands import SlashCommandStore  # ty: ignore[unresolved-import]
+from faltoobot.faltoochat.messages_rendering import get_item_text  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.stream import get_event_text  # ty: ignore[unresolved-import]
 from faltoobot.sessions import (  # ty: ignore[unresolved-import]
     Session,
@@ -27,17 +30,8 @@ def _session(workspace: Path) -> Session:
     return get_session(get_dir_chat_key(workspace), workspace=workspace)
 
 
-def _message_text(item: dict[str, Any]) -> str:
-    content = item.get("content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                parts.append(part["text"])
-        return "\n".join(parts)
-    return ""
+def _tool_summary(text: str) -> str:
+    return text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)[0].strip()
 
 
 def _stdin_payload() -> dict[str, Any]:
@@ -86,15 +80,14 @@ def messages(workspace: Path, limit: int) -> int:
     items = get_messages(_session(workspace))["messages"][-limit:]
     messages_payload: list[dict[str, str]] = []
     for item in items:
-        # Skip non-message records that cannot be displayed by the Neovim modal.
         if not isinstance(item, dict):
             continue
-        role = str(item.get("role") or item.get("type") or "item")
-        text = _message_text(item).strip()
-        # Navigation is message-based, so omit empty/tool-only records.
-        if not text:
+        rendering = get_item_text(item)
+        if not rendering:
             continue
-        messages_payload.append({"role": role, "text": text})
+        text, classes = rendering
+        role = "assistant" if classes in {"answer", "thinking"} else classes
+        messages_payload.append({"role": role, "text": _tool_summary(text) if classes == "tool" else text.strip()})
 
     print(json.dumps({"messages": messages_payload}, ensure_ascii=False))
     return 0

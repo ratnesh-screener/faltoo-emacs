@@ -1,6 +1,7 @@
 ;;; faltoo-request.el --- Faltoo request/stream orchestration -*- lexical-binding: t; -*-
 
 (require 'subr-x)
+(require 'seq)
 (require 'faltoo-core)
 (require 'faltoo-bridge)
 (require 'faltoo-chat)
@@ -10,8 +11,22 @@
 (defun faltoo-request--event-text (event)
   (or (alist-get 'text event) ""))
 
+(defconst faltoo-request--shell-command-separator "\n\n<!-- shell-command -->\n\n")
+
 (defun faltoo-request--event-class (event)
   (or (alist-get 'classes event) (alist-get 'type event) ""))
+
+(defun faltoo-request--clip-lines (text)
+  (let ((lines (split-string text "\n")))
+    (if (<= (length lines) 5)
+        text
+      (string-join (append (seq-take lines 4) '("...")) "\n"))))
+
+(defun faltoo-request--tool-summary (text)
+  (let ((summary (car (split-string text faltoo-request--shell-command-separator t))))
+    (faltoo-request--clip-lines
+     (string-trim
+      (replace-regexp-in-string "\\*\\*" "" summary)))))
 
 (defun faltoo-request-ensure-idle ()
   "Signal when another Faltoo request is already running."
@@ -31,7 +46,7 @@
       (when (and on-submitted (string-prefix-p "Submitted" text))
         (funcall on-submitted))
       (faltoo-set-status text)
-      (faltoo-chat-append-stream-block (format "- %s" text)))
+      (faltoo-chat-append-stream-block (format "- %s" (faltoo-request--tool-summary text)) 'faltoo-chat-tool-face))
      ((string= class "done")
       (faltoo-set-status text)))))
 

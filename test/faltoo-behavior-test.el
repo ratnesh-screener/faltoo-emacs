@@ -3,6 +3,9 @@
 (require 'ert)
 (add-to-list 'load-path default-directory)
 
+(define-derived-mode markdown-mode text-mode "Markdown")
+(provide 'markdown-mode)
+
 ;; Test doubles for required packages. The plugin requires these packages in real
 ;; use; tests stub only the small surface they exercise.
 (defun posframe-show (&rest _args) nil)
@@ -68,17 +71,17 @@
         (should-not buffer-read-only)
         (should (markerp faltoo-chat-prompt-marker))
         (should (= (point) faltoo-chat-prompt-marker))
-        (should (string-match-p "* User" (buffer-string)))))))
+        (should (string-match-p "# User" (buffer-string)))))))
 
-(ert-deftest faltoo-chat-mode-uses-org-mode-for-transcript-styling ()
-  "Scenario: Transcript uses Org mode styling."
+(ert-deftest faltoo-chat-mode-uses-markdown-mode-for-transcript-styling ()
+  "Scenario: Transcript uses Markdown mode styling."
   ;; Given the transcript buffer is rendered.
   (let ((buf (faltoo-chat-render nil)))
 
-    ;; Then it derives from Org mode and uses Org headings.
+    ;; Then it derives from Markdown mode and uses Markdown headings.
     (with-current-buffer buf
-      (should (derived-mode-p 'org-mode))
-      (should (string-match-p "* User" (buffer-string))))))
+      (should (derived-mode-p 'markdown-mode))
+      (should (string-match-p "# User" (buffer-string))))))
 
 (ert-deftest faltoo-chat-render-separates-message-blocks-with-blank-lines ()
   "Scenario: Transcript message blocks have breathing room between them."
@@ -88,7 +91,7 @@
 
     ;; Then there is an empty line between message blocks.
     (with-current-buffer buf
-      (should (string-match-p "question\n\n\\* Assistant" (buffer-string))))))
+      (should (string-match-p "question\n\n# Assistant" (buffer-string))))))
 
 (ert-deftest faltoo-chat-render-highlights-user-blocks ()
   "Scenario: User transcript blocks are visually distinct."
@@ -99,9 +102,47 @@
     (with-current-buffer buf
       (goto-char (point-min))
       (search-forward "question")
+      (backward-char 1)
       (should (cl-some (lambda (overlay)
                          (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
                        (overlays-at (point)))))))
+
+(ert-deftest faltoo-chat-render-keeps-user-highlights-inside-user-blocks ()
+  "Scenario: User highlighting does not leak into the rest of the transcript."
+  (let ((buf (faltoo-chat-render '(((role . "user") (text . "question"))
+                                   ((role . "assistant") (text . "answer"))))))
+    ;; Given user and assistant messages are rendered.
+
+    ;; Then assistant text is not covered by the user block face.
+    (with-current-buffer buf
+      (goto-char (point-min))
+      (search-forward "answer")
+      (backward-char 1)
+      (should-not (cl-some (lambda (overlay)
+                             (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
+                           (overlays-at (point)))))))
+
+(ert-deftest faltoo-chat-render-highlights-persisted-tool-blocks ()
+  "Scenario: Persisted tool summaries are visually distinct."
+  (let ((buf (faltoo-chat-render '(((role . "tool") (text . "Shell: inspect files"))))))
+    ;; Given a persisted tool message is rendered.
+
+    ;; Then it has Faltoo's tool face overlay.
+    (with-current-buffer buf
+      (goto-char (point-min))
+      (search-forward "inspect files")
+      (backward-char 1)
+      (should (cl-some (lambda (overlay)
+                         (eq (overlay-get overlay 'face) 'faltoo-chat-tool-face))
+                       (overlays-at (point)))))))
+
+(ert-deftest faltoo-chat-faces-are-theme-aware ()
+  "Scenario: Transcript block faces inherit from theme faces."
+  ;; Then Faltoo does not hard-code transcript block colors.
+  (should (eq (face-attribute 'faltoo-chat-user-face :inherit nil)
+              'secondary-selection))
+  (should (eq (face-attribute 'faltoo-chat-tool-face :inherit nil)
+              'font-lock-comment-face)))
 
 (ert-deftest faltoo-chat-send-submits-current-user-prompt ()
   "Scenario: Sending from transcript submits only the current prompt."
@@ -230,9 +271,32 @@
   (faltoo-request--route-event '((classes . "status") (text . "first block")) nil nil)
   (faltoo-request--route-event '((classes . "tool") (text . "second block")) nil nil)
 
-  ;; Then each status/tool block has an empty line after it.
+  ;; Then each status/tool block has an empty line after it and a tool face.
   (with-current-buffer faltoo-chat-buffer-name
-    (should (string-match-p "- first block\n\n- second block\n\n" (buffer-string)))))
+    (should (string-match-p "- first block\n\n- second block\n\n" (buffer-string)))
+    (goto-char (point-min))
+    (search-forward "first block")
+    (should (cl-some (lambda (overlay)
+                       (eq (overlay-get overlay 'face) 'faltoo-chat-tool-face))
+                     (overlays-at (point))))))
+
+(ert-deftest faltoo-request-renders-only-truncated-tool-summary ()
+  "Scenario: Tool streams show FaltooChat-style summaries, not full command bodies."
+  (when (get-buffer faltoo-chat-buffer-name)
+    (kill-buffer faltoo-chat-buffer-name))
+  ;; Given a tool event contains a shell summary and hidden command body.
+  (faltoo-chat-start-stream "Assistant · streaming")
+
+  ;; When the event is routed into the transcript.
+  (faltoo-request--route-event
+   '((classes . "tool")
+     (text . "**Shell:** inspect files\n\n<!-- shell-command -->\n\nsed -n '1,999p' giant-file.el"))
+   nil nil)
+
+  ;; Then only the truncated summary is shown.
+  (with-current-buffer faltoo-chat-buffer-name
+    (should (string-match-p "Shell: inspect files" (buffer-string)))
+    (should-not (string-match-p "giant-file" (buffer-string)))))
 
 ;;; Reload specs
 
@@ -254,24 +318,24 @@
 
 ;;; Popup specs
 
-(ert-deftest faltoo-popup-mode-uses-org-mode-for-popup-styling ()
-  "Scenario: Faltoo posframes use Org mode styling."
-  (with-current-buffer (faltoo-popup-buffer "*Faltoo Org Popup Test*" #'faltoo-popup-mode)
-    ;; Then popups inherit the user's Org styling.
-    (should (derived-mode-p 'org-mode))))
+(ert-deftest faltoo-popup-mode-uses-markdown-mode-for-popup-styling ()
+  "Scenario: Faltoo posframes use Markdown mode styling."
+  (with-current-buffer (faltoo-popup-buffer "*Faltoo Markdown Popup Test*" #'faltoo-popup-mode)
+    ;; Then popups inherit the the user's Markdown styling.
+    (should (derived-mode-p 'markdown-mode))))
 
-(ert-deftest faltoo-all-popup-types-share-org-popup-base ()
-  "Scenario: Ask, comment, and response popups share Org popup styling."
+(ert-deftest faltoo-all-popup-types-share-markdown-popup-base ()
+  "Scenario: Ask, comment, and response popups share Markdown popup styling."
   ;; Given each popup type has a mode.
   (dolist (mode '(faltoo-popup-mode faltoo-ask-mode faltoo-comment-mode))
 
-    ;; Then each one derives from the same Org popup base.
+    ;; Then each one derives from the same Markdown popup base.
     (with-current-buffer (faltoo-popup-buffer (format "*Faltoo %s Test*" mode) mode)
       (should (derived-mode-p 'faltoo-popup-mode))
-      (should (derived-mode-p 'org-mode)))))
+      (should (derived-mode-p 'markdown-mode)))))
 
-(ert-deftest faltoo-last-response-popup-renders-org-content ()
-  "Scenario: Last response popup uses Org headings, not plain text."
+(ert-deftest faltoo-last-response-popup-renders-markdown-content ()
+  "Scenario: Last response popup uses Markdown headings, not plain text."
   (let ((faltoo-last-assistant-message "answer body"))
     ;; Given a latest assistant response exists.
 
@@ -279,10 +343,10 @@
     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
       (faltoo-show-last-response))
 
-    ;; Then the popup uses Org mode and Org content.
+    ;; Then the popup uses Markdown mode and Markdown content.
     (with-current-buffer faltoo-last-response-buffer
-      (should (derived-mode-p 'org-mode))
-      (should (string-match-p "* Last Assistant Response" (buffer-string)))
+      (should (derived-mode-p 'markdown-mode))
+      (should (string-match-p "# Last Assistant Response" (buffer-string)))
       (should (string-match-p "answer body" (buffer-string))))))
 
 (ert-deftest faltoo-popup-mode-does-not-bind-q ()

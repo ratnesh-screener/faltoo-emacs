@@ -17,8 +17,12 @@
   "Face for pending Faltoo review comment lines.")
 
 (defface faltoo-chat-user-face
-  '((t :extend t :background "#1f2f3a"))
-  "Face for user blocks in the Faltoo transcript.")
+  '((t :inherit secondary-selection))
+  "Theme-aware face for user blocks in the Faltoo transcript.")
+
+(defface faltoo-chat-tool-face
+  '((t :inherit font-lock-comment-face))
+  "Theme-aware face for truncated tool blocks in the Faltoo transcript.")
 
 (defface faltoo-diff-insert-line-face
   '((t :extend t :background "#12381f"))

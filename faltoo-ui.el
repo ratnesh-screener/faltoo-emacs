@@ -2,7 +2,7 @@
 
 (require 'posframe)
 (require 'subr-x)
-(require 'org)
+(require 'markdown-mode)
 
 (declare-function posframe-poshandler-frame-center "posframe")
 
@@ -17,7 +17,7 @@
     (define-key map (kbd "C-g") #'faltoo-popup-close)
     map))
 
-(define-derived-mode faltoo-popup-mode org-mode "Faltoo-Popup"
+(define-derived-mode faltoo-popup-mode markdown-mode "Faltoo-Popup"
   "Mode for Faltoo popup buffers."
   (setq-local mode-line-format nil)
   (setq-local truncate-lines nil))
