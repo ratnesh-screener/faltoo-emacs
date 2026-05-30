@@ -210,5 +210,7 @@
 (add-hook 'find-file-hook #'faltoo-review-enable-buffer)
 (add-hook 'buffer-list-update-hook #'faltoo-review-sync-current-file)
 
+(add-hook 'faltoo-after-reload-review-buffers-hook #'faltoo-vc-refresh)
+
 (provide 'faltoo-review)
 ;;; faltoo-review.el ends here

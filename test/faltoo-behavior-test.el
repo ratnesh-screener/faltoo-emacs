@@ -330,3 +330,19 @@
     (should (equal (faltoo-pending-work-labels) '("1 pending review comment(s)")))))
 
 ;;; faltoo-behavior-test.el ends here
+
+(ert-deftest faltoo-reload-review-buffers-refreshes-review-ui-state ()
+  "Scenario: Reloading assistant-edited review buffers refreshes overlays and diff highlights."
+  (let ((refreshed nil))
+    ;; Given a review reload hook is registered.
+    (add-hook 'faltoo-after-reload-review-buffers-hook
+              (lambda () (setq refreshed t)))
+
+    ;; When review buffers are reloaded after a request.
+    (unwind-protect
+        (progn
+          (faltoo-reload-review-buffers)
+
+          ;; Then review UI refresh hooks run once at the architecture boundary.
+          (should refreshed))
+      (setq faltoo-after-reload-review-buffers-hook nil))))

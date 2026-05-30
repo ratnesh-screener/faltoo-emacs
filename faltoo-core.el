@@ -18,6 +18,8 @@
 (defvar faltoo-current-review-index 0)
 (defvar faltoo-last-assistant-message "")
 (defvar faltoo-stream-target nil)
+(defvar faltoo-after-reload-review-buffers-hook nil
+  "Hook run after Faltoo reloads review buffers from disk.")
 
 (defun faltoo-git-root ()
   "Return the current Git root or signal an error."
@@ -66,13 +68,14 @@
   (add-to-list 'global-mode-string '(:eval (faltoo-status-string)) t))
 
 (defun faltoo-reload-review-buffers ()
-  "Reload live Faltoo review buffers from disk."
+  "Reload live Faltoo review buffers from disk and refresh review UI."
   (dolist (file faltoo-review-files)
     (let ((buf (find-buffer-visiting file)))
       (when buf
         (with-current-buffer buf
           (let ((buffer-read-only nil))
-            (revert-buffer :ignore-auto :noconfirm)))))))
+            (revert-buffer :ignore-auto :noconfirm))))))
+  (run-hooks 'faltoo-after-reload-review-buffers-hook))
 
 (provide 'faltoo-core)
 ;;; faltoo-core.el ends here

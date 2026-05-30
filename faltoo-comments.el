@@ -172,5 +172,7 @@
     (goto-char (point-min))
     (forward-line (1- target))))
 
+(add-hook 'faltoo-after-reload-review-buffers-hook #'faltoo-comments-refresh)
+
 (provide 'faltoo-comments)
 ;;; faltoo-comments.el ends here
