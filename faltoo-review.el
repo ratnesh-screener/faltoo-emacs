@@ -20,6 +20,7 @@
     (define-key map (kbd "C-c f s") #'faltoo-submit-review-comments)
     (define-key map (kbd "C-c f h") #'faltoo-chat)
     (define-key map (kbd "C-c f u") #'faltoo-review-unstaged)
+    (define-key map (kbd "C-c f x") #'faltoo-review-stop)
     (define-key map (kbd "C-c f g") #'faltoo-magit-status)
     (define-key map (kbd "C-c f d") #'faltoo-magit-diff-current-file)
     (define-key map (kbd "C-c f ]") #'faltoo-next-change)
@@ -37,7 +38,7 @@
 
 (define-minor-mode faltoo-review-mode
   "Minor mode for Faltoo code review buffers."
-  :lighter " Faltoo"
+  :lighter (:eval (faltoo-review-lighter))
   :keymap faltoo-review-mode-map
   (if faltoo-review-mode
       (progn
@@ -51,9 +52,27 @@
   "Return non-nil when FILE is in current review set."
   (member (file-truename file) faltoo-review-files))
 
+
+(defun faltoo-review-file-index (file)
+  "Return zero-based review index for FILE."
+  (cl-position (file-truename file) faltoo-review-files :test #'string=))
+
+(defun faltoo-review-lighter ()
+  "Return mode-line lighter for `faltoo-review-mode'."
+  (let ((index (and buffer-file-name (faltoo-review-file-index buffer-file-name))))
+    (if index
+        (format " Faltoo[%d/%d]" (1+ index) (length faltoo-review-files))
+      " Faltoo")))
+
+(defun faltoo-review-sync-current-file ()
+  "Sync current review index from the active buffer."
+  (when (and buffer-file-name (faltoo-review-file-p buffer-file-name))
+    (setq faltoo-current-review-index (faltoo-review-file-index buffer-file-name))))
+
 (defun faltoo-review-enable-buffer ()
   "Enable review mode when current file is in review set."
   (when (and buffer-file-name (faltoo-review-file-p buffer-file-name))
+    (faltoo-review-sync-current-file)
     (faltoo-review-mode 1)))
 
 (defun faltoo-review-unstaged ()
@@ -87,6 +106,18 @@
   "Visit previous Faltoo review file."
   (interactive)
   (faltoo-review--switch -1))
+
+(defun faltoo-review-stop ()
+  "Stop the current Faltoo review session."
+  (interactive)
+  (dolist (file faltoo-review-files)
+    (let ((buf (find-buffer-visiting file)))
+      (when buf
+        (with-current-buffer buf
+          (faltoo-review-mode -1)))))
+  (setq faltoo-review-files nil
+        faltoo-current-review-index 0)
+  (message "Faltoo review stopped"))
 
 (defun faltoo-vc-refresh ()
   "Refresh diff-hl, Magit, and Faltoo status."
@@ -152,6 +183,7 @@
   (magit-diff-working-tree nil (list "--" (faltoo-current-file))))
 
 (add-hook 'find-file-hook #'faltoo-review-enable-buffer)
+(add-hook 'buffer-list-update-hook #'faltoo-review-sync-current-file)
 
 (provide 'faltoo-review)
 ;;; faltoo-review.el ends here

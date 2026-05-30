@@ -33,6 +33,7 @@ Main prefix: `C-c f`
 
 ```text
 C-c f u   review unstaged files
+C-c f x   stop review session
 C-c f a   ask about active region/current line
 C-c f l   show last assistant response
 C-c f c   add review comment on line/region

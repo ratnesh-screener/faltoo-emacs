@@ -20,6 +20,7 @@
     (define-key map (kbd "s") #'faltoo-submit-review-comments)
     (define-key map (kbd "h") #'faltoo-chat)
     (define-key map (kbd "u") #'faltoo-review-unstaged)
+    (define-key map (kbd "x") #'faltoo-review-stop)
     (define-key map (kbd "g") #'faltoo-magit-status)
     (define-key map (kbd "]") #'faltoo-next-change)
     (define-key map (kbd "[") #'faltoo-prev-change)

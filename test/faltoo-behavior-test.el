@@ -140,3 +140,15 @@
        (with-current-buffer faltoo-chat-buffer-name
          (should (string-match-p "hello from assistant" (buffer-string))))
        (kill-buffer popup)))))
+
+(ert-deftest faltoo-review-stop-restores-review-buffer-writability ()
+  "Stopping review mode restores the reviewed source buffer's read-only state."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (file _root)
+     (setq faltoo-review-files (list (file-truename file)))
+     (faltoo-review-mode 1)
+     (should buffer-read-only)
+     (faltoo-review-stop)
+     (should-not faltoo-review-mode)
+     (should-not buffer-read-only))))
