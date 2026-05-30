@@ -8,6 +8,7 @@
 (defun posframe-show (&rest _args) nil)
 (defun posframe-hide-all () nil)
 (defun posframe-hide (&rest _args) nil)
+(defun posframe-poshandler-frame-center (&rest _args) nil)
 (provide 'posframe)
 
 (defun magit-stage-file (&rest _args) nil)
@@ -154,6 +155,56 @@
     (should (plist-get (cdr captured-args) :accept-focus))
     (should (> (plist-get (cdr captured-args) :border-width) 0))
     (should (plist-get (cdr captured-args) :border-color))))
+
+(ert-deftest faltoo-popup-show-opens-centered-and-remembers-return-window ()
+  "Scenario: Faltoo popups open centered and remember where focus came from."
+  (let ((popup (get-buffer-create "*Faltoo Centered Popup Test*"))
+        (source-window (selected-window))
+        captured-args)
+    ;; Given posframe-show is observed and window switching is suppressed.
+    (cl-letf (((symbol-function 'posframe-show)
+               (lambda (&rest args)
+                 (setq captured-args args)
+                 (selected-frame)))
+              ((symbol-function 'select-frame-set-input-focus) (lambda (&rest _args) nil))
+              ((symbol-function 'select-window) (lambda (&rest _args) nil))
+              ((symbol-function 'switch-to-buffer) (lambda (&rest _args) nil)))
+
+      ;; When showing a Faltoo popup.
+      (faltoo-popup-show popup 80 20))
+
+    ;; Then it uses the frame-center poshandler and stores the source window.
+    (should (eq (plist-get (cdr captured-args) :poshandler)
+                #'posframe-poshandler-frame-center))
+    (should-not (plist-member (cdr captured-args) :position))
+    (with-current-buffer popup
+      (should (eq faltoo-popup-return-window source-window)))))
+
+(ert-deftest faltoo-popup-close-restores-previous-source-window ()
+  "Scenario: Closing a popup returns focus to the buffer that opened it."
+  (let ((source (get-buffer-create "*Faltoo Popup Source Test*"))
+        (popup (get-buffer-create "*Faltoo Popup Close Test*")))
+    ;; Given a source window opened a popup in another window.
+    (delete-other-windows)
+    (switch-to-buffer source)
+    (let ((source-window (selected-window))
+          (popup-window (split-window-right)))
+      (with-current-buffer popup
+        (setq faltoo-popup-return-window source-window))
+      (select-window popup-window)
+      (switch-to-buffer popup)
+
+      ;; When closing the popup.
+      (cl-letf (((symbol-function 'posframe-hide) (lambda (&rest _args) nil))
+                ((symbol-function 'select-frame-set-input-focus) (lambda (&rest _args) nil)))
+        (faltoo-popup-close))
+
+      ;; Then focus returns to the original source buffer.
+      (should (eq (selected-window) source-window))
+      (should (eq (current-buffer) source)))
+    (delete-other-windows)
+    (kill-buffer source)
+    (kill-buffer popup)))
 
 ;;; Comment specs
 

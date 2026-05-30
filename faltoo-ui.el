@@ -3,8 +3,12 @@
 (require 'posframe)
 (require 'subr-x)
 
+(declare-function posframe-poshandler-frame-center "posframe")
+
 (defvar faltoo-popup-buffer "*Faltoo Popup*")
 (defvar faltoo-last-response-buffer "*Faltoo Last Response*")
+
+(defvar-local faltoo-popup-return-window nil)
 
 (defvar faltoo-popup-mode-map
   (let ((map (make-sparse-keymap)))
@@ -20,9 +24,13 @@
   (setq-local truncate-lines nil))
 
 (defun faltoo-popup-close ()
-  "Close the active Faltoo posframe."
+  "Close the active Faltoo posframe and return focus to the source window."
   (interactive)
-  (posframe-hide (current-buffer)))
+  (let ((return-window faltoo-popup-return-window))
+    (posframe-hide (current-buffer))
+    (when (window-live-p return-window)
+      (select-frame-set-input-focus (window-frame return-window))
+      (select-window return-window))))
 
 (defun faltoo-popup-buffer (name mode)
   "Return popup buffer NAME in MODE."
@@ -34,21 +42,24 @@
     buf))
 
 (defun faltoo-popup-show (buffer &optional width height)
-  "Show BUFFER in a focusable bordered posframe near point."
-  (let ((frame (posframe-show buffer
-                              :position (point)
-                              :width (or width 100)
-                              :height (or height 24)
-                              :border-width 2
-                              :border-color "#888888"
-                              :internal-border-width 2
-                              :internal-border-color "#222222"
-                              :respect-header-line t
-                              :accept-focus t)))
-    (select-frame-set-input-focus frame)
-    (select-window (frame-selected-window frame))
-    (with-selected-frame frame
-      (switch-to-buffer buffer))))
+  "Show BUFFER in a centered, focusable, bordered posframe."
+  (let ((return-window (selected-window)))
+    (with-current-buffer buffer
+      (setq faltoo-popup-return-window return-window))
+    (let ((frame (posframe-show buffer
+                                :poshandler #'posframe-poshandler-frame-center
+                                :width (or width 100)
+                                :height (or height 24)
+                                :border-width 2
+                                :border-color "#888888"
+                                :internal-border-width 2
+                                :internal-border-color "#222222"
+                                :respect-header-line t
+                                :accept-focus t)))
+      (select-frame-set-input-focus frame)
+      (select-window (frame-selected-window frame))
+      (with-selected-frame frame
+        (switch-to-buffer buffer)))))
 
 (defun faltoo-popup-set-lines (buffer lines)
   "Replace BUFFER contents with LINES."
