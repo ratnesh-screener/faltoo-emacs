@@ -1,9 +1,10 @@
-;;; faltoo-performance-test.el --- Performance behavior tests for faltoo -*- lexical-binding: t; -*-
+;;; faltoo-performance-test.el --- Performance behavior specs for faltoo -*- lexical-binding: t; -*-
 
 (require 'ert)
 (require 'benchmark)
 (add-to-list 'load-path default-directory)
 
+;; Test doubles for required packages.
 (defun posframe-show (&rest _args) nil)
 (defun posframe-hide-all () nil)
 (defun posframe-hide (&rest _args) nil)
@@ -37,6 +38,7 @@
     (should (< elapsed seconds))))
 
 (defun faltoo-perf--with-temp-git-file (line-count body)
+  "Create a large temporary Git-backed file, then call BODY."
   (let* ((root (file-name-as-directory (make-temp-file "faltoo-perf" t)))
          (default-directory root)
          (file (expand-file-name "large.py" root)))
@@ -53,23 +55,28 @@
       (delete-directory root t))))
 
 (ert-deftest faltoo-performance-ask-context-from-large-current-line-is-instant ()
-  "Ask context from a large buffer current line stays interactive."
+  "Scenario: Ask context extraction stays fast in large source buffers."
   (faltoo-perf--with-temp-git-file
    10000
    (lambda (_file _root)
+     ;; Given point is near the end of a large source file.
      (goto-char (point-min))
      (forward-line 9000)
+
+     ;; When Ask context is extracted repeatedly.
+     ;; Then it remains comfortably interactive.
      (faltoo-perf--should-finish-under
       0.1
       (lambda ()
         (dotimes (_ 200)
           (faltoo-ask--context)))))))
 
-(ert-deftest faltoo-performance-comment-refresh-for_many_comments_stays_interactive ()
-  "Refreshing many pending comment overlays stays interactive."
+(ert-deftest faltoo-performance-comment-refresh-for-many-comments-stays-interactive ()
+  "Scenario: Refreshing many pending comment overlays stays interactive."
   (faltoo-perf--with-temp-git-file
    2000
    (lambda (file _root)
+     ;; Given many pending line comments in one review buffer.
      (setq faltoo-comments nil)
      (dotimes (index 300)
        (push (make-faltoo-comment :file "large.py"
@@ -79,31 +86,42 @@
                                   :code "line"
                                   :text "comment")
              faltoo-comments))
+
+     ;; When overlays are refreshed.
+     ;; Then the operation remains interactive.
      (faltoo-perf--should-finish-under
       0.25
       (lambda ()
         (faltoo-comments-refresh))))))
 
-(ert-deftest faltoo-performance-rendering_large_transcript_stays_interactive ()
-  "Rendering a large transcript stays interactive."
+(ert-deftest faltoo-performance-rendering-large-transcript-stays-interactive ()
+  "Scenario: Rendering a large transcript stays interactive."
+  ;; Given a long transcript.
   (let ((messages nil))
     (dotimes (index 400)
       (push `((role . ,(if (cl-evenp index) "user" "assistant"))
               (text . ,(format "message %d\n%s" index (make-string 200 ?x))))
             messages))
+
+    ;; When rendering the transcript.
+    ;; Then it remains fast enough to use as background history.
     (faltoo-perf--should-finish-under
      0.35
      (lambda ()
        (faltoo-chat-render (nreverse messages))))
     (kill-buffer faltoo-chat-buffer-name)))
 
-(ert-deftest faltoo-performance-routing_many_stream_chunks_stays_interactive ()
-  "Routing many stream chunks to popup and transcript stays interactive."
+(ert-deftest faltoo-performance-routing-many-stream-chunks-stays-interactive ()
+  "Scenario: Routing many stream chunks to popup and transcript stays interactive."
   (let ((popup (get-buffer-create "*Faltoo Perf Popup*")))
     (unwind-protect
         (progn
+          ;; Given an active popup and transcript stream.
           (with-current-buffer popup (erase-buffer))
           (faltoo-chat-start-stream "Assistant · streaming")
+
+          ;; When many answer chunks arrive.
+          ;; Then routing remains interactive.
           (faltoo-perf--should-finish-under
            0.25
            (lambda ()
