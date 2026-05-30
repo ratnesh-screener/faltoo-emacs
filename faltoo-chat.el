@@ -5,7 +5,7 @@
 (require 'faltoo-bridge)
 (require 'faltoo-ui)
 (require 'faltoo-faces)
-(require 'markdown-mode)
+(require 'org)
 (require 'faltoo-compose)
 
 (declare-function faltoo-request-message "faltoo-request")
@@ -15,15 +15,21 @@
 (defvar-local faltoo-chat-user-overlays nil)
 (defvar-local faltoo-chat-tool-overlays nil)
 
+(defcustom faltoo-chat-turns 20
+  "Number of recent user turns shown in the Faltoo transcript."
+  :type 'integer
+  :group 'faltoo)
+
 (defvar faltoo-chat-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'faltoo-chat-send)
     (define-key map (kbd "C-c C-r") #'faltoo-chat-refresh)
+    (define-key map (kbd "C-c C-l") #'faltoo-chat-load-more)
     (define-key map (kbd "C-c C-f") #'faltoo-insert-file-reference)
     (define-key map (kbd "C-c /") #'faltoo-insert-slash-command)
     map))
 
-(define-derived-mode faltoo-chat-mode markdown-mode "Faltoo"
+(define-derived-mode faltoo-chat-mode org-mode "Faltoo"
   "Faltoo transcript/history buffer."
   (setq-local truncate-lines nil))
 
@@ -51,21 +57,24 @@
          (role-text (or (alist-get 'role message) "message"))
          (role (capitalize role-text))
          (text (or (alist-get 'text message) "")))
-    (insert (format "# %s\n\n" role))
-    (insert text)
-    (let ((content-end (point)))
-      (insert "\n\n")
-      (cond
-       ((string= (downcase role-text) "user")
-        (faltoo-chat--highlight-user-block start content-end))
-       ((string= (downcase role-text) "tool")
-        (faltoo-chat--highlight-tool-block start content-end))))))
+    (if (string= (downcase role-text) "tool")
+        (progn
+          (insert "- " text)
+          (let ((content-end (point)))
+            (insert "\n\n")
+            (faltoo-chat--highlight-tool-block start content-end)))
+      (insert (format "* %s\n\n" role))
+      (insert text)
+      (let ((content-end (point)))
+        (insert "\n\n")
+        (when (string= (downcase role-text) "user")
+          (faltoo-chat--highlight-user-block start content-end))))))
 
 (defun faltoo-chat--insert-user-prompt ()
   (goto-char (point-max))
   (unless (or (bobp) (bolp)) (insert "\n"))
   (let ((start (point)))
-    (insert "# User\n\n")
+    (insert "* User\n\n")
     (setq faltoo-chat-prompt-marker (point-marker))
     (faltoo-chat--highlight-user-block start (line-end-position 0))))
 
@@ -88,12 +97,22 @@
 (defun faltoo-chat-refresh ()
   "Refresh transcript from FaltooBot session."
   (interactive)
-  (pop-to-buffer (faltoo-chat-render (faltoo-bridge-messages))))
+  (pop-to-buffer (faltoo-chat-render (faltoo-bridge-messages faltoo-chat-turns))))
 
 (defun faltoo-chat ()
   "Open Faltoo transcript."
   (interactive)
   (faltoo-chat-refresh))
+
+(defun faltoo-chat-load-more (arg)
+  "Load more transcript turns. With prefix ARG, show exactly that many user turns."
+  (interactive "P")
+  (setq faltoo-chat-turns
+        (if arg
+            (prefix-numeric-value arg)
+          (* 2 faltoo-chat-turns)))
+  (faltoo-chat-refresh)
+  (message "Faltoo transcript showing last %s user turn(s)" faltoo-chat-turns))
 
 (defun faltoo-chat--prompt-text ()
   (string-trim (buffer-substring-no-properties faltoo-chat-prompt-marker (point-max))))
@@ -117,7 +136,7 @@
         (goto-char (point-max))
         (unless (or (bobp) (looking-back "\n\n" nil))
           (insert "\n"))
-        (insert (format "# %s\n\n" title))))
+        (insert (format "* %s\n\n" title))))
     buf))
 
 (defun faltoo-chat-append-stream (text)
@@ -136,7 +155,7 @@
 (defun faltoo-chat-finish-stream ()
   "Refresh transcript after stream completion."
   (when (get-buffer faltoo-chat-buffer-name)
-    (faltoo-chat-render (faltoo-bridge-messages))))
+    (faltoo-chat-render (faltoo-bridge-messages faltoo-chat-turns))))
 
 (provide 'faltoo-chat)
 ;;; faltoo-chat.el ends here

@@ -3,8 +3,6 @@
 (require 'ert)
 (add-to-list 'load-path default-directory)
 
-(define-derived-mode markdown-mode text-mode "Markdown")
-(provide 'markdown-mode)
 
 ;; Test doubles for required packages. The plugin requires these packages in real
 ;; use; tests stub only the small surface they exercise.
@@ -55,6 +53,24 @@
             ((symbol-function 'faltoo-popup-close) (lambda () nil)))
     (funcall body)))
 
+;;; Bridge specs
+
+(ert-deftest faltoo-bridge-messages-passes-turn-limit-to-bridge ()
+  "Scenario: Transcript history loading asks the bridge for recent user turns."
+  (let ((faltoo-workspace "/tmp/faltoo-test") captured-args)
+    ;; Given bridge JSON calls are observed.
+
+    ;; When fetching the last 25 turns.
+    (cl-letf (((symbol-function 'faltoo-bridge-call-json)
+               (lambda (args &optional _input)
+                 (setq captured-args args)
+                 '((messages . nil)))))
+      (faltoo-bridge-messages 25))
+
+    ;; Then the bridge receives a turns argument.
+    (should (member "--turns" captured-args))
+    (should (member "25" captured-args))))
+
 ;;; Chat specs
 
 (ert-deftest faltoo-chat-opens-editable-user-prompt ()
@@ -71,17 +87,17 @@
         (should-not buffer-read-only)
         (should (markerp faltoo-chat-prompt-marker))
         (should (= (point) faltoo-chat-prompt-marker))
-        (should (string-match-p "# User" (buffer-string)))))))
+        (should (string-match-p (regexp-quote "* User") (buffer-string)))))))
 
-(ert-deftest faltoo-chat-mode-uses-markdown-mode-for-transcript-styling ()
-  "Scenario: Transcript uses Markdown mode styling."
+(ert-deftest faltoo-chat-mode-uses-org-mode-for-transcript-styling ()
+  "Scenario: Transcript uses Org mode styling."
   ;; Given the transcript buffer is rendered.
   (let ((buf (faltoo-chat-render nil)))
 
-    ;; Then it derives from Markdown mode and uses Markdown headings.
+    ;; Then it derives from Org mode and uses Org headings.
     (with-current-buffer buf
-      (should (derived-mode-p 'markdown-mode))
-      (should (string-match-p "# User" (buffer-string))))))
+      (should (derived-mode-p 'org-mode))
+      (should (string-match-p (regexp-quote "* User") (buffer-string))))))
 
 (ert-deftest faltoo-chat-render-separates-message-blocks-with-blank-lines ()
   "Scenario: Transcript message blocks have breathing room between them."
@@ -91,7 +107,7 @@
 
     ;; Then there is an empty line between message blocks.
     (with-current-buffer buf
-      (should (string-match-p "question\n\n# Assistant" (buffer-string))))))
+      (should (string-match-p (regexp-quote "question\n\n* Assistant") (buffer-string))))))
 
 (ert-deftest faltoo-chat-render-highlights-user-blocks ()
   "Scenario: User transcript blocks are visually distinct."
@@ -122,19 +138,71 @@
                              (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
                            (overlays-at (point)))))))
 
-(ert-deftest faltoo-chat-render-highlights-persisted-tool-blocks ()
-  "Scenario: Persisted tool summaries are visually distinct."
+(ert-deftest faltoo-chat-render-shows-persisted-tool-summaries-without-headings ()
+  "Scenario: Persisted tool summaries do not inflate the heading list."
   (let ((buf (faltoo-chat-render '(((role . "tool") (text . "Shell: inspect files"))))))
     ;; Given a persisted tool message is rendered.
 
-    ;; Then it has Faltoo's tool face overlay.
+    ;; Then it is a one-line summary, not its own Tool heading.
     (with-current-buffer buf
+      (should (string-match-p "- Shell: inspect files" (buffer-string)))
+      (should-not (string-match-p "\* Tool" (buffer-string)))
       (goto-char (point-min))
       (search-forward "inspect files")
       (backward-char 1)
       (should (cl-some (lambda (overlay)
                          (eq (overlay-get overlay 'face) 'faltoo-chat-tool-face))
                        (overlays-at (point)))))))
+
+(ert-deftest faltoo-chat-refresh-loads-configured-number-of-turns ()
+  "Scenario: Transcript refresh asks the bridge for the configured turn count."
+  (let ((faltoo-chat-turns 12) captured-turns)
+    ;; Given a transcript turn limit is configured.
+
+    ;; When refreshing the transcript.
+    (cl-letf (((symbol-function 'faltoo-bridge-messages)
+               (lambda (&optional turns)
+                 (setq captured-turns turns)
+                 nil))
+              ((symbol-function 'pop-to-buffer) (lambda (&rest _args) nil)))
+      (faltoo-chat-refresh))
+
+    ;; Then the bridge receives that turn count.
+    (should (= captured-turns 12))))
+
+(ert-deftest faltoo-chat-load-more-doubles-visible-turn-count ()
+  "Scenario: Loading more transcript history expands the visible turn count."
+  (let ((faltoo-chat-turns 10) captured-turns)
+    ;; Given the transcript is showing a small recent window.
+
+    ;; When loading more without a prefix.
+    (cl-letf (((symbol-function 'faltoo-bridge-messages)
+               (lambda (&optional turns)
+                 (setq captured-turns turns)
+                 nil))
+              ((symbol-function 'pop-to-buffer) (lambda (&rest _args) nil)))
+      (faltoo-chat-load-more nil))
+
+    ;; Then the visible turn count doubles and refresh uses it.
+    (should (= faltoo-chat-turns 20))
+    (should (= captured-turns 20))))
+
+(ert-deftest faltoo-chat-load-more-prefix-sets-visible-turn-count ()
+  "Scenario: Loading more with a prefix chooses an exact turn count."
+  (let ((faltoo-chat-turns 10) captured-turns)
+    ;; Given the transcript is showing a small recent window.
+
+    ;; When loading exactly 50 turns.
+    (cl-letf (((symbol-function 'faltoo-bridge-messages)
+               (lambda (&optional turns)
+                 (setq captured-turns turns)
+                 nil))
+              ((symbol-function 'pop-to-buffer) (lambda (&rest _args) nil)))
+      (faltoo-chat-load-more 50))
+
+    ;; Then the exact prefix count is used.
+    (should (= faltoo-chat-turns 50))
+    (should (= captured-turns 50))))
 
 (ert-deftest faltoo-chat-faces-are-theme-aware ()
   "Scenario: Transcript block faces inherit from theme faces."
@@ -233,7 +301,7 @@
                     (funcall on-event '((classes . "done") (text . "Assistant response saved.")))
                     (funcall on-done t)))
                  ((symbol-function 'faltoo-bridge-messages)
-                  (lambda () '(((role . "assistant") (text . "hello from assistant")))))
+                  (lambda (&optional _turns) '(((role . "assistant") (text . "hello from assistant")))))
                  ((symbol-function 'ding) (lambda (&rest _args) nil)))
          (faltoo-request-message "question" popup))
 
@@ -318,24 +386,24 @@
 
 ;;; Popup specs
 
-(ert-deftest faltoo-popup-mode-uses-markdown-mode-for-popup-styling ()
-  "Scenario: Faltoo posframes use Markdown mode styling."
-  (with-current-buffer (faltoo-popup-buffer "*Faltoo Markdown Popup Test*" #'faltoo-popup-mode)
-    ;; Then popups inherit the the user's Markdown styling.
-    (should (derived-mode-p 'markdown-mode))))
+(ert-deftest faltoo-popup-mode-uses-org-mode-for-popup-styling ()
+  "Scenario: Faltoo posframes use Org mode styling."
+  (with-current-buffer (faltoo-popup-buffer "*Faltoo Org Popup Test*" #'faltoo-popup-mode)
+    ;; Then popups inherit the the user's Org styling.
+    (should (derived-mode-p 'org-mode))))
 
-(ert-deftest faltoo-all-popup-types-share-markdown-popup-base ()
-  "Scenario: Ask, comment, and response popups share Markdown popup styling."
+(ert-deftest faltoo-all-popup-types-share-org-popup-base ()
+  "Scenario: Ask, comment, and response popups share Org popup styling."
   ;; Given each popup type has a mode.
   (dolist (mode '(faltoo-popup-mode faltoo-ask-mode faltoo-comment-mode))
 
-    ;; Then each one derives from the same Markdown popup base.
+    ;; Then each one derives from the same Org popup base.
     (with-current-buffer (faltoo-popup-buffer (format "*Faltoo %s Test*" mode) mode)
       (should (derived-mode-p 'faltoo-popup-mode))
-      (should (derived-mode-p 'markdown-mode)))))
+      (should (derived-mode-p 'org-mode)))))
 
-(ert-deftest faltoo-last-response-popup-renders-markdown-content ()
-  "Scenario: Last response popup uses Markdown headings, not plain text."
+(ert-deftest faltoo-last-response-popup-renders-org-content ()
+  "Scenario: Last response popup uses Org headings, not plain text."
   (let ((faltoo-last-assistant-message "answer body"))
     ;; Given a latest assistant response exists.
 
@@ -343,10 +411,10 @@
     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
       (faltoo-show-last-response))
 
-    ;; Then the popup uses Markdown mode and Markdown content.
+    ;; Then the popup uses Org mode and Org content.
     (with-current-buffer faltoo-last-response-buffer
-      (should (derived-mode-p 'markdown-mode))
-      (should (string-match-p "# Last Assistant Response" (buffer-string)))
+      (should (derived-mode-p 'org-mode))
+      (should (string-match-p (regexp-quote "* Last Assistant Response") (buffer-string)))
       (should (string-match-p "answer body" (buffer-string))))))
 
 (ert-deftest faltoo-popup-mode-does-not-bind-q ()

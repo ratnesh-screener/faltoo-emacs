@@ -4,8 +4,6 @@
 (require 'benchmark)
 (add-to-list 'load-path default-directory)
 
-(define-derived-mode markdown-mode text-mode "Markdown")
-(provide 'markdown-mode)
 
 ;; Test doubles for required packages.
 (defun posframe-show (&rest _args) nil)

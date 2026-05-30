@@ -7,7 +7,6 @@ This is a personal-use plugin optimized for the author's workflow. It targets GN
 - `posframe`
 - `magit`
 - `diff-hl`
-- `markdown-mode`
 
 ## Load
 
@@ -74,6 +73,7 @@ In `*Faltoo*` transcript:
 ```text
 C-c C-c   send current prompt
 C-c C-r   refresh transcript
+C-c C-l   load more transcript turns; numeric prefix sets exact turn count
 C-c C-f   insert file reference
 C-c /     insert slash command
 ```
@@ -112,7 +112,7 @@ Emacs asks before quitting while a Faltoo request is running or review comments 
 
 ## Popup UI
 
-Ask and comment popups use centered `posframe` windows in `markdown-mode`. The header shows file/range context, code is shown above the editable question/comment area, and the footer lists the important keys.
+Ask and comment popups use centered `posframe` windows in `org-mode`. The header shows file/range context, code is shown above the editable question/comment area, and the footer lists the important keys.
 
 Pending review-comment lines are highlighted directly.
 

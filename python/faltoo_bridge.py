@@ -76,7 +76,24 @@ def unstaged_files(workspace: Path) -> int:
     return 0
 
 
-def messages(workspace: Path, limit: int) -> int:
+def _last_user_turns(
+    messages_payload: list[dict[str, str]], turns: int | None
+) -> list[dict[str, str]]:
+    if turns is None:
+        return messages_payload
+
+    seen = 0
+    start = 0
+    for index in range(len(messages_payload) - 1, -1, -1):
+        if messages_payload[index]["role"] == "user":
+            seen += 1
+            if seen == turns:
+                start = index
+                break
+    return messages_payload[start:]
+
+
+def messages(workspace: Path, limit: int, turns: int | None) -> int:
     items = get_messages(_session(workspace))["messages"][-limit:]
     messages_payload: list[dict[str, str]] = []
     for item in items:
@@ -89,7 +106,7 @@ def messages(workspace: Path, limit: int) -> int:
         role = "assistant" if classes in {"answer", "thinking"} else classes
         messages_payload.append({"role": role, "text": _tool_summary(text) if classes == "tool" else text.strip()})
 
-    print(json.dumps({"messages": messages_payload}, ensure_ascii=False))
+    print(json.dumps({"messages": _last_user_turns(messages_payload, turns)}, ensure_ascii=False))
     return 0
 
 
@@ -205,6 +222,7 @@ def main() -> int:
     messages_parser = sub.add_parser("messages")
     messages_parser.add_argument("--workspace", default=str(Path.cwd()))
     messages_parser.add_argument("--limit", type=int, default=100)
+    messages_parser.add_argument("--turns", type=int)
 
     messages_path_parser = sub.add_parser("messages-path")
     messages_path_parser.add_argument("--workspace", default=str(Path.cwd()))
@@ -218,7 +236,7 @@ def main() -> int:
 
     args = parser.parse_args()
     if args.command == "messages":
-        return messages(Path(args.workspace), args.limit)
+        return messages(Path(args.workspace), args.limit, args.turns)
     if args.command == "messages-path":
         return messages_path(Path(args.workspace))
     if args.command == "unstaged-files":

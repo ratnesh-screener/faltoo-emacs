@@ -97,10 +97,11 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
     (process-send-eof proc)
     proc))
 
-(defun faltoo-bridge-messages ()
-  (alist-get 'messages
-             (faltoo-bridge-call-json
-              (list "messages" "--workspace" (faltoo-workspace) "--limit" "100"))))
+(defun faltoo-bridge-messages (&optional turns)
+  (let ((args (list "messages" "--workspace" (faltoo-workspace) "--limit" "2000")))
+    (when turns
+      (setq args (append args (list "--turns" (number-to-string turns)))))
+    (alist-get 'messages (faltoo-bridge-call-json args))))
 
 (defun faltoo-bridge-unstaged-files ()
   (let ((payload (faltoo-bridge-call-json

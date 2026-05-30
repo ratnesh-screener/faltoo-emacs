@@ -1,8 +1,6 @@
 ;;; load-smoke.el -*- lexical-binding: t; -*-
 (add-to-list 'load-path default-directory)
 
-(define-derived-mode markdown-mode text-mode "Markdown")
-(provide 'markdown-mode)
 (defun posframe-show (&rest _args))
 (defun posframe-hide-all ())
 (defun posframe-hide (&rest _args))

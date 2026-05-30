@@ -9,7 +9,7 @@
 - Avoid excessive defensive programming; this codebase controls most call paths.
 - Fix root causes with higher-level architecture changes, not localized band-aid handlers.
 - Preserve the code-first workflow: source buffers are primary; transcript is secondary/history.
-- Dependencies are acceptable and expected. Required packages are `posframe`, `magit`, `diff-hl`, and `markdown-mode`.
+- Dependencies are acceptable and expected. Required packages are `posframe`, `magit`, and `diff-hl`.
 - Target the latest stable Emacs in use for this project, currently GNU Emacs 30.2.
 
 ## Product Direction
@@ -80,7 +80,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - `C-c f x` stops current review session.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
 - Ask responses stream in the posframe and transcript.
-- Transcript and popup buffers use `markdown-mode` for LLM Markdown rendering.
+- Transcript and popup buffers use `org-mode` so generated headings/blocks match the user's Org styling.
 - Review-comment submissions stream to `*Faltoo*` and status/mode-line, not a popup.
 - Review buffers are read-only and show a header line with `Faltoo[1/N]`.
 - `diff-hl` is configured buffer-locally in review buffers for full-line highlights.
@@ -131,6 +131,7 @@ C-c f c   add review comment
 C-c C-c   save comment
 C-c f s   submit comments
 C-c f h   view transcript
+C-c C-l   load more transcript turns from `*Faltoo*`
 ```
 
 Expected visual behavior:
