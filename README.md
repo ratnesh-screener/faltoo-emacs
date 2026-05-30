@@ -70,3 +70,7 @@ C-c /     insert slash command, Ask only
 - Ask responses stream in the posframe near code.
 - Review-comment submission streams to `*Faltoo*` and status/mode-line.
 - Faltoo never auto-stages changes.
+
+## Quit guard
+
+Emacs asks before quitting while a Faltoo request is running or review comments are pending.

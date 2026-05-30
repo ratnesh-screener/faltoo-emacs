@@ -631,6 +631,8 @@ Warn/confirm when there is:
 - a running Faltoo request
 - pending review comments
 
+Implemented with `kill-emacs-query-functions`.
+
 Since default Ask messages send immediately, there is no pending Ask question in the MVP unless a draft feature is later added.
 
 ## Raw Session / Tree Command
