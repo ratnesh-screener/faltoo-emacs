@@ -211,6 +211,27 @@
   ;; Then q is not a close shortcut; it remains normal text input.
   (should-not (lookup-key faltoo-popup-mode-map (kbd "q"))))
 
+(ert-deftest faltoo-popup-show-makes-cursor-visible-in-popup ()
+  "Scenario: Faltoo popups show a visible cursor in the editable posframe."
+  (let ((popup (faltoo-popup-buffer "*Faltoo Cursor Popup Test*" #'faltoo-popup-mode))
+        captured-args)
+    ;; Given posframe-show is observed instead of displaying a real child frame.
+    (cl-letf (((symbol-function 'posframe-show)
+               (lambda (&rest args)
+                 (setq captured-args args)
+                 (selected-frame)))
+              ((symbol-function 'select-frame-set-input-focus) (lambda (&rest _args) nil)))
+
+      ;; When showing a Faltoo popup.
+      (faltoo-popup-show popup 80 20))
+
+    ;; Then the popup has a cursor even if the child frame does not keep OS focus.
+    (with-current-buffer popup
+      (should cursor-type)
+      (should cursor-in-non-selected-windows))
+    (should (alist-get 'cursor-color
+                       (plist-get (cdr captured-args) :override-parameters)))))
+
 (ert-deftest faltoo-popup-show-creates-focusable-bordered-posframe ()
   "Scenario: Faltoo popups are focusable and visibly bordered."
   (let (captured-args)
