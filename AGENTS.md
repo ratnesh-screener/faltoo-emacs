@@ -1,0 +1,2 @@
+- User prefers compact responses; avoid lengthy explanations unless specifically asked.
+- This Emacs plugin is for the user's personal use only. Prefer opinionated, direct, fast implementation over broad compatibility/fallbacks. Support the user's desired workflow rather than catering to all users.

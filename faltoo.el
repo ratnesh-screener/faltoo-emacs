@@ -1,0 +1,52 @@
+;;; faltoo.el --- Code-first Faltoo integration -*- lexical-binding: t; -*-
+
+;; Package-Requires: ((emacs "30.2") (posframe "1.4.4") (magit "4.0.0") (diff-hl "1.9.0"))
+
+(require 'faltoo-core)
+(require 'faltoo-bridge)
+(require 'faltoo-ui)
+(require 'faltoo-chat)
+(require 'faltoo-ask)
+(require 'faltoo-comments)
+(require 'faltoo-review)
+
+(defvar faltoo-command-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "a") #'faltoo-ask)
+    (define-key map (kbd "l") #'faltoo-show-last-response)
+    (define-key map (kbd "c") #'faltoo-comment)
+    (define-key map (kbd "C") #'faltoo-file-comment)
+    (define-key map (kbd "s") #'faltoo-submit-review-comments)
+    (define-key map (kbd "h") #'faltoo-chat)
+    (define-key map (kbd "u") #'faltoo-review-unstaged)
+    (define-key map (kbd "g") #'faltoo-magit-status)
+    (define-key map (kbd "]") #'faltoo-next-change)
+    (define-key map (kbd "[") #'faltoo-prev-change)
+    (define-key map (kbd "n") #'faltoo-next-comment)
+    (define-key map (kbd "p") #'faltoo-prev-comment)
+    (define-key map (kbd "S") #'faltoo-stage-current-file)
+    (define-key map (kbd "U") #'faltoo-unstage-current-file)
+    map)
+  "Faltoo command prefix map.")
+
+(define-minor-mode faltoo-mode
+  "Global Faltoo command keymap."
+  :global t
+  :group 'faltoo
+  :lighter ""
+  :keymap `((,(kbd "C-c f") . ,faltoo-command-map)))
+
+(defun faltoo-open-messages-json ()
+  "Open the raw Faltoo messages JSON file."
+  (interactive)
+  (find-file (faltoo-bridge-messages-path)))
+
+(defun faltoo-tree ()
+  "Compatibility alias for opening Faltoo messages JSON."
+  (interactive)
+  (faltoo-open-messages-json))
+
+(faltoo-mode 1)
+
+(provide 'faltoo)
+;;; faltoo.el ends here
