@@ -138,6 +138,13 @@
 
 ;;; Popup specs
 
+(ert-deftest faltoo-popup-mode-does-not-bind-q ()
+  "Scenario: Popup text editing keeps q available for typing."
+  ;; Given Faltoo popup keybindings are active.
+
+  ;; Then q is not a close shortcut; it remains normal text input.
+  (should-not (lookup-key faltoo-popup-mode-map (kbd "q"))))
+
 (ert-deftest faltoo-popup-show-creates-focusable-bordered-posframe ()
   "Scenario: Faltoo popups are focusable and visibly bordered."
   (let (captured-args)

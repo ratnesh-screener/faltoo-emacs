@@ -14,7 +14,6 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-k") #'faltoo-popup-close)
     (define-key map (kbd "C-g") #'faltoo-popup-close)
-    (define-key map (kbd "q") #'faltoo-popup-close)
     map))
 
 (define-derived-mode faltoo-popup-mode text-mode "Faltoo-Popup"
