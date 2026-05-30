@@ -63,14 +63,6 @@
         (select-window (frame-selected-window frame))
         (switch-to-buffer buffer)))))
 
-(defun faltoo-popup-set-lines (buffer lines)
-  "Replace BUFFER contents with LINES."
-  (with-current-buffer buffer
-    (let ((inhibit-read-only t))
-      (erase-buffer)
-      (insert (string-join lines "\n"))
-      (goto-char (point-max)))))
-
 (defun faltoo-popup-append (buffer text)
   "Append TEXT to BUFFER."
   (with-current-buffer buffer

@@ -118,8 +118,7 @@
     (when (string-empty-p message)
       (user-error "No assistant response yet"))
     (let ((buf (faltoo-popup-buffer faltoo-last-response-buffer #'faltoo-popup-mode)))
-      (faltoo-popup-set-lines buf (split-string message "\n"))
-      (with-current-buffer buf (setq buffer-read-only t))
+      (faltoo-compose-set-message buf "Last Assistant Response" message t)
       (faltoo-popup-show buf 100 28))))
 
 (provide 'faltoo-ask)

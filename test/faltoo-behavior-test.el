@@ -204,6 +204,31 @@
     ;; Then popups inherit the user's Org styling.
     (should (derived-mode-p 'org-mode))))
 
+(ert-deftest faltoo-all-popup-types-share-org-popup-base ()
+  "Scenario: Ask, comment, and response popups share Org popup styling."
+  ;; Given each popup type has a mode.
+  (dolist (mode '(faltoo-popup-mode faltoo-ask-mode faltoo-comment-mode))
+
+    ;; Then each one derives from the same Org popup base.
+    (with-current-buffer (faltoo-popup-buffer (format "*Faltoo %s Test*" mode) mode)
+      (should (derived-mode-p 'faltoo-popup-mode))
+      (should (derived-mode-p 'org-mode)))))
+
+(ert-deftest faltoo-last-response-popup-renders-org-content ()
+  "Scenario: Last response popup uses Org headings, not plain text."
+  (let ((faltoo-last-assistant-message "answer body"))
+    ;; Given a latest assistant response exists.
+
+    ;; When opening it without displaying the real posframe.
+    (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+      (faltoo-show-last-response))
+
+    ;; Then the popup uses Org mode and Org content.
+    (with-current-buffer faltoo-last-response-buffer
+      (should (derived-mode-p 'org-mode))
+      (should (string-match-p "* Last Assistant Response" (buffer-string)))
+      (should (string-match-p "answer body" (buffer-string))))))
+
 (ert-deftest faltoo-popup-mode-does-not-bind-q ()
   "Scenario: Popup text editing keeps q available for typing."
   ;; Given Faltoo popup keybindings are active.
