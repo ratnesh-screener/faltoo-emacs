@@ -18,6 +18,6 @@
 (defun diff-hl-show-hunk ())
 (provide 'diff-hl)
 (setq byte-compile-error-on-warn nil)
-(dolist (file '("faltoo-core.el" "faltoo-ui.el" "faltoo-bridge.el" "faltoo-chat.el" "faltoo-ask.el" "faltoo-comments.el" "faltoo-review.el" "faltoo.el"))
+(dolist (file '("faltoo-core.el" "faltoo-ui.el" "faltoo-bridge.el" "faltoo-chat.el" "faltoo-request.el" "faltoo-ask.el" "faltoo-comments.el" "faltoo-review.el" "faltoo.el"))
   (byte-compile-file file))
 (princ "compiled\n")

@@ -65,5 +65,14 @@
 (unless (member '(:eval (faltoo-status-string)) global-mode-string)
   (add-to-list 'global-mode-string '(:eval (faltoo-status-string)) t))
 
+(defun faltoo-reload-review-buffers ()
+  "Reload live Faltoo review buffers from disk."
+  (dolist (file faltoo-review-files)
+    (let ((buf (find-buffer-visiting file)))
+      (when buf
+        (with-current-buffer buf
+          (let ((buffer-read-only nil))
+            (revert-buffer :ignore-auto :noconfirm)))))))
+
 (provide 'faltoo-core)
 ;;; faltoo-core.el ends here

@@ -6,6 +6,7 @@
 (require 'faltoo-bridge)
 (require 'faltoo-ui)
 (require 'faltoo-chat)
+(require 'faltoo-request)
 (require 'faltoo-ask)
 
 (cl-defstruct faltoo-comment file path start end code text overlay)
@@ -48,18 +49,19 @@
               faltoo-comments))
 
 (defun faltoo-comments--mark (comment)
-  (let ((buf (find-buffer-visiting (faltoo-comment-path comment))))
-    (when buf
-      (with-current-buffer buf
-        (save-excursion
-          (goto-char (point-min))
-          (forward-line (1- (faltoo-comment-start comment)))
-          (let ((beg (line-beginning-position)))
-            (forward-line (1+ (- (faltoo-comment-end comment) (faltoo-comment-start comment))))
-            (let ((overlay (make-overlay beg (line-beginning-position))))
-              (overlay-put overlay 'face 'faltoo-review-comment-face)
-              (overlay-put overlay 'before-string (propertize "●" 'face 'warning))
-              (setf (faltoo-comment-overlay comment) overlay))))))))
+  (when (> (faltoo-comment-start comment) 0)
+    (let ((buf (find-buffer-visiting (faltoo-comment-path comment))))
+      (when buf
+        (with-current-buffer buf
+          (save-excursion
+            (goto-char (point-min))
+            (forward-line (1- (faltoo-comment-start comment)))
+            (let ((beg (line-beginning-position)))
+              (forward-line (1+ (- (faltoo-comment-end comment) (faltoo-comment-start comment))))
+              (let ((overlay (make-overlay beg (line-beginning-position))))
+                (overlay-put overlay 'face 'faltoo-review-comment-face)
+                (overlay-put overlay 'before-string (propertize "●" 'face 'warning))
+                (setf (faltoo-comment-overlay comment) overlay)))))))))
 
 (defun faltoo-comments-refresh ()
   "Refresh all pending comment overlays."
@@ -133,33 +135,11 @@
   (unless faltoo-comments
     (user-error "No pending Faltoo comments"))
   (let ((submitted faltoo-comments))
-    (setq faltoo-submitting t
-          faltoo-last-assistant-message "")
-    (faltoo-set-status "Submitting review comments...")
-    (faltoo-chat-start-stream "Assistant · streaming")
-    (faltoo-bridge-stream
-     (list "append-review")
-     `((workspace . ,(faltoo-workspace)) (comments . ,(faltoo-comments--payload submitted)))
-     (lambda (event)
-       (let ((class (or (alist-get 'classes event) (alist-get 'type event)))
-             (text (or (alist-get 'text event) "")))
-         (cond
-          ((string= class "answer")
-           (setq faltoo-last-assistant-message (concat faltoo-last-assistant-message text))
-           (faltoo-chat-append-stream text))
-          ((string= class "status")
-           (when (string-prefix-p "Submitted" text)
-             (setq faltoo-comments (cl-set-difference faltoo-comments submitted))
-             (faltoo-comments-refresh))
-           (faltoo-set-status text)
-           (faltoo-chat-append-stream (format "- %s\n" text)))
-          ((string= class "done")
-           (faltoo-set-status text)))))
-     (lambda (ok)
-       (setq faltoo-submitting nil)
-       (faltoo-set-status (if ok "Review complete" "Review failed"))
-       (faltoo-chat-finish-stream)
-       (when ok (ding))))))
+    (faltoo-request-review
+     (faltoo-comments--payload submitted)
+     (lambda ()
+       (setq faltoo-comments (cl-set-difference faltoo-comments submitted))
+       (faltoo-comments-refresh)))))
 
 (defun faltoo-next-comment ()
   "Jump to next pending comment in current buffer."

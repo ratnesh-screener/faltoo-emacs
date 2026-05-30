@@ -6,6 +6,7 @@
 (require 'faltoo-bridge)
 (require 'faltoo-ui)
 (require 'faltoo-chat)
+(require 'faltoo-request)
 
 (defvar-local faltoo-ask-context nil)
 (defvar-local faltoo-ask-question-marker nil)
@@ -91,35 +92,15 @@
          (buf (current-buffer)))
     (when (string-empty-p question)
       (user-error "Question is empty"))
-    (setq faltoo-submitting t
-          faltoo-last-assistant-message "")
-    (faltoo-set-status "Submitting ask...")
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (goto-char (point-max))
-        (insert "\n\nAssistant:\n\n")))
-    (faltoo-chat-start-stream "Assistant · streaming")
-    (faltoo-bridge-stream
-     (list "append-message")
-     `((workspace . ,(faltoo-workspace)) (text . ,message))
-     (lambda (event)
-       (let ((class (or (alist-get 'classes event) (alist-get 'type event)))
-             (text (or (alist-get 'text event) "")))
-         (cond
-          ((string= class "answer")
-           (setq faltoo-last-assistant-message (concat faltoo-last-assistant-message text))
-           (faltoo-popup-append buf text)
-           (faltoo-chat-append-stream text))
-          ((member class '("status" "tool"))
-           (faltoo-set-status text)
-           (faltoo-chat-append-stream (format "- %s\n" text)))
-          ((string= class "done")
-           (faltoo-set-status text)))))
-     (lambda (ok)
-       (setq faltoo-submitting nil)
-       (faltoo-set-status (if ok "Ask complete" "Ask failed"))
-       (faltoo-chat-finish-stream)
-       (when ok (ding))))))
+        (insert "
+
+Assistant:
+
+")))
+    (faltoo-request-message message buf)))
 
 (defun faltoo-insert-file-reference ()
   "Insert a backtick file reference using Git tracked/untracked files."

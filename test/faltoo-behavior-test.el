@@ -95,3 +95,47 @@
      (should buffer-read-only))))
 
 ;;; faltoo-behavior-test.el ends here
+
+(ert-deftest faltoo-file-comment-does-not-create-line-overlay ()
+  "File-level comments are pending review comments without line overlays."
+  (faltoo-test--with-temp-git-file
+   '("one" "two")
+   (lambda (_file _root)
+     (setq faltoo-comments nil)
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil))
+               ((symbol-function 'faltoo-popup-close) (lambda () nil)))
+       (faltoo-file-comment)
+       (with-current-buffer "*Faltoo Comment*"
+         (goto-char (point-max))
+         (insert "file-level concern")
+         (faltoo-comment-save)))
+     (should (= (length faltoo-comments) 1))
+     (should (= (faltoo-comment-start (car faltoo-comments)) 0))
+     (should-not (faltoo-comment-overlay (car faltoo-comments))))))
+
+(ert-deftest faltoo-ask-stream-routes-answer-to-popup-and-transcript ()
+  "Ask responses stream near code and into the background transcript."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (setq faltoo-review-files nil
+           faltoo-last-assistant-message "")
+     (when (get-buffer faltoo-chat-buffer-name) (kill-buffer faltoo-chat-buffer-name))
+     (let ((popup (get-buffer-create "*Faltoo Test Popup*")))
+       (with-current-buffer popup (erase-buffer))
+       (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args _payload on-event on-done)
+                    (funcall on-event '((classes . "status") (text . "Submitted message")))
+                    (funcall on-event '((classes . "answer") (text . "hello from assistant")))
+                    (funcall on-event '((classes . "done") (text . "Assistant response saved.")))
+                    (funcall on-done t)))
+                 ((symbol-function 'faltoo-bridge-messages)
+                  (lambda () '(((role . "assistant") (text . "hello from assistant")))))
+                 ((symbol-function 'ding) (lambda (&rest _args) nil)))
+         (faltoo-request-message "question" popup))
+       (should (equal faltoo-last-assistant-message "hello from assistant"))
+       (with-current-buffer popup
+         (should (string-match-p "hello from assistant" (buffer-string))))
+       (with-current-buffer faltoo-chat-buffer-name
+         (should (string-match-p "hello from assistant" (buffer-string))))
+       (kill-buffer popup)))))
