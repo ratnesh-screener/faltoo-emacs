@@ -14,6 +14,29 @@
 (require 'faltoo-review)
 (require 'faltoo-quit)
 
+(defconst faltoo-root (file-name-directory (or load-file-name buffer-file-name)))
+
+(defconst faltoo-reload-files
+  '("faltoo-core.el"
+    "faltoo-faces.el"
+    "faltoo-ui.el"
+    "faltoo-compose.el"
+    "faltoo-bridge.el"
+    "faltoo-chat.el"
+    "faltoo-request.el"
+    "faltoo-ask.el"
+    "faltoo-comments.el"
+    "faltoo-review.el"
+    "faltoo-quit.el"
+    "faltoo.el"))
+
+(defun faltoo-reload ()
+  "Reload Faltoo Emacs without restarting Emacs."
+  (interactive)
+  (dolist (file faltoo-reload-files)
+    (load-file (expand-file-name file faltoo-root)))
+  (message "Faltoo reloaded"))
+
 (defvar faltoo-command-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "a") #'faltoo-ask)
@@ -24,6 +47,7 @@
     (define-key map (kbd "m") #'faltoo-comments-summary)
     (define-key map (kbd "d") #'faltoo-delete-current-comment)
     (define-key map (kbd "h") #'faltoo-chat)
+    (define-key map (kbd "r") #'faltoo-reload)
     (define-key map (kbd "u") #'faltoo-review-unstaged)
     (define-key map (kbd "x") #'faltoo-review-stop)
     (define-key map (kbd "g") #'faltoo-magit-status)

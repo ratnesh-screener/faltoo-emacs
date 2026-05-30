@@ -31,7 +31,7 @@
       (when (and on-submitted (string-prefix-p "Submitted" text))
         (funcall on-submitted))
       (faltoo-set-status text)
-      (faltoo-chat-append-stream (format "- %s\n" text)))
+      (faltoo-chat-append-stream-block (format "- %s" text)))
      ((string= class "done")
       (faltoo-set-status text)))))
 

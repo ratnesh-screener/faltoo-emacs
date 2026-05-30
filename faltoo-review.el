@@ -11,6 +11,7 @@
 (require 'faltoo-ask)
 
 (declare-function diff-hl-remove-overlays "diff-hl")
+(declare-function faltoo-reload "faltoo")
 
 (defvar-local faltoo-review--saved-read-only nil)
 (defvar-local faltoo-review--saved-header-line-format nil)
@@ -24,6 +25,7 @@
     (define-key map (kbd "C-c f C") #'faltoo-file-comment)
     (define-key map (kbd "C-c f s") #'faltoo-submit-review-comments)
     (define-key map (kbd "C-c f h") #'faltoo-chat)
+    (define-key map (kbd "C-c f r") #'faltoo-reload)
     (define-key map (kbd "C-c f u") #'faltoo-review-unstaged)
     (define-key map (kbd "C-c f x") #'faltoo-review-stop)
     (define-key map (kbd "C-c f g") #'faltoo-magit-status)

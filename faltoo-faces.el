@@ -16,6 +16,10 @@
   '((t :extend t :background "#3a2f00"))
   "Face for pending Faltoo review comment lines.")
 
+(defface faltoo-chat-user-face
+  '((t :extend t :background "#1f2f3a"))
+  "Face for user blocks in the Faltoo transcript.")
+
 (defface faltoo-diff-insert-line-face
   '((t :extend t :background "#12381f"))
   "Face for inserted Git lines in Faltoo review buffers.")

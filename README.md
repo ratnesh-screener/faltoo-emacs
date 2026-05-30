@@ -42,6 +42,7 @@ C-c f m   show pending comments summary
 C-c f d   delete pending comment at point
 C-c f s   submit pending review comments
 C-c f h   open transcript
+C-c f r   reload Faltoo plugin code
 C-c f g   Magit status
 C-c f D   Magit diff for current file
 C-c f ]   next Git hunk
@@ -84,6 +85,17 @@ RET       jump to source
  d        delete comment
  g        refresh summary
 ```
+
+## Reload while developing
+
+After code changes, use:
+
+```text
+C-c f r   reload Faltoo plugin code
+M-x faltoo-reload
+```
+
+This reloads all Faltoo `.el` files in dependency order, so restarting Emacs should not be necessary.
 
 ## Notes
 

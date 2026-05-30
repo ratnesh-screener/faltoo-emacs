@@ -80,6 +80,29 @@
       (should (derived-mode-p 'org-mode))
       (should (string-match-p "* User" (buffer-string))))))
 
+(ert-deftest faltoo-chat-render-separates-message-blocks-with-blank-lines ()
+  "Scenario: Transcript message blocks have breathing room between them."
+  (let ((buf (faltoo-chat-render '(((role . "user") (text . "question"))
+                                   ((role . "assistant") (text . "answer"))))))
+    ;; Given user and assistant messages are rendered.
+
+    ;; Then there is an empty line between message blocks.
+    (with-current-buffer buf
+      (should (string-match-p "question\n\n\\* Assistant" (buffer-string))))))
+
+(ert-deftest faltoo-chat-render-highlights-user-blocks ()
+  "Scenario: User transcript blocks are visually distinct."
+  (let ((buf (faltoo-chat-render '(((role . "user") (text . "question"))))))
+    ;; Given a user message is rendered.
+
+    ;; Then the user block has Faltoo's user face overlay.
+    (with-current-buffer buf
+      (goto-char (point-min))
+      (search-forward "question")
+      (should (cl-some (lambda (overlay)
+                         (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
+                       (overlays-at (point)))))))
+
 (ert-deftest faltoo-chat-send-submits-current-user-prompt ()
   "Scenario: Sending from transcript submits only the current prompt."
   (let (captured-text)
@@ -195,6 +218,39 @@
       ;; Then the request is rejected before touching the bridge.
       (should-error (faltoo-request-message "second request") :type 'user-error)
       (should-not bridge-called))))
+
+(ert-deftest faltoo-request-renders-status-events-as-separated-chat-blocks ()
+  "Scenario: Streaming status blocks in chat are separated by blank lines."
+  (when (get-buffer faltoo-chat-buffer-name)
+    (kill-buffer faltoo-chat-buffer-name))
+  ;; Given a chat stream is active.
+  (faltoo-chat-start-stream "Assistant · streaming")
+
+  ;; When status events are routed into the transcript.
+  (faltoo-request--route-event '((classes . "status") (text . "first block")) nil nil)
+  (faltoo-request--route-event '((classes . "tool") (text . "second block")) nil nil)
+
+  ;; Then each status/tool block has an empty line after it.
+  (with-current-buffer faltoo-chat-buffer-name
+    (should (string-match-p "- first block\n\n- second block\n\n" (buffer-string)))))
+
+;;; Reload specs
+
+(ert-deftest faltoo-reload-loads-plugin-files-in-place ()
+  "Scenario: Faltoo code can be reloaded without restarting Emacs."
+  (let (loaded)
+    ;; Given load-file is observed.
+    (cl-letf (((symbol-function 'load-file)
+               (lambda (file) (push (file-name-nondirectory file) loaded))))
+
+      ;; When reloading Faltoo.
+      (faltoo-reload))
+
+    ;; Then core modules and the entrypoint are loaded in dependency order.
+    (setq loaded (nreverse loaded))
+    (should (equal (car loaded) "faltoo-core.el"))
+    (should (member "faltoo-chat.el" loaded))
+    (should (equal (car (last loaded)) "faltoo.el"))))
 
 ;;; Popup specs
 
