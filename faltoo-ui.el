@@ -51,6 +51,9 @@
                                 :poshandler #'posframe-poshandler-frame-center
                                 :width (or width 100)
                                 :height (or height 24)
+                                :cursor 'box
+                                :tty-non-selected-cursor t
+                                :window-point (with-current-buffer buffer (point))
                                 :border-width 2
                                 :border-color "#888888"
                                 :internal-border-width 2

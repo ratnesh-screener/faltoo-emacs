@@ -225,10 +225,11 @@
       ;; When showing a Faltoo popup.
       (faltoo-popup-show popup 80 20))
 
-    ;; Then the popup has a cursor even if the child frame does not keep OS focus.
+    ;; Then posframe is explicitly told to render the cursor at buffer point.
+    (should (eq (plist-get (cdr captured-args) :cursor) 'box))
+    (should (plist-get (cdr captured-args) :tty-non-selected-cursor))
     (with-current-buffer popup
-      (should cursor-type)
-      (should cursor-in-non-selected-windows))
+      (should (eq (plist-get (cdr captured-args) :window-point) (point))))
     (should (alist-get 'cursor-color
                        (plist-get (cdr captured-args) :override-parameters)))))
 
