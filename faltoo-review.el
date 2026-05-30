@@ -68,8 +68,6 @@
     (with-current-buffer (find-file-noselect file)
       (faltoo-review-mode 1)))
   (switch-to-buffer (find-file-noselect (car faltoo-review-files)))
-  (faltoo-chat)
-  (other-window -1)
   (message "Faltoo reviewing %d unstaged file(s)" (length faltoo-review-files)))
 
 (defun faltoo-review--switch (delta)
