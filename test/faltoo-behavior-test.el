@@ -214,3 +214,31 @@
        (with-current-buffer "*Faltoo Comment*"
          (faltoo-comment-save)))
      (should-not faltoo-comments))))
+
+(ert-deftest faltoo-submit-review-comments-sends-json-object-payload ()
+  "Submitting comments sends a JSON object payload that process-send-string accepts."
+  (let ((faltoo-comments
+         (list (make-faltoo-comment :file "faltoo.el"
+                                    :path "/repo/faltoo.el"
+                                    :start 1
+                                    :end 1
+                                    :code "code"
+                                    :text "review note")))
+        captured-payload)
+    (cl-letf (((symbol-function 'faltoo-request-review)
+               (lambda (comments _on-submitted &optional _on-done)
+                 (setq captured-payload
+                       (list (cons 'workspace "/repo") (cons 'comments (vconcat comments))))
+                 (json-serialize captured-payload))))
+      (faltoo-submit-review-comments))
+    (should (equal (alist-get 'filename (aref (alist-get 'comments captured-payload) 0)) "faltoo.el"))))
+
+(ert-deftest faltoo-comment-popup-places-cursor-in-editable-comment-area ()
+  "Opening a comment popup places point where the user should type."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+       (faltoo-comment))
+     (with-current-buffer "*Faltoo Comment*"
+       (should (= (point) faltoo-comment-text-marker))))))

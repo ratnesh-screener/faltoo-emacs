@@ -52,7 +52,7 @@
   "Send TEXT as a chat message."
   (faltoo-request-stream
    (list "append-message")
-   `((workspace . ,(faltoo-workspace)) (text . ,text))
+   (list (cons 'workspace (faltoo-workspace)) (cons 'text text))
    "Submitting ask..."
    popup-buffer nil on-done))
 
@@ -60,7 +60,7 @@
   "Submit COMMENTS as review comments."
   (faltoo-request-stream
    (list "append-review")
-   `((workspace . ,(faltoo-workspace)) (comments . ,comments))
+   (list (cons 'workspace (faltoo-workspace)) (cons 'comments (vconcat comments)))
    "Submitting review comments..."
    nil on-submitted on-done))
 

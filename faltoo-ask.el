@@ -51,7 +51,8 @@
     (faltoo-compose-insert-code code)
     (faltoo-compose-insert-help "C-c C-c send · C-c C-k/q close · C-c C-f file · C-c / command")
     (faltoo-compose-insert-section "Question")
-    (setq faltoo-ask-question-marker (point-marker))))
+    (setq faltoo-ask-question-marker (point-marker))
+    (goto-char faltoo-ask-question-marker)))
 
 (defun faltoo-ask ()
   "Ask Faltoo about active region or current line."

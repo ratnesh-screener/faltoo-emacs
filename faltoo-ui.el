@@ -15,7 +15,7 @@
 
 (define-derived-mode faltoo-popup-mode text-mode "Faltoo-Popup"
   "Mode for Faltoo popup buffers."
-  (setq-local cursor-type 'bar)
+  (setq-local cursor-type 'box)
   (setq-local mode-line-format nil)
   (setq-local truncate-lines nil))
 
@@ -46,7 +46,9 @@
                               :respect-header-line t
                               :accept-focus t)))
     (select-frame-set-input-focus frame)
-    (select-window (frame-selected-window frame))))
+    (select-window (frame-selected-window frame))
+    (with-selected-frame frame
+      (switch-to-buffer buffer))))
 
 (defun faltoo-popup-set-lines (buffer lines)
   "Replace BUFFER contents with LINES."
