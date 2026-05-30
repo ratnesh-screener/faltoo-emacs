@@ -191,3 +191,26 @@
    (lambda (_file _root)
      (faltoo-review-mode 1)
      (should (eq diff-hl-highlight-function #'faltoo-diff-hl-highlight-line)))))
+
+(ert-deftest faltoo-ask-empty-question-does-not-capture-help-text ()
+  "Ask popup help text is not part of the editable question payload."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+       (faltoo-ask))
+     (with-current-buffer "*Faltoo Popup*"
+       (should (string-empty-p (faltoo-ask--question-text)))))))
+
+(ert-deftest faltoo-comment-empty-comment-does-not-capture-help-text ()
+  "Comment popup help text is not saved as a review comment."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (setq faltoo-comments nil)
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil))
+               ((symbol-function 'faltoo-popup-close) (lambda () nil)))
+       (faltoo-comment)
+       (with-current-buffer "*Faltoo Comment*"
+         (faltoo-comment-save)))
+     (should-not faltoo-comments))))

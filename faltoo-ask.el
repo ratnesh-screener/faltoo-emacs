@@ -49,9 +49,9 @@
     (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
     (faltoo-compose-insert-section "Code")
     (faltoo-compose-insert-code code)
+    (faltoo-compose-insert-help "C-c C-c send · C-c C-k/q close · C-c C-f file · C-c / command")
     (faltoo-compose-insert-section "Question")
-    (setq faltoo-ask-question-marker (point-marker))
-    (faltoo-compose-insert-help "C-c C-c send · C-c C-k/q close · C-c C-f file · C-c / command")))
+    (setq faltoo-ask-question-marker (point-marker))))
 
 (defun faltoo-ask ()
   "Ask Faltoo about active region or current line."

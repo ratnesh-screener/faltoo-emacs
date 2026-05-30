@@ -94,10 +94,10 @@
           (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
           (faltoo-compose-insert-section "Code")
           (faltoo-compose-insert-code code))
+        (faltoo-compose-insert-help "C-c C-c save · C-c C-k/q close · C-c C-f file")
         (faltoo-compose-insert-section "Comment")
         (setq faltoo-comment-text-marker (point-marker))
-        (when existing (insert (faltoo-comment-text existing)))
-        (faltoo-compose-insert-help "C-c C-c save · C-c C-k/q close · C-c C-f file")))
+        (when existing (insert (faltoo-comment-text existing)))))
     (faltoo-popup-show buf 90 24)))
 
 (defun faltoo-file-comment ()
