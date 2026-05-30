@@ -21,6 +21,7 @@
 (defvar diff-hl-highlight-function nil)
 (define-minor-mode diff-hl-mode "")
 (defun diff-hl-update () nil)
+(defun diff-hl-remove-overlays (&rest _args) nil)
 (defun diff-hl-stage-current-hunk () nil)
 (defun diff-hl-revert-hunk () nil)
 (defun diff-hl-next-hunk () nil)
@@ -67,7 +68,17 @@
         (should-not buffer-read-only)
         (should (markerp faltoo-chat-prompt-marker))
         (should (= (point) faltoo-chat-prompt-marker))
-        (should (string-match-p "# User" (buffer-string)))))))
+        (should (string-match-p "* User" (buffer-string)))))))
+
+(ert-deftest faltoo-chat-mode-uses-org-mode-for-transcript-styling ()
+  "Scenario: Transcript uses Org mode styling."
+  ;; Given the transcript buffer is rendered.
+  (let ((buf (faltoo-chat-render nil)))
+
+    ;; Then it derives from Org mode and uses Org headings.
+    (with-current-buffer buf
+      (should (derived-mode-p 'org-mode))
+      (should (string-match-p "* User" (buffer-string))))))
 
 (ert-deftest faltoo-chat-send-submits-current-user-prompt ()
   "Scenario: Sending from transcript submits only the current prompt."
@@ -187,6 +198,12 @@
 
 ;;; Popup specs
 
+(ert-deftest faltoo-popup-mode-uses-org-mode-for-popup-styling ()
+  "Scenario: Faltoo posframes use Org mode styling."
+  (with-current-buffer (faltoo-popup-buffer "*Faltoo Org Popup Test*" #'faltoo-popup-mode)
+    ;; Then popups inherit the user's Org styling.
+    (should (derived-mode-p 'org-mode))))
+
 (ert-deftest faltoo-popup-mode-does-not-bind-q ()
   "Scenario: Popup text editing keeps q available for typing."
   ;; Given Faltoo popup keybindings are active.
@@ -287,7 +304,8 @@
      (should (= (length faltoo-comments) 1))
      (let ((comment (car faltoo-comments)))
        (should (equal (faltoo-comment-start comment) 2))
-       (should (overlayp (faltoo-comment-overlay comment)))))))
+       (should (overlayp (faltoo-comment-overlay comment)))
+       (should-not (overlay-get (faltoo-comment-overlay comment) 'before-string))))))
 
 (ert-deftest faltoo-file-comment-does-not-create-line-overlay ()
   "Scenario: File-level comments are pending but do not mark a line."
@@ -432,6 +450,43 @@
     ;; Then comments are encoded as a JSON array of objects.
     (should (equal (alist-get 'filename (aref (alist-get 'comments captured-payload) 0))
                    "faltoo.el"))))
+
+(ert-deftest faltoo-diff-hl-highlight-line-removes-gutter-marker-and-extends-line ()
+  "Scenario: Git change highlights are rendered as full source lines."
+  (with-temp-buffer
+    ;; Given diff-hl hands Faltoo a gutter-style overlay.
+    (insert "changed line\nnext line\n")
+    (let ((overlay (make-overlay (point-min) (point-min))))
+      (overlay-put overlay 'before-string "gutter")
+
+      ;; When Faltoo applies its diff highlighter.
+      (faltoo-diff-hl-highlight-line overlay 'insert nil)
+
+      ;; Then the gutter marker is removed and the whole line is highlighted.
+      (should-not (overlay-get overlay 'before-string))
+      (should (= (overlay-start overlay) (point-min)))
+      (should (= (overlay-end overlay) (save-excursion (goto-char (point-min)) (line-beginning-position 2))))
+      (should (eq (overlay-get overlay 'face) 'faltoo-diff-insert-line-face)))))
+
+(ert-deftest faltoo-review-mode-refreshes-diff-hl-after-installing-full-line-highlighter ()
+  "Scenario: Entering review mode redraws existing gutter highlights as full lines."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (let (removed updated)
+       ;; Given diff-hl may already have gutter overlays from global diff-hl-mode.
+       (cl-letf (((symbol-function 'diff-hl-remove-overlays)
+                  (lambda (&rest _args) (setq removed t)))
+                 ((symbol-function 'diff-hl-update)
+                  (lambda () (setq updated t))))
+
+         ;; When enabling review mode.
+         (faltoo-review-mode 1))
+
+       ;; Then Faltoo redraws diff-hl after installing its full-line highlighter.
+       (should (eq diff-hl-highlight-function #'faltoo-diff-hl-highlight-line))
+       (should removed)
+       (should updated)))))
 
 (ert-deftest faltoo-review-mode-keybindings-keep-comment-management-on-prefix ()
   "Scenario: Review buffers keep comment management on the Faltoo prefix."

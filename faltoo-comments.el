@@ -70,7 +70,6 @@
               (forward-line (1+ (- (faltoo-comment-end comment) (faltoo-comment-start comment))))
               (let ((overlay (make-overlay beg (line-beginning-position))))
                 (overlay-put overlay 'face 'faltoo-review-comment-face)
-                (overlay-put overlay 'before-string (propertize "● " 'face 'faltoo-review-comment-marker-face))
                 (setf (faltoo-comment-overlay comment) overlay)))))))))
 
 (defun faltoo-comments-refresh ()

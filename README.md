@@ -38,9 +38,12 @@ C-c f a   ask about active region/current line
 C-c f l   show last assistant response
 C-c f c   add review comment on line/region
 C-c f C   add file-level review comment
+C-c f m   show pending comments summary
+C-c f d   delete pending comment at point
 C-c f s   submit pending review comments
 C-c f h   open transcript
 C-c f g   Magit status
+C-c f D   Magit diff for current file
 C-c f ]   next Git hunk
 C-c f [   previous Git hunk
 C-c f =   show Git hunk
@@ -50,6 +53,8 @@ C-c f N   next review file
 C-c f P   previous review file
 C-c f S   stage current file
 C-c f U   unstage current file
+C-c f H s stage current hunk
+C-c f H r revert current hunk
 ```
 
 In Ask/comment posframes:
@@ -58,16 +63,33 @@ In Ask/comment posframes:
 C-c C-c   send/save
 C-c C-k   cancel/close
 C-g       close
-q         close
 C-c C-f   insert file reference
 C-c /     insert slash command, Ask only
+```
+
+In `*Faltoo*` transcript:
+
+```text
+C-c C-c   send current prompt
+C-c C-r   refresh transcript
+C-c C-f   insert file reference
+C-c /     insert slash command
+```
+
+In `*Faltoo Comments*`:
+
+```text
+RET       jump to source
+ e        edit comment
+ d        delete comment
+ g        refresh summary
 ```
 
 ## Notes
 
 - Source buffers are the primary UI.
 - `*Faltoo*` is transcript/history and receives long review streams.
-- Ask responses stream in the posframe near code, including compact status/tool lines.
+- Ask responses stream in the centered posframe, including compact status/tool lines.
 - Review-comment submission streams to `*Faltoo*` and status/mode-line.
 - Faltoo never auto-stages changes.
 
@@ -77,12 +99,12 @@ Emacs asks before quitting while a Faltoo request is running or review comments 
 
 ## Popup UI
 
-Ask and comment popups use `posframe`. The header shows file/range context, code is shown above the editable question/comment area, and the footer lists the important keys.
+Ask and comment popups use centered `posframe` windows in `org-mode`. The header shows file/range context, code is shown above the editable question/comment area, and the footer lists the important keys.
 
-Pending review-comment lines are highlighted and marked with `●`.
+Pending review-comment lines are highlighted directly.
 
 ## Full-line Git highlights
 
-Inside `faltoo-review-mode`, `diff-hl` is configured buffer-locally to highlight full changed lines instead of only the gutter.
+Inside `faltoo-review-mode`, `diff-hl` is configured buffer-locally and redrawn to highlight full changed lines instead of only the gutter.
 
 Review buffers also show a header line like `Faltoo Review Faltoo[1/N]` so the review state is visible even if the modeline hides minor modes.

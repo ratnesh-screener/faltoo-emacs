@@ -20,6 +20,7 @@
 (defvar diff-hl-highlight-function nil)
 (define-minor-mode diff-hl-mode "")
 (defun diff-hl-update () nil)
+(defun diff-hl-remove-overlays (&rest _args) nil)
 (defun diff-hl-stage-current-hunk () nil)
 (defun diff-hl-revert-hunk () nil)
 (defun diff-hl-next-hunk () nil)

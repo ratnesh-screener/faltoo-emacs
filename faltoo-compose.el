@@ -7,8 +7,8 @@
 (require 'faltoo-faces)
 
 (defun faltoo-compose-insert-title (title)
-  "Insert popup TITLE."
-  (insert (propertize title 'face 'faltoo-popup-title-face) "\n"))
+  "Insert Org popup TITLE."
+  (insert "* " title "\n"))
 
 (defun faltoo-compose-insert-meta (label value)
   "Insert metadata LABEL with VALUE."
@@ -17,14 +17,16 @@
           "\n"))
 
 (defun faltoo-compose-insert-section (title)
-  "Insert section TITLE."
-  (insert "\n" (propertize title 'face 'faltoo-popup-section-face) "\n\n"))
+  "Insert Org section TITLE."
+  (insert "\n** " title "\n\n"))
 
 (defun faltoo-compose-insert-code (code)
-  "Insert CODE with popup code face."
+  "Insert CODE as an Org source block."
+  (insert "#+begin_src text\n")
   (let ((start (point)))
     (insert code)
-    (add-text-properties start (point) '(face faltoo-popup-code-face))))
+    (add-text-properties start (point) '(face faltoo-popup-code-face)))
+  (insert "\n#+end_src\n"))
 
 (defun faltoo-compose-insert-help (text)
   "Insert dim help TEXT."

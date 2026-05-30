@@ -10,6 +10,8 @@
 (require 'faltoo-comments)
 (require 'faltoo-ask)
 
+(declare-function diff-hl-remove-overlays "diff-hl")
+
 (defvar-local faltoo-review--saved-read-only nil)
 (defvar-local faltoo-review--saved-header-line-format nil)
 (defvar-local faltoo-review--saved-diff-hl-highlight-function nil)
@@ -46,6 +48,8 @@
   (save-excursion
     (goto-char (overlay-start overlay))
     (move-overlay overlay (line-beginning-position) (line-beginning-position 2))
+    (overlay-put overlay 'before-string nil)
+    (overlay-put overlay 'after-string nil)
     (overlay-put overlay 'face
                  (pcase type
                    ('insert 'faltoo-diff-insert-line-face)
@@ -70,10 +74,14 @@
         (setq-local header-line-format (faltoo-review-header-line))
         (setq-local diff-hl-highlight-function #'faltoo-diff-hl-highlight-line)
         (diff-hl-mode 1)
+        (diff-hl-remove-overlays)
+        (diff-hl-update)
         (faltoo-comments-refresh))
     (setq buffer-read-only faltoo-review--saved-read-only
           header-line-format faltoo-review--saved-header-line-format)
-    (setq-local diff-hl-highlight-function faltoo-review--saved-diff-hl-highlight-function)))
+    (setq-local diff-hl-highlight-function faltoo-review--saved-diff-hl-highlight-function)
+    (diff-hl-remove-overlays)
+    (diff-hl-update)))
 
 (defun faltoo-review-file-p (file)
   "Return non-nil when FILE is in current review set."
@@ -153,6 +161,8 @@
       (when buf
         (with-current-buffer buf
           (when (bound-and-true-p diff-hl-mode)
+            (setq-local diff-hl-highlight-function #'faltoo-diff-hl-highlight-line)
+            (diff-hl-remove-overlays)
             (diff-hl-update))))))
   (when (fboundp 'magit-refresh)
     (ignore-errors (magit-refresh)))

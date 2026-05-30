@@ -2,6 +2,7 @@
 
 (require 'posframe)
 (require 'subr-x)
+(require 'org)
 
 (declare-function posframe-poshandler-frame-center "posframe")
 
@@ -16,7 +17,7 @@
     (define-key map (kbd "C-g") #'faltoo-popup-close)
     map))
 
-(define-derived-mode faltoo-popup-mode text-mode "Faltoo-Popup"
+(define-derived-mode faltoo-popup-mode org-mode "Faltoo-Popup"
   "Mode for Faltoo popup buffers."
   (setq-local cursor-type 'box)
   (setq-local mode-line-format nil)

@@ -4,6 +4,7 @@
 (require 'faltoo-core)
 (require 'faltoo-bridge)
 (require 'faltoo-ui)
+(require 'org)
 (require 'faltoo-compose)
 
 (declare-function faltoo-request-message "faltoo-request")
@@ -19,7 +20,7 @@
     (define-key map (kbd "C-c /") #'faltoo-insert-slash-command)
     map))
 
-(define-derived-mode faltoo-chat-mode text-mode "Faltoo"
+(define-derived-mode faltoo-chat-mode org-mode "Faltoo"
   "Faltoo transcript/history buffer."
   (setq-local truncate-lines nil))
 
@@ -34,14 +35,14 @@
 (defun faltoo-chat--message-lines (message)
   (let ((role (capitalize (or (alist-get 'role message) "message")))
         (text (or (alist-get 'text message) "")))
-    (append (list (format "# %s" role) "")
+    (append (list (format "* %s" role) "")
             (split-string text "\n")
             (list ""))))
 
 (defun faltoo-chat--insert-user-prompt ()
   (goto-char (point-max))
   (unless (or (bobp) (bolp)) (insert "\n"))
-  (insert "# User\n\n")
+  (insert "* User\n\n")
   (setq faltoo-chat-prompt-marker (point-marker)))
 
 (defun faltoo-chat-render (messages)
@@ -87,7 +88,7 @@
       (let ((inhibit-read-only t))
         (goto-char (point-max))
         (unless (bolp) (insert "\n"))
-        (insert (format "# %s\n\n" title))))
+        (insert (format "* %s\n\n" title))))
     buf))
 
 (defun faltoo-chat-append-stream (text)
