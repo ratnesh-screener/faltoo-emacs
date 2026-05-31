@@ -19,7 +19,7 @@
 
 (defun faltoo-compose-insert-section (title)
   "Insert Markdown section TITLE."
-  (insert "\n---\n## " title "\n"))
+  (insert "\n---\n## " title "\n\n"))
 
 (defun faltoo-compose-insert-code (code)
   "Insert CODE as a Markdown code block."

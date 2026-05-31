@@ -168,6 +168,7 @@ Use Markdown formatting in `markdown-mode` because model output is Markdown. Ena
 
 Can you review the unstaged changes?
 
+---
 # Assistant
 
 I will inspect the files.
@@ -177,12 +178,13 @@ I will inspect the files.
 
 The main issue is...
 
+---
 # User
 
 Can you also check `tests/foo_test.py`?
 ```
 
-A streaming response may render as:
+Transcript headings after the first turn are separated with Markdown horizontal rules. A streaming response may render as:
 
 ```markdown
 # Assistant · streaming

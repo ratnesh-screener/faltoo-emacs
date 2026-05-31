@@ -110,7 +110,18 @@
 
     ;; Then there is an empty line between message blocks.
     (with-current-buffer buf
-      (should (string-match-p "question\n\n# Assistant" (buffer-string))))))
+      (should (string-match-p "question\n\n---\n# Assistant" (buffer-string))))))
+
+(ert-deftest faltoo-chat-render-separates-transcript-headings-with-horizontal-rules ()
+  "Scenario: Transcript turns are visually separated like popups."
+  (let ((buf (faltoo-chat-render '(((role . "user") (text . "question"))
+                                   ((role . "assistant") (text . "answer"))))))
+    ;; Given multiple transcript turns are rendered.
+
+    ;; Then later headings are preceded by Markdown horizontal rules.
+    (with-current-buffer buf
+      (should (string-match-p "---\n# Assistant" (buffer-string)))
+      (should (string-match-p "---\n# User\n\n$" (buffer-string))))))
 
 (ert-deftest faltoo-chat-render-highlights-user-heading-only ()
   "Scenario: User transcript headings are visually distinct without covering content."
@@ -359,8 +370,8 @@
 
      ;; Then major sections have Markdown horizontal rules between them.
      (with-current-buffer "*Faltoo Popup*"
-       (should (string-match-p "---\n## Code" (buffer-string)))
-       (should (string-match-p "---\n## Question" (buffer-string)))))))
+       (should (string-match-p "---\n## Code\n\n" (buffer-string)))
+       (should (string-match-p "---\n## Question\n\n" (buffer-string)))))))
 
 (ert-deftest faltoo-ask-empty-question-does-not-capture-help-text ()
   "Scenario: Ask help text is not submitted as the question."
@@ -555,7 +566,17 @@
     (faltoo-compose-insert-section "Question")
 
     ;; Then the rule, heading, and editable body are adjacent.
-    (should (equal (buffer-string) "\n---\n## Question\n"))))
+    (should (equal (buffer-string) "\n---\n## Question\n\n"))))
+
+(ert-deftest faltoo-popup-section-body-starts-after-heading-boundary ()
+  "Scenario: Typed popup text starts outside the heading line."
+  (with-temp-buffer
+    ;; When typing after a compact popup section.
+    (faltoo-compose-insert-section "Follow-up")
+    (insert "typed prompt")
+
+    ;; Then the body is separated from the heading by one Markdown boundary line.
+    (should (string-match-p "## Follow-up\n\ntyped prompt" (buffer-string)))))
 
 (ert-deftest faltoo-last-response-popup-renders-markdown-content ()
   "Scenario: Last response popup uses Markdown headings and an editable follow-up."
@@ -824,8 +845,8 @@
 
      ;; Then major sections have Markdown horizontal rules between them.
      (with-current-buffer "*Faltoo Comment*"
-       (should (string-match-p "---\n## Code" (buffer-string)))
-       (should (string-match-p "---\n## Comment" (buffer-string)))))))
+       (should (string-match-p "---\n## Code\n\n" (buffer-string)))
+       (should (string-match-p "---\n## Comment\n\n" (buffer-string)))))))
 
 (ert-deftest faltoo-comment-empty-comment-does-not-capture-help-text ()
   "Scenario: Comment help text is not saved as a review comment."
