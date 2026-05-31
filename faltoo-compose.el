@@ -5,6 +5,7 @@
 (require 'faltoo-core)
 (require 'faltoo-bridge)
 (require 'faltoo-faces)
+(require 'faltoo-ui)
 
 (defun faltoo-compose-insert-title (title)
   "Insert Markdown popup TITLE."
@@ -40,6 +41,7 @@
       (erase-buffer)
       (faltoo-compose-insert-title title)
       (insert "\n" text)
+      (faltoo-ui-fontify-markdown)
       (goto-char (point-min))
       (when read-only
         (setq buffer-read-only t)))))

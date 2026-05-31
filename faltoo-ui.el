@@ -18,6 +18,14 @@
   (setq-local markdown-fontify-whole-heading-line t)
   (setq-local markdown-header-scaling t))
 
+(defun faltoo-ui-fontify-markdown (&optional start end)
+  "Refresh Markdown fontification between START and END."
+  (when (derived-mode-p 'markdown-mode)
+    (let ((beg (or start (point-min)))
+          (fin (or end (point-max))))
+      (font-lock-flush beg fin)
+      (font-lock-ensure beg fin))))
+
 (defvar faltoo-popup-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-k") #'faltoo-popup-close)
@@ -53,6 +61,8 @@
   (let ((return-window (selected-window)))
     (with-current-buffer buffer
       (setq faltoo-popup-return-window return-window))
+    (with-current-buffer buffer
+      (faltoo-ui-fontify-markdown))
     (let ((frame (posframe-show buffer
                                 :poshandler #'posframe-poshandler-frame-center
                                 :width (or width 100)
@@ -74,9 +84,11 @@
 (defun faltoo-popup-append (buffer text)
   "Append TEXT to BUFFER."
   (with-current-buffer buffer
-    (let ((inhibit-read-only t))
+    (let ((inhibit-read-only t)
+          (start (point-max)))
       (goto-char (point-max))
       (insert text)
+      (faltoo-ui-fontify-markdown start (point))
       (goto-char (point-max)))))
 
 (provide 'faltoo-ui)

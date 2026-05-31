@@ -112,19 +112,24 @@
     (with-current-buffer buf
       (should (string-match-p "question\n\n# Assistant" (buffer-string))))))
 
-(ert-deftest faltoo-chat-render-highlights-user-blocks ()
-  "Scenario: User transcript blocks are visually distinct."
+(ert-deftest faltoo-chat-render-highlights-user-heading-only ()
+  "Scenario: User transcript headings are visually distinct without covering content."
   (let ((buf (faltoo-chat-render '(((role . "user") (text . "question"))))))
     ;; Given a user message is rendered.
 
-    ;; Then the user block has Faltoo's user face overlay.
+    ;; Then the heading has Faltoo's user face overlay, but the body does not.
     (with-current-buffer buf
       (goto-char (point-min))
-      (search-forward "question")
+      (search-forward "User")
       (backward-char 1)
       (should (cl-some (lambda (overlay)
                          (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
-                       (overlays-at (point)))))))
+                       (overlays-at (point))))
+      (search-forward "question")
+      (backward-char 1)
+      (should-not (cl-some (lambda (overlay)
+                             (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
+                           (overlays-at (point)))))))
 
 (ert-deftest faltoo-chat-render-keeps-user-highlights-inside-user-blocks ()
   "Scenario: User highlighting does not leak into the rest of the transcript."
@@ -141,19 +146,24 @@
                              (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
                            (overlays-at (point)))))))
 
-(ert-deftest faltoo-chat-render-highlights-assistant-blocks ()
-  "Scenario: Assistant transcript blocks are visually distinct."
+(ert-deftest faltoo-chat-render-highlights-assistant-heading-only ()
+  "Scenario: Assistant transcript headings are visually distinct without covering content."
   (let ((buf (faltoo-chat-render '(((role . "assistant") (text . "answer"))))))
     ;; Given an assistant message is rendered.
 
-    ;; Then it has Faltoo's assistant face overlay.
+    ;; Then the heading has Faltoo's assistant face overlay, but the body does not.
     (with-current-buffer buf
       (goto-char (point-min))
-      (search-forward "answer")
+      (search-forward "Assistant")
       (backward-char 1)
       (should (cl-some (lambda (overlay)
                          (eq (overlay-get overlay 'face) 'faltoo-chat-assistant-face))
-                       (overlays-at (point)))))))
+                       (overlays-at (point))))
+      (search-forward "answer")
+      (backward-char 1)
+      (should-not (cl-some (lambda (overlay)
+                             (eq (overlay-get overlay 'face) 'faltoo-chat-assistant-face))
+                           (overlays-at (point)))))))
 
 (ert-deftest faltoo-markdown-modes-enable-pretty-rendering ()
   "Scenario: Transcript and popup buffers hide Markdown noise where possible."
@@ -167,7 +177,22 @@
         (should (derived-mode-p 'markdown-mode))
         (should markdown-hide-markup)
         (should markdown-fontify-code-blocks-natively)
-        (should markdown-fontify-whole-heading-line)))))
+        (should markdown-fontify-whole-heading-line)
+        (should markdown-header-scaling)))))
+
+(ert-deftest faltoo-markdown-append-refreshes-fontification ()
+  "Scenario: Newly streamed Markdown gets fontified for inline and fenced code."
+  (let ((buf (faltoo-chat-render nil)) ensured)
+    ;; Given Markdown fontification calls are observed.
+
+    ;; When Markdown containing inline and fenced code is appended.
+    (cl-letf (((symbol-function 'font-lock-ensure)
+               (lambda (&optional start end)
+                 (setq ensured (cons start end)))))
+      (faltoo-popup-append buf "`inline`\n\n```elisp\n(message \"x\")\n```"))
+
+    ;; Then the appended region is explicitly fontified.
+    (should ensured)))
 
 (ert-deftest faltoo-chat-render-shows-persisted-tool-summaries-without-headings ()
   "Scenario: Persisted tool summaries do not inflate the heading list."
@@ -260,6 +285,30 @@
 
     ;; Then only the current prompt is submitted, not transcript history.
     (should (equal captured-text "please continue"))))
+
+(ert-deftest faltoo-chat-stream-highlights-assistant-heading-only ()
+  "Scenario: Streaming assistant output keeps heading styling off the answer body."
+  (when (get-buffer faltoo-chat-buffer-name)
+    (kill-buffer faltoo-chat-buffer-name))
+  ;; Given a streaming answer starts.
+  (faltoo-chat-start-stream "Assistant · streaming")
+
+  ;; When answer text arrives.
+  (faltoo-chat-append-stream "answer body with `code`")
+
+  ;; Then the assistant face is on the heading, not the body.
+  (with-current-buffer faltoo-chat-buffer-name
+    (goto-char (point-min))
+    (search-forward "Assistant")
+    (backward-char 1)
+    (should (cl-some (lambda (overlay)
+                       (eq (overlay-get overlay 'face) 'faltoo-chat-assistant-face))
+                     (overlays-at (point))))
+    (search-forward "answer body")
+    (backward-char 1)
+    (should-not (cl-some (lambda (overlay)
+                           (eq (overlay-get overlay 'face) 'faltoo-chat-assistant-face))
+                         (overlays-at (point))))))
 
 ;;; Ask specs
 

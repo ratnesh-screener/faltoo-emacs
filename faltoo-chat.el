@@ -44,7 +44,7 @@
     buf))
 
 (defun faltoo-chat--highlight-block (start end face overlays-var)
-  (let ((overlay (make-overlay start end nil nil t)))
+  (let ((overlay (make-overlay start end nil nil nil)))
     (overlay-put overlay 'face face)
     (push overlay (symbol-value overlays-var))))
 
@@ -68,15 +68,14 @@
           (let ((content-end (point)))
             (insert "\n\n")
             (faltoo-chat--highlight-tool-block start content-end)))
-      (insert (format "# %s\n\n" role))
-      (insert text)
-      (let ((content-end (point)))
-        (insert "\n\n")
+      (insert (format "# %s" role))
+      (let ((heading-end (point)))
+        (insert "\n\n" text "\n\n")
         (cond
          ((string= (downcase role-text) "user")
-          (faltoo-chat--highlight-user-block start content-end))
+          (faltoo-chat--highlight-user-block start heading-end))
          ((string= (downcase role-text) "assistant")
-          (faltoo-chat--highlight-assistant-block start content-end)))))))
+          (faltoo-chat--highlight-assistant-block start heading-end)))))))
 
 (defun faltoo-chat--insert-user-prompt ()
   (goto-char (point-max))
@@ -100,7 +99,8 @@
         (erase-buffer)
         (dolist (message messages)
           (faltoo-chat--insert-message message))
-        (faltoo-chat--insert-user-prompt))
+        (faltoo-chat--insert-user-prompt)
+        (faltoo-ui-fontify-markdown))
       (goto-char faltoo-chat-prompt-marker))
     buf))
 
@@ -146,15 +146,15 @@
         (goto-char (point-max))
         (unless (or (bobp) (looking-back "\n\n" nil))
           (insert "\n"))
-        (insert (format "# %s\n\n" title))))
+        (let ((start (point)))
+          (insert (format "# %s" title))
+          (faltoo-chat--highlight-assistant-block start (point))
+          (insert "\n\n"))))
     buf))
 
 (defun faltoo-chat-append-stream (text)
   "Append assistant stream TEXT to transcript."
-  (with-current-buffer (faltoo-chat-buffer)
-    (let ((start (point)))
-      (faltoo-popup-append (current-buffer) text)
-      (faltoo-chat--highlight-assistant-block start (point)))))
+  (faltoo-popup-append (faltoo-chat-buffer) text))
 
 (defun faltoo-chat-append-stream-block (text &optional face)
   "Append stream TEXT as its own transcript block, optionally with FACE."
