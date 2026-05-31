@@ -62,11 +62,11 @@ C-c f H r revert current hunk
 In Ask/comment posframes:
 
 ```text
-C-c C-c   send/save
+C-c C-c   send/save/follow-up
 C-c C-k   cancel/close
 C-g       close
 C-c C-f   insert file reference
-C-c /     insert slash command, Ask only
+C-c /     insert slash command, Ask/last-response only
 ```
 
 In `*Faltoo*` transcript:

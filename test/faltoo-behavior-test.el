@@ -359,8 +359,8 @@
 
      ;; Then major sections have Markdown horizontal rules between them.
      (with-current-buffer "*Faltoo Popup*"
-       (should (string-match-p "---\n\n## Code" (buffer-string)))
-       (should (string-match-p "---\n\n## Question" (buffer-string)))))))
+       (should (string-match-p "---\n## Code" (buffer-string)))
+       (should (string-match-p "---\n## Question" (buffer-string)))))))
 
 (ert-deftest faltoo-ask-empty-question-does-not-capture-help-text ()
   "Scenario: Ask help text is not submitted as the question."
@@ -376,6 +376,56 @@
 
        ;; Then it is empty; footer/help text is outside the payload.
        (should (string-empty-p (faltoo-ask--question-text)))))))
+
+(ert-deftest faltoo-ask-adds-editable-follow-up-after-response ()
+  "Scenario: Ask popup becomes reusable after an assistant response finishes."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     ;; Given an Ask popup has a typed question.
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+       (faltoo-ask))
+     (with-current-buffer "*Faltoo Popup*"
+       (insert "first question")
+
+       ;; When the request completes successfully.
+       (cl-letf (((symbol-function 'faltoo-request-message)
+                  (lambda (_message _popup on-done)
+                    (funcall on-done t))))
+         (faltoo-ask-send))
+
+       ;; Then a fresh follow-up prompt is ready for input.
+       (should-not faltoo-ask-sent)
+       (should (string-match-p "## Follow-up" (buffer-string)))
+       (should (= (point) faltoo-ask-question-marker))))))
+
+(ert-deftest faltoo-ask-follow-up-keeps-original-code-context ()
+  "Scenario: Ask follow-ups reuse the original source context."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (let (captured-message)
+       ;; Given a completed Ask popup has a follow-up prompt.
+       (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+         (faltoo-ask))
+       (with-current-buffer "*Faltoo Popup*"
+         (insert "first question")
+         (cl-letf (((symbol-function 'faltoo-request-message)
+                    (lambda (_message _popup on-done)
+                      (funcall on-done t))))
+           (faltoo-ask-send))
+         (insert "second question")
+
+         ;; When sending the follow-up.
+         (cl-letf (((symbol-function 'faltoo-request-message)
+                    (lambda (message _popup _on-done)
+                      (setq captured-message message))))
+           (faltoo-ask-send)))
+
+       ;; Then the second request still includes the same code context.
+       (should (string-match-p "lines 1-1" captured-message))
+       (should (string-match-p "```\none\n```" captured-message))
+       (should (string-match-p "second question" captured-message))))))
 
 (ert-deftest faltoo-ask-stream-routes-answer-to-popup-and-transcript ()
   "Scenario: Ask responses stream near code and into transcript history."
@@ -498,8 +548,17 @@
       (should (derived-mode-p 'faltoo-popup-mode))
       (should (derived-mode-p 'markdown-mode)))))
 
+(ert-deftest faltoo-popup-sections-are-compact-after-horizontal-rules ()
+  "Scenario: Popup section separators do not waste vertical space."
+  (with-temp-buffer
+    ;; When a section is inserted.
+    (faltoo-compose-insert-section "Question")
+
+    ;; Then the rule, heading, and editable body are adjacent.
+    (should (equal (buffer-string) "\n---\n## Question\n"))))
+
 (ert-deftest faltoo-last-response-popup-renders-markdown-content ()
-  "Scenario: Last response popup uses Markdown headings, not plain text."
+  "Scenario: Last response popup uses Markdown headings and an editable follow-up."
   (let ((faltoo-last-assistant-message "answer body"))
     ;; Given a latest assistant response exists.
 
@@ -507,11 +566,32 @@
     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
       (faltoo-show-last-response))
 
-    ;; Then the popup uses Markdown mode and Markdown content.
+    ;; Then the popup uses Markdown mode and starts in the follow-up prompt.
     (with-current-buffer faltoo-last-response-buffer
       (should (derived-mode-p 'markdown-mode))
+      (should (derived-mode-p 'faltoo-ask-mode))
       (should (string-match-p "# Last Assistant Response" (buffer-string)))
-      (should (string-match-p "answer body" (buffer-string))))))
+      (should (string-match-p "answer body" (buffer-string)))
+      (should (string-match-p "## Follow-up" (buffer-string)))
+      (should (= (point) faltoo-ask-question-marker)))))
+
+(ert-deftest faltoo-last-response-popup-sends-plain-follow-up-question ()
+  "Scenario: Last response follow-up sends only the typed question."
+  (let ((faltoo-last-assistant-message "answer body") captured-message)
+    ;; Given the last response popup is open with a typed follow-up.
+    (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+      (faltoo-show-last-response))
+    (with-current-buffer faltoo-last-response-buffer
+      (insert "please explain")
+
+      ;; When sending from that popup.
+      (cl-letf (((symbol-function 'faltoo-request-message)
+                 (lambda (message _popup _on-done)
+                   (setq captured-message message))))
+        (faltoo-ask-send)))
+
+    ;; Then no stale code context is added.
+    (should (equal captured-message "please explain"))))
 
 (ert-deftest faltoo-popup-mode-does-not-bind-q ()
   "Scenario: Popup text editing keeps q available for typing."
@@ -744,8 +824,8 @@
 
      ;; Then major sections have Markdown horizontal rules between them.
      (with-current-buffer "*Faltoo Comment*"
-       (should (string-match-p "---\n\n## Code" (buffer-string)))
-       (should (string-match-p "---\n\n## Comment" (buffer-string)))))))
+       (should (string-match-p "---\n## Code" (buffer-string)))
+       (should (string-match-p "---\n## Comment" (buffer-string)))))))
 
 (ert-deftest faltoo-comment-empty-comment-does-not-capture-help-text ()
   "Scenario: Comment help text is not saved as a review comment."

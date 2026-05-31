@@ -279,7 +279,7 @@ Streaming response behavior:
 - Batched review-comment submissions should not stream full responses in a popup by default; they should stream to `*Faltoo*` and show lightweight progress in the mode-line/minibuffer.
 - Background/tool-heavy requests should use `*Faltoo*` for full stream details and lightweight status near code.
 - Every exchange should be appended to/persisted in the FaltooBot session and visible in `*Faltoo*` history.
-- Ask popups can provide follow-up/reply keys later, but MVP can close after completion with `C-g`/`C-c C-k`. Do not bind plain `q` in editable popups.
+- Ask popups add an editable `## Follow-up` section after a successful response. `C-c C-c` sends the follow-up while reusing the original code context. Do not bind plain `q` in editable popups.
 
 Stream location policy:
 
@@ -303,8 +303,8 @@ faltoo-show-last-response
 Behavior:
 
 - Fetch/use the latest assistant message from the current Faltoo session.
-- Display it in a read-only centered `posframe`.
-- Keybindings in the popup should include `C-g`/`C-c C-k` to close and `r` to open an Ask follow-up if practical. Do not bind plain `q` globally because popup modes share editable text behavior.
+- Display it in a centered `posframe` with an editable `## Follow-up` section.
+- `C-c C-c` sends the typed follow-up as a plain chat message; `C-g`/`C-c C-k` closes. Do not bind plain `q` globally because popup modes share editable text behavior.
 - This is for quick recall; full history remains in `*Faltoo*`.
 
 ## File References
@@ -931,7 +931,7 @@ MVP behavior:
 - `C-g`/`C-c C-k` closes and returns focus to the source window.
 - Plain `q` is not a close key because it must remain typeable in editable popups.
 
-Future follow-up support should be easy to add. Keep the popup/session plumbing structured so a later `r`/reply action can reuse the last interaction context.
+Follow-up support is implemented for Ask and last-response popups. Ask follow-ups reuse the original code context; last-response follow-ups send a plain chat message.
 
 ### Comment Input and Marking
 

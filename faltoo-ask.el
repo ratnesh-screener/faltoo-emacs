@@ -80,12 +80,23 @@
   (string-trim (buffer-substring-no-properties faltoo-ask-question-marker (point-max))))
 
 (defun faltoo-ask--message (context question)
-  (format "About `%s` lines %d-%d:\n\n```\n%s\n```\n\n%s"
-          (plist-get context :file)
-          (plist-get context :start)
-          (plist-get context :end)
-          (plist-get context :code)
-          question))
+  (if context
+      (format "About `%s` lines %d-%d:\n\n```\n%s\n```\n\n%s"
+              (plist-get context :file)
+              (plist-get context :start)
+              (plist-get context :end)
+              (plist-get context :code)
+              question)
+    question))
+
+(defun faltoo-ask--insert-follow-up ()
+  (let ((inhibit-read-only t))
+    (goto-char (point-max))
+    (faltoo-compose-insert-section "Follow-up")
+    (setq faltoo-ask-question-marker (point-marker)
+          faltoo-ask-sent nil)
+    (faltoo-ui-fontify-markdown)
+    (goto-char faltoo-ask-question-marker)))
 
 (defun faltoo-ask-send ()
   "Send current Ask popup question."
@@ -103,8 +114,14 @@
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (goto-char (point-max))
-        (faltoo-compose-insert-section "Assistant")))
-    (faltoo-request-message message buf)))
+        (faltoo-compose-insert-section "Assistant")
+        (faltoo-ui-fontify-markdown)))
+    (faltoo-request-message
+     message buf
+     (lambda (ok)
+       (when (and ok (buffer-live-p buf))
+         (with-current-buffer buf
+           (faltoo-ask--insert-follow-up)))))))
 
 (defun faltoo-show-last-response ()
   "Show latest assistant message in a posframe."
@@ -117,8 +134,19 @@
           (setq message (alist-get 'text item)))))
     (when (string-empty-p message)
       (user-error "No assistant response yet"))
-    (let ((buf (faltoo-popup-buffer faltoo-last-response-buffer #'faltoo-popup-mode)))
-      (faltoo-compose-set-message buf "Last Assistant Response" message t)
+    (let ((buf (faltoo-popup-buffer faltoo-last-response-buffer #'faltoo-ask-mode)))
+      (with-current-buffer buf
+        (setq faltoo-ask-context nil
+              faltoo-ask-sent nil)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (faltoo-compose-insert-title "Last Assistant Response")
+          (insert "\n" message)
+          (faltoo-compose-insert-help "C-c C-c send follow-up · C-c C-k/C-g close · C-c C-f file · C-c / command")
+          (faltoo-compose-insert-section "Follow-up")
+          (setq faltoo-ask-question-marker (point-marker))
+          (faltoo-ui-fontify-markdown)
+          (goto-char faltoo-ask-question-marker)))
       (faltoo-popup-show buf 100 28))))
 
 (provide 'faltoo-ask)

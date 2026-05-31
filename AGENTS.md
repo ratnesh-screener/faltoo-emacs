@@ -79,7 +79,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - `C-c f h` opens transcript/history.
 - `C-c f x` stops current review session.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
-- Ask responses stream in the posframe and transcript.
+- Ask responses stream in the posframe and transcript; completed Ask/last-response popups add an editable Follow-up section.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
 - Review-comment submissions stream to `*Faltoo*` and status/mode-line, not a popup.
 - Review buffers are read-only and show a header line with `Faltoo[1/N]`.
