@@ -557,7 +557,15 @@
     (should (plist-get (cdr captured-args) :accept-focus))
     (should (> (plist-get (cdr captured-args) :border-width) 0))
     (should (plist-get (cdr captured-args) :border-color))
-    (should (>= (plist-get (cdr captured-args) :internal-border-width) 8))))
+    (should (>= (plist-get (cdr captured-args) :internal-border-width) 16))
+    (should (equal (plist-get (cdr captured-args) :internal-border-color)
+                   (plist-get (cdr captured-args) :background-color)))
+    (should (>= (plist-get (cdr captured-args) :left-fringe) 16))
+    (should (>= (plist-get (cdr captured-args) :right-fringe) 16))
+    (should (member '(left-fringe . 16)
+                    (plist-get (cdr captured-args) :override-parameters)))
+    (should (member '(right-fringe . 16)
+                    (plist-get (cdr captured-args) :override-parameters)))))
 
 (ert-deftest faltoo-popup-show-opens-centered-and-remembers-return-window ()
   "Scenario: Faltoo popups open centered and remember where focus came from."

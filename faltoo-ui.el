@@ -63,19 +63,25 @@
       (setq faltoo-popup-return-window return-window))
     (with-current-buffer buffer
       (faltoo-ui-fontify-markdown))
-    (let ((frame (posframe-show buffer
-                                :poshandler #'posframe-poshandler-frame-center
-                                :width (or width 100)
-                                :height (or height 24)
-                                :cursor 'box
-                                :tty-non-selected-cursor t
-                                :window-point (with-current-buffer buffer (point))
-                                :border-width 2
-                                :border-color "#888888"
-                                :internal-border-width 8
-                                :internal-border-color "#222222"
-                                :respect-header-line t
-                                :accept-focus t)))
+    (let* ((background (face-attribute 'default :background nil t))
+           (frame (posframe-show buffer
+                                 :poshandler #'posframe-poshandler-frame-center
+                                 :width (or width 100)
+                                 :height (or height 24)
+                                 :cursor 'box
+                                 :tty-non-selected-cursor t
+                                 :window-point (with-current-buffer buffer (point))
+                                 :border-width 2
+                                 :border-color "#888888"
+                                 :internal-border-width 16
+                                 :internal-border-color background
+                                 :background-color background
+                                 :left-fringe 16
+                                 :right-fringe 16
+                                 :override-parameters '((left-fringe . 16)
+                                                        (right-fringe . 16))
+                                 :respect-header-line t
+                                 :accept-focus t)))
       (select-frame-set-input-focus frame)
       (with-selected-frame frame
         (select-window (frame-selected-window frame))
