@@ -72,7 +72,7 @@
                                 :window-point (with-current-buffer buffer (point))
                                 :border-width 2
                                 :border-color "#888888"
-                                :internal-border-width 2
+                                :internal-border-width 8
                                 :internal-border-color "#222222"
                                 :respect-header-line t
                                 :accept-focus t)))

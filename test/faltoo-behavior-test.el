@@ -348,6 +348,20 @@
        (should (equal (plist-get context :end) 3))
        (should (equal (plist-get context :code) "one\ntwo\n"))))))
 
+(ert-deftest faltoo-ask-popup-separates-sections-with-horizontal-rules ()
+  "Scenario: Ask popup sections are visually separated."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     ;; Given the Ask popup is opened.
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+       (faltoo-ask))
+
+     ;; Then major sections have Markdown horizontal rules between them.
+     (with-current-buffer "*Faltoo Popup*"
+       (should (string-match-p "---\n\n## Code" (buffer-string)))
+       (should (string-match-p "---\n\n## Question" (buffer-string)))))))
+
 (ert-deftest faltoo-ask-empty-question-does-not-capture-help-text ()
   "Scenario: Ask help text is not submitted as the question."
   (faltoo-test--with-temp-git-file
@@ -539,10 +553,11 @@
       ;; When showing a Faltoo popup.
       (faltoo-popup-show (get-buffer-create "*Faltoo Popup Test*") 80 20))
 
-    ;; Then the posframe is focusable and has a border.
+    ;; Then the posframe is focusable, bordered, and padded inside the box.
     (should (plist-get (cdr captured-args) :accept-focus))
     (should (> (plist-get (cdr captured-args) :border-width) 0))
-    (should (plist-get (cdr captured-args) :border-color))))
+    (should (plist-get (cdr captured-args) :border-color))
+    (should (>= (plist-get (cdr captured-args) :internal-border-width) 8))))
 
 (ert-deftest faltoo-popup-show-opens-centered-and-remembers-return-window ()
   "Scenario: Faltoo popups open centered and remember where focus came from."
@@ -709,6 +724,20 @@
          ;; Then the comment and overlay are gone.
          (should-not faltoo-comments)
          (should-not (overlay-buffer overlay)))))))
+
+(ert-deftest faltoo-comment-popup-separates-sections-with-horizontal-rules ()
+  "Scenario: Comment popup sections are visually separated."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     ;; Given the comment popup is opened.
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+       (faltoo-comment))
+
+     ;; Then major sections have Markdown horizontal rules between them.
+     (with-current-buffer "*Faltoo Comment*"
+       (should (string-match-p "---\n\n## Code" (buffer-string)))
+       (should (string-match-p "---\n\n## Comment" (buffer-string)))))))
 
 (ert-deftest faltoo-comment-empty-comment-does-not-capture-help-text ()
   "Scenario: Comment help text is not saved as a review comment."
