@@ -123,7 +123,7 @@
         (progn
           ;; Given an active popup and transcript stream.
           (with-current-buffer popup (erase-buffer))
-          (faltoo-chat-start-stream "Assistant · streaming")
+          (faltoo-chat-start-stream "Assistant · answering")
 
           ;; When many answer chunks arrive.
           ;; Then routing remains interactive.

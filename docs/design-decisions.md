@@ -187,7 +187,7 @@ Can you also check `tests/foo_test.py`?
 Transcript headings after the first turn are separated with Markdown horizontal rules. A streaming response may render as:
 
 ```markdown
-# Assistant · streaming
+# Assistant · answering
 
 Submitting message...
 ```
@@ -195,8 +195,10 @@ Submitting message...
 Tool/status events should be compact by default and must not create their own transcript headings:
 
 ```markdown
-- reading `foo.py`
-- running tests
+> reading `foo.py`
+> running tests
+
+Final response starts here.
 ```
 
 Assistant answer text should be preserved in full. Tool/status bullets may be clipped or summarized.
@@ -517,10 +519,10 @@ append-message
 Behavior:
 
 - Insert/render user prompt in `*Faltoo*`.
-- Add an `# Assistant · streaming` section.
+- Add an `# Assistant · answering` section.
 - Start async bridge process.
 - Stream JSONL events into the chat buffer.
-- On completion, reload canonical persisted messages and rerender.
+- On completion, finalize the assistant heading in-place and append the next user prompt after a horizontal rule.
 - Ring bell optionally.
 - Reload review buffers if the assistant may have edited files.
 

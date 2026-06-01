@@ -342,7 +342,7 @@
   (when (get-buffer faltoo-chat-buffer-name)
     (kill-buffer faltoo-chat-buffer-name))
   ;; Given a streaming answer starts.
-  (faltoo-chat-start-stream "Assistant · streaming")
+  (faltoo-chat-start-stream "Assistant · answering")
 
   ;; When answer text arrives.
   (faltoo-chat-append-stream "answer body with `code`")
@@ -366,7 +366,7 @@
   (when (get-buffer faltoo-chat-buffer-name)
     (kill-buffer faltoo-chat-buffer-name))
   ;; Given a stream is active in the transcript.
-  (faltoo-chat-start-stream "Assistant · streaming")
+  (faltoo-chat-start-stream "Assistant · answering")
   (faltoo-chat-append-stream "streamed answer")
 
   ;; When the stream finishes.
@@ -377,9 +377,8 @@
 
   ;; Then the assistant heading is finalized and a fresh user prompt is appended.
   (with-current-buffer faltoo-chat-buffer-name
-    (should (string-match-p "# Assistant\n\nstreamed answer" (buffer-string)))
-    (should-not (string-match-p "Assistant · streaming" (buffer-string)))
-    (should (string-match-p "---\n# User\n\n$" (buffer-string)))
+    (should (string-match-p "# Assistant\n\nstreamed answer\n\n---\n# User\n\n$" (buffer-string)))
+    (should-not (string-match-p "Assistant · answering" (buffer-string)))
     (should (= (point) faltoo-chat-prompt-marker))))
 
 ;;; Ask specs
@@ -551,7 +550,7 @@
   (when (get-buffer faltoo-chat-buffer-name)
     (kill-buffer faltoo-chat-buffer-name))
   ;; Given a chat stream is active.
-  (faltoo-chat-start-stream "Assistant · streaming")
+  (faltoo-chat-start-stream "Assistant · answering")
 
   ;; When status events are routed into the transcript.
   (faltoo-request--route-event '((classes . "status") (text . "first block")) nil nil)
@@ -567,12 +566,28 @@
                        (eq (overlay-get overlay 'face) 'faltoo-chat-tool-face))
                      (overlays-at (point))))))
 
+(ert-deftest faltoo-request-separates-tool-quotes-from-final-answer ()
+  "Scenario: Final answer text starts after a blank line following compact tool calls."
+  (when (get-buffer faltoo-chat-buffer-name)
+    (kill-buffer faltoo-chat-buffer-name))
+  ;; Given tool/status blocks are already in the streaming assistant section.
+  (faltoo-chat-start-stream "Assistant · answering")
+  (faltoo-request--route-event '((classes . "status") (text . "first block")) nil nil)
+  (faltoo-request--route-event '((classes . "tool") (text . "second block")) nil nil)
+
+  ;; When final answer text starts streaming.
+  (faltoo-request--route-event '((classes . "answer") (text . "final answer")) nil nil)
+
+  ;; Then the compact tool block is separated from the final answer body.
+  (with-current-buffer faltoo-chat-buffer-name
+    (should (string-match-p "> first block\n> second block\n\nfinal answer" (buffer-string)))))
+
 (ert-deftest faltoo-request-renders-only-truncated-tool-summary ()
   "Scenario: Tool streams show FaltooChat-style summaries, not full command bodies."
   (when (get-buffer faltoo-chat-buffer-name)
     (kill-buffer faltoo-chat-buffer-name))
   ;; Given a tool event contains a shell summary and hidden command body.
-  (faltoo-chat-start-stream "Assistant · streaming")
+  (faltoo-chat-start-stream "Assistant · answering")
 
   ;; When the event is routed into the transcript.
   (faltoo-request--route-event

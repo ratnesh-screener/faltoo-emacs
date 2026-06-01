@@ -56,7 +56,7 @@
   (setq faltoo-submitting t
         faltoo-last-assistant-message "")
   (faltoo-set-status chat-title)
-  (faltoo-chat-start-stream "Assistant · streaming")
+  (faltoo-chat-start-stream "Assistant · answering")
   (faltoo-bridge-stream
    args payload
    (lambda (event)

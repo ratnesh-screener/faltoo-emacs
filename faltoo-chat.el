@@ -16,6 +16,7 @@
 (defvar-local faltoo-chat-tool-overlays nil)
 (defvar-local faltoo-chat-assistant-overlays nil)
 (defvar-local faltoo-chat-stream-heading-marker nil)
+(defvar-local faltoo-chat-stream-answer-started nil)
 
 (defcustom faltoo-chat-turns 20
   "Number of recent user turns shown in the Faltoo transcript."
@@ -108,7 +109,8 @@
         (setq faltoo-chat-user-overlays nil
               faltoo-chat-tool-overlays nil
               faltoo-chat-assistant-overlays nil
-              faltoo-chat-stream-heading-marker nil)
+              faltoo-chat-stream-heading-marker nil
+              faltoo-chat-stream-answer-started nil)
         (erase-buffer)
         (dolist (message messages)
           (faltoo-chat--insert-message message))
@@ -161,7 +163,8 @@
           (insert "\n"))
         (faltoo-chat--insert-rule)
         (let ((start (point)))
-          (setq faltoo-chat-stream-heading-marker (copy-marker start))
+          (setq faltoo-chat-stream-heading-marker (copy-marker start)
+                faltoo-chat-stream-answer-started nil)
           (insert (format "# %s" title))
           (faltoo-chat--highlight-assistant-block start (point))
           (insert "\n\n"))))
@@ -169,7 +172,16 @@
 
 (defun faltoo-chat-append-stream (text)
   "Append assistant stream TEXT to transcript without moving the reader."
-  (faltoo-popup-append (faltoo-chat-buffer) text t))
+  (let ((buf (faltoo-chat-buffer))
+        (prefix ""))
+    (with-current-buffer buf
+      (unless faltoo-chat-stream-answer-started
+        (setq faltoo-chat-stream-answer-started t)
+        (save-excursion
+          (goto-char (point-max))
+          (unless (looking-back "\n\n" nil)
+            (setq prefix "\n")))))
+    (faltoo-popup-append buf (concat prefix text) t)))
 
 (defun faltoo-chat-append-stream-block (text &optional face)
   "Append stream TEXT as a quoted transcript block, optionally with FACE."
@@ -190,13 +202,15 @@
         (when (markerp faltoo-chat-stream-heading-marker)
           (save-excursion
             (goto-char faltoo-chat-stream-heading-marker)
-            (when (looking-at "# Assistant · streaming")
+            (when (looking-at "# Assistant · answering")
               (delete-region (point) (line-end-position))
               (insert "# Assistant")))
           (setq faltoo-chat-stream-heading-marker nil))
         (goto-char (point-max))
-        (unless (looking-back "\n\n" nil)
-          (insert "\n"))
+        (cond
+         ((looking-back "\n\n" nil))
+         ((looking-back "\n" nil) (insert "\n"))
+         (t (insert "\n\n")))
         (faltoo-chat--insert-user-prompt)
         (faltoo-ui-fontify-markdown)))))
 
