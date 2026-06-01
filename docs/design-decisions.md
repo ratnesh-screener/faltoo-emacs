@@ -161,6 +161,8 @@ It is used for viewing full conversation history, searching/copying responses, r
 
 The transcript buffer `default-directory` is the repo root, so chat sends, file references, slash commands, and refreshes use the same FaltooBot workspace/session as source-buffer commands from that repo. Running-request state is scoped by Git repo: one workspace can be answering while another workspace accepts a new prompt.
 
+When a streamed assistant response completes, the finalized assistant heading includes elapsed wall-clock time, e.g. `# Assistant · 20.0s`, and the request status records the same duration.
+
 ### Transcript Format
 
 Use Markdown formatting in `markdown-mode` because model output is Markdown. Enable local pretty Markdown settings (`markdown-hide-markup`, native code block fontification, whole-heading fontification) rather than maintaining a Markdown-to-Org converter:

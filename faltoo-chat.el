@@ -204,7 +204,10 @@
       (when face
         (faltoo-chat--highlight-block start (point-max) face 'faltoo-chat-tool-overlays)))))
 
-(defun faltoo-chat-finish-stream (&optional workspace)
+(defun faltoo-chat--duration-label (elapsed-seconds)
+  (format "%.1fs" elapsed-seconds))
+
+(defun faltoo-chat-finish-stream (&optional workspace elapsed-seconds)
   "Finish streaming in-place and append the next editable user prompt."
   (let ((buf (get-buffer (faltoo-chat-buffer-name-for (or workspace (faltoo-workspace))))))
     (when buf
@@ -215,7 +218,9 @@
               (goto-char faltoo-chat-stream-heading-marker)
               (when (looking-at "# Assistant · answering")
                 (delete-region (point) (line-end-position))
-                (insert "# Assistant")))
+                (insert (if elapsed-seconds
+                            (format "# Assistant · %s" (faltoo-chat--duration-label elapsed-seconds))
+                          "# Assistant"))))
             (setq faltoo-chat-stream-heading-marker nil))
           (goto-char (point-max))
           (cond

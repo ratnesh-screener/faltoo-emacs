@@ -8,6 +8,8 @@
 (require 'faltoo-ui)
 (require 'faltoo-faces)
 
+(defvar faltoo-request-start-times (make-hash-table :test #'equal))
+
 (defun faltoo-request--event-text (event)
   (or (alist-get 'text event) ""))
 
@@ -57,6 +59,7 @@
   (let ((workspace (alist-get 'workspace payload)))
     (faltoo-request-ensure-idle workspace)
     (faltoo-set-workspace-submitting workspace t)
+    (puthash workspace (float-time) faltoo-request-start-times)
     (setq faltoo-last-assistant-message "")
     (puthash workspace "" faltoo-last-assistant-messages)
     (faltoo-set-status chat-title)
@@ -66,10 +69,14 @@
      (lambda (event)
        (faltoo-request--route-event event workspace popup-buffer on-submitted))
      (lambda (ok)
-       (faltoo-set-workspace-submitting workspace nil)
-       (faltoo-set-status (if ok "Faltoo complete" "Faltoo failed"))
-       (faltoo-reload-review-buffers)
-       (faltoo-chat-finish-stream workspace)
+       (let ((elapsed (- (float-time) (gethash workspace faltoo-request-start-times))))
+         (remhash workspace faltoo-request-start-times)
+         (faltoo-set-workspace-submitting workspace nil)
+         (faltoo-set-status (if ok
+                                (format "Faltoo complete in %.1fs" elapsed)
+                              (format "Faltoo failed after %.1fs" elapsed)))
+         (faltoo-reload-review-buffers)
+         (faltoo-chat-finish-stream workspace elapsed))
        (when on-done (funcall on-done ok))
        (when ok (ding))))))
 

@@ -164,6 +164,31 @@
        (should (equal (alist-get 'workspace captured-payload)
                       (file-truename root-b)))))))
 
+(ert-deftest faltoo-request-completion-records-elapsed-time ()
+  "Scenario: Request completion records assistant duration in status and transcript."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (faltoo-test--kill-chat-buffer)
+     (let ((times '(10.0 30.0))
+           (faltoo-request-start-times (make-hash-table :test #'equal)))
+       ;; Given request timing is deterministic.
+       (cl-letf (((symbol-function 'float-time)
+                  (lambda () (or (pop times) 30.0)))
+                 ((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args _payload on-event on-done)
+                    (funcall on-event '((classes . "answer") (text . "timed answer")))
+                    (funcall on-done t)))
+                 ((symbol-function 'ding) (lambda (&rest _args) nil)))
+
+         ;; When the request completes.
+         (faltoo-request-message "time this"))
+
+       ;; Then both status and transcript show the elapsed time.
+       (should (equal faltoo-status "Faltoo complete in 20.0s"))
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "# Assistant · 20.0s\n\ntimed answer" (buffer-string))))))))
+
 (ert-deftest faltoo-chat-send-targets-transcript-workspace ()
   "Scenario: Sending from a repo transcript keeps using that transcript's Git root."
   (faltoo-test--with-two-temp-git-files
@@ -498,6 +523,21 @@
     (should (string-match-p "# Assistant\n\nstreamed answer\n\n---\n# User\n\n$" (buffer-string)))
     (should-not (string-match-p "Assistant · answering" (buffer-string)))
     (should (= (point) faltoo-chat-prompt-marker))))
+
+(ert-deftest faltoo-chat-finish-stream-shows-elapsed-time-in-assistant-heading ()
+  "Scenario: Completed streams show how long the assistant took."
+  (faltoo-test--kill-chat-buffer)
+  ;; Given a stream is active in the transcript.
+  (faltoo-chat-start-stream "Assistant · answering")
+  (faltoo-chat-append-stream "streamed answer")
+
+  ;; When the stream finishes with elapsed time.
+  (faltoo-chat-finish-stream nil 20.0)
+
+  ;; Then the assistant heading includes the duration before the next prompt.
+  (with-current-buffer (faltoo-test--chat-buffer-name)
+    (should (string-match-p "# Assistant · 20.0s\n\nstreamed answer" (buffer-string)))
+    (should (string-match-p "---\n# User\n\n$" (buffer-string)))))
 
 ;;; Ask specs
 
