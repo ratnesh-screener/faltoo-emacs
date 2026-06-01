@@ -106,7 +106,7 @@ This reloads all Faltoo `.el` files in dependency order, so restarting Emacs sho
 - Source buffers are the primary UI.
 - Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo.
 - Ask responses stream in the centered posframe, including compact status/tool lines.
-- Completed assistant transcript headings include elapsed time, e.g. `# Assistant · 20.0s`.
+- Completed assistant transcript footers include elapsed time, e.g. `> Assistant took: 20.0s`.
 - Review-comment submission streams to the current repo transcript and status/mode-line.
 - Faltoo never auto-stages changes.
 

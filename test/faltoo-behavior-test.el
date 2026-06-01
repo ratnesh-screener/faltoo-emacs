@@ -164,8 +164,8 @@
        (should (equal (alist-get 'workspace captured-payload)
                       (file-truename root-b)))))))
 
-(ert-deftest faltoo-request-completion-records-elapsed-time ()
-  "Scenario: Request completion records assistant duration in status and transcript."
+(ert-deftest faltoo-request-completion-records-elapsed-time-in-transcript-footer ()
+  "Scenario: Request completion records assistant duration in the transcript footer."
   (faltoo-test--with-temp-git-file
    '("one")
    (lambda (_file _root)
@@ -184,10 +184,10 @@
          ;; When the request completes.
          (faltoo-request-message "time this"))
 
-       ;; Then both status and transcript show the elapsed time.
-       (should (equal faltoo-status "Faltoo complete in 20.0s"))
+       ;; Then status stays compact and transcript shows the elapsed time footer.
+       (should (equal faltoo-status "Faltoo complete"))
        (with-current-buffer (faltoo-test--chat-buffer-name)
-         (should (string-match-p "# Assistant · 20.0s\n\ntimed answer" (buffer-string))))))))
+         (should (string-match-p "timed answer\n\n> Assistant took: 20.0s\n\n---\n# User" (buffer-string))))))))
 
 (ert-deftest faltoo-chat-send-targets-transcript-workspace ()
   "Scenario: Sending from a repo transcript keeps using that transcript's Git root."
@@ -524,8 +524,8 @@
     (should-not (string-match-p "Assistant · answering" (buffer-string)))
     (should (= (point) faltoo-chat-prompt-marker))))
 
-(ert-deftest faltoo-chat-finish-stream-shows-elapsed-time-in-assistant-heading ()
-  "Scenario: Completed streams show how long the assistant took."
+(ert-deftest faltoo-chat-finish-stream-shows-elapsed-time-in-footer ()
+  "Scenario: Completed streams show how long the assistant took in the footer."
   (faltoo-test--kill-chat-buffer)
   ;; Given a stream is active in the transcript.
   (faltoo-chat-start-stream "Assistant · answering")
@@ -534,10 +534,10 @@
   ;; When the stream finishes with elapsed time.
   (faltoo-chat-finish-stream nil 20.0)
 
-  ;; Then the assistant heading includes the duration before the next prompt.
+  ;; Then the assistant heading stays clean and duration appears before the next prompt.
   (with-current-buffer (faltoo-test--chat-buffer-name)
-    (should (string-match-p "# Assistant · 20.0s\n\nstreamed answer" (buffer-string)))
-    (should (string-match-p "---\n# User\n\n$" (buffer-string)))))
+    (should (string-match-p "# Assistant\n\nstreamed answer\n\n> Assistant took: 20.0s\n\n---\n# User\n\n$" (buffer-string)))
+    (should-not (string-match-p "# Assistant · 20.0s" (buffer-string)))))
 
 ;;; Ask specs
 

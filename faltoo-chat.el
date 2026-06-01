@@ -218,15 +218,16 @@
               (goto-char faltoo-chat-stream-heading-marker)
               (when (looking-at "# Assistant · answering")
                 (delete-region (point) (line-end-position))
-                (insert (if elapsed-seconds
-                            (format "# Assistant · %s" (faltoo-chat--duration-label elapsed-seconds))
-                          "# Assistant"))))
+                (insert "# Assistant")))
             (setq faltoo-chat-stream-heading-marker nil))
           (goto-char (point-max))
           (cond
            ((looking-back "\n\n" nil))
            ((looking-back "\n" nil) (insert "\n"))
            (t (insert "\n\n")))
+          (when elapsed-seconds
+            (insert (format "> Assistant took: %s\n\n"
+                            (faltoo-chat--duration-label elapsed-seconds))))
           (faltoo-chat--insert-user-prompt)
           (faltoo-ui-fontify-markdown))))))
 

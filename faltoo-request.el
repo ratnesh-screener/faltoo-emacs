@@ -72,9 +72,7 @@
        (let ((elapsed (- (float-time) (gethash workspace faltoo-request-start-times))))
          (remhash workspace faltoo-request-start-times)
          (faltoo-set-workspace-submitting workspace nil)
-         (faltoo-set-status (if ok
-                                (format "Faltoo complete in %.1fs" elapsed)
-                              (format "Faltoo failed after %.1fs" elapsed)))
+         (faltoo-set-status (if ok "Faltoo complete" "Faltoo failed"))
          (faltoo-reload-review-buffers)
          (faltoo-chat-finish-stream workspace elapsed))
        (when on-done (funcall on-done ok))
