@@ -21,8 +21,6 @@
                        (markdown-header-face-1 :inherit outline-1 :height 1.35 :weight bold)
                        (markdown-header-face-2 :inherit outline-2 :height 1.2 :weight bold)
                        (markdown-header-face-3 :inherit outline-3 :height 1.1 :weight bold)
-                       (markdown-code-face :inherit fixed-pitch :extend t)
-                       (markdown-pre-face :inherit fixed-pitch :extend t)
                        (markdown-blockquote-face :inherit font-lock-doc-face :slant italic)))
     (apply #'face-remap-add-relative face-spec)))
 

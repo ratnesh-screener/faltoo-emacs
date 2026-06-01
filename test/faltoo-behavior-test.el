@@ -8,8 +8,6 @@
 (defface markdown-header-face-1 '((t)) "")
 (defface markdown-header-face-2 '((t)) "")
 (defface markdown-header-face-3 '((t)) "")
-(defface markdown-code-face '((t)) "")
-(defface markdown-pre-face '((t)) "")
 (defface markdown-blockquote-face '((t)) "")
 (provide 'markdown-mode)
 
@@ -212,16 +210,18 @@
     ;; Then the appended region is explicitly fontified.
     (should ensured)))
 
-(ert-deftest faltoo-markdown-modes-remap-markdown-faces-for-pretty-rendering ()
-  "Scenario: Markdown buffers remap heading, code, and quote faces for a cleaner view."
+(ert-deftest faltoo-markdown-modes-remap-heading-and-quote-faces-for-pretty-rendering ()
+  "Scenario: Markdown buffers remap heading and quote faces for a cleaner view."
   ;; Given a transcript buffer is rendered.
   (let ((buf (faltoo-chat-render nil)))
 
-    ;; Then the buffer has local pretty Markdown face remaps.
+    ;; Then headings and blockquotes have local pretty Markdown face remaps,
+    ;; while inline/fenced code keep the user's markdown-mode styling.
     (with-current-buffer buf
       (should (assoc 'markdown-header-face-1 face-remapping-alist))
-      (should (assoc 'markdown-code-face face-remapping-alist))
-      (should (assoc 'markdown-blockquote-face face-remapping-alist)))))
+      (should (assoc 'markdown-blockquote-face face-remapping-alist))
+      (should-not (assoc 'markdown-code-face face-remapping-alist))
+      (should-not (assoc 'markdown-pre-face face-remapping-alist)))))
 
 (ert-deftest faltoo-chat-stream-preserves-reader-position ()
   "Scenario: Streaming transcript text does not drag the reader to the bottom."
