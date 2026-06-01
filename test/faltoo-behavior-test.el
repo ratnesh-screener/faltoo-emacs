@@ -4,6 +4,13 @@
 (add-to-list 'load-path default-directory)
 
 (define-derived-mode markdown-mode text-mode "Markdown")
+(defface markdown-header-delimiter-face '((t)) "")
+(defface markdown-header-face-1 '((t)) "")
+(defface markdown-header-face-2 '((t)) "")
+(defface markdown-header-face-3 '((t)) "")
+(defface markdown-code-face '((t)) "")
+(defface markdown-pre-face '((t)) "")
+(defface markdown-blockquote-face '((t)) "")
 (provide 'markdown-mode)
 
 
@@ -205,6 +212,37 @@
     ;; Then the appended region is explicitly fontified.
     (should ensured)))
 
+(ert-deftest faltoo-markdown-modes-remap-markdown-faces-for-pretty-rendering ()
+  "Scenario: Markdown buffers remap heading, code, and quote faces for a cleaner view."
+  ;; Given a transcript buffer is rendered.
+  (let ((buf (faltoo-chat-render nil)))
+
+    ;; Then the buffer has local pretty Markdown face remaps.
+    (with-current-buffer buf
+      (should (assoc 'markdown-header-face-1 face-remapping-alist))
+      (should (assoc 'markdown-code-face face-remapping-alist))
+      (should (assoc 'markdown-blockquote-face face-remapping-alist)))))
+
+(ert-deftest faltoo-chat-stream-preserves-reader-position ()
+  "Scenario: Streaming transcript text does not drag the reader to the bottom."
+  (when (get-buffer faltoo-chat-buffer-name)
+    (kill-buffer faltoo-chat-buffer-name))
+  ;; Given the reader is looking at the top of a visible transcript.
+  (let ((buf (faltoo-chat-render '(((role . "assistant")
+                                    (text . "old answer\nline 2\nline 3\nline 4"))))))
+    (with-current-buffer buf
+      (goto-char (point-min)))
+    (let ((window (display-buffer buf)))
+      (set-window-point window (point-min))
+      (set-window-start window (point-min))
+
+      ;; When new stream text is appended.
+      (faltoo-chat-append-stream "new streamed text")
+
+      ;; Then the reader's point and scroll position stay where they were.
+      (should (= (window-point window) (point-min)))
+      (should (= (window-start window) (point-min))))))
+
 (ert-deftest faltoo-chat-render-shows-persisted-tool-summaries-without-headings ()
   "Scenario: Persisted tool summaries do not inflate the heading list."
   (let ((buf (faltoo-chat-render '(((role . "tool") (text . "Shell: inspect files"))))))
@@ -212,7 +250,7 @@
 
     ;; Then it is a one-line summary, not its own Tool heading.
     (with-current-buffer buf
-      (should (string-match-p "- Shell: inspect files" (buffer-string)))
+      (should (string-match-p "> Shell: inspect files" (buffer-string)))
       (should-not (string-match-p "\* Tool" (buffer-string)))
       (goto-char (point-min))
       (search-forward "inspect files")
@@ -320,6 +358,27 @@
     (should-not (cl-some (lambda (overlay)
                            (eq (overlay-get overlay 'face) 'faltoo-chat-assistant-face))
                          (overlays-at (point))))))
+
+(ert-deftest faltoo-chat-finish-stream-appends-next-prompt-without-refreshing-history ()
+  "Scenario: Completed streams stay in-place and add the next user turn."
+  (when (get-buffer faltoo-chat-buffer-name)
+    (kill-buffer faltoo-chat-buffer-name))
+  ;; Given a stream is active in the transcript.
+  (faltoo-chat-start-stream "Assistant · streaming")
+  (faltoo-chat-append-stream "streamed answer")
+
+  ;; When the stream finishes.
+  (cl-letf (((symbol-function 'faltoo-bridge-messages)
+             (lambda (&rest _args)
+               (error "Transcript should not refresh after streaming"))))
+    (faltoo-chat-finish-stream))
+
+  ;; Then the assistant heading is finalized and a fresh user prompt is appended.
+  (with-current-buffer faltoo-chat-buffer-name
+    (should (string-match-p "# Assistant\n\nstreamed answer" (buffer-string)))
+    (should-not (string-match-p "Assistant · streaming" (buffer-string)))
+    (should (string-match-p "---\n# User\n\n$" (buffer-string)))
+    (should (= (point) faltoo-chat-prompt-marker))))
 
 ;;; Ask specs
 
@@ -485,8 +544,8 @@
       (should-error (faltoo-request-message "second request") :type 'user-error)
       (should-not bridge-called))))
 
-(ert-deftest faltoo-request-renders-status-events-as-separated-chat-blocks ()
-  "Scenario: Streaming status blocks in chat are separated by blank lines."
+(ert-deftest faltoo-request-renders-status-events-as-compact-quotes ()
+  "Scenario: Streaming status/tool blocks are compact Markdown quotes."
   (when (get-buffer faltoo-chat-buffer-name)
     (kill-buffer faltoo-chat-buffer-name))
   ;; Given a chat stream is active.
@@ -496,9 +555,10 @@
   (faltoo-request--route-event '((classes . "status") (text . "first block")) nil nil)
   (faltoo-request--route-event '((classes . "tool") (text . "second block")) nil nil)
 
-  ;; Then each status/tool block has an empty line after it and a tool face.
+  ;; Then status/tool blocks are quoted without blank lines between them and have a tool face.
   (with-current-buffer faltoo-chat-buffer-name
-    (should (string-match-p "- first block\n\n- second block\n\n" (buffer-string)))
+    (should (string-match-p "> first block\n> second block\n" (buffer-string)))
+    (should-not (string-match-p "> first block\n\n> second block" (buffer-string)))
     (goto-char (point-min))
     (search-forward "first block")
     (should (cl-some (lambda (overlay)

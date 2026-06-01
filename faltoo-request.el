@@ -46,7 +46,7 @@
       (when (and on-submitted (string-prefix-p "Submitted" text))
         (funcall on-submitted))
       (faltoo-set-status text)
-      (faltoo-chat-append-stream-block (format "- %s" (faltoo-request--tool-summary text)) 'faltoo-chat-tool-face))
+      (faltoo-chat-append-stream-block (faltoo-request--tool-summary text) 'faltoo-chat-tool-face))
      ((string= class "done")
       (faltoo-set-status text)))))
 

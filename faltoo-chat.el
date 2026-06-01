@@ -15,6 +15,7 @@
 (defvar-local faltoo-chat-user-overlays nil)
 (defvar-local faltoo-chat-tool-overlays nil)
 (defvar-local faltoo-chat-assistant-overlays nil)
+(defvar-local faltoo-chat-stream-heading-marker nil)
 
 (defcustom faltoo-chat-turns 20
   "Number of recent user turns shown in the Faltoo transcript."
@@ -70,10 +71,11 @@
          (text (or (alist-get 'text message) "")))
     (if (string= (downcase role-text) "tool")
         (progn
-          (insert "- " text)
-          (let ((content-end (point)))
-            (insert "\n\n")
-            (faltoo-chat--highlight-tool-block start content-end)))
+          (unless (or (bobp) (looking-back "\n" nil))
+            (insert "\n"))
+          (setq start (point))
+          (insert "> " text "\n")
+          (faltoo-chat--highlight-tool-block start (point)))
       (faltoo-chat--insert-rule)
       (setq start (point))
       (insert (format "# %s" role))
@@ -105,7 +107,8 @@
         (mapc #'delete-overlay faltoo-chat-assistant-overlays)
         (setq faltoo-chat-user-overlays nil
               faltoo-chat-tool-overlays nil
-              faltoo-chat-assistant-overlays nil)
+              faltoo-chat-assistant-overlays nil
+              faltoo-chat-stream-heading-marker nil)
         (erase-buffer)
         (dolist (message messages)
           (faltoo-chat--insert-message message))
@@ -158,28 +161,45 @@
           (insert "\n"))
         (faltoo-chat--insert-rule)
         (let ((start (point)))
+          (setq faltoo-chat-stream-heading-marker (copy-marker start))
           (insert (format "# %s" title))
           (faltoo-chat--highlight-assistant-block start (point))
           (insert "\n\n"))))
     buf))
 
 (defun faltoo-chat-append-stream (text)
-  "Append assistant stream TEXT to transcript."
-  (faltoo-popup-append (faltoo-chat-buffer) text))
+  "Append assistant stream TEXT to transcript without moving the reader."
+  (faltoo-popup-append (faltoo-chat-buffer) text t))
 
 (defun faltoo-chat-append-stream-block (text &optional face)
-  "Append stream TEXT as its own transcript block, optionally with FACE."
+  "Append stream TEXT as a quoted transcript block, optionally with FACE."
   (with-current-buffer (faltoo-chat-buffer)
-    (let ((start (point)))
+    (let ((inhibit-read-only t)
+          (start (point-max)))
       (faltoo-popup-append (current-buffer)
-                           (concat (string-trim-right text) "\n\n"))
+                           (concat "> " (string-trim-right text) "\n")
+                           t)
       (when face
-        (faltoo-chat--highlight-block start (point) face 'faltoo-chat-tool-overlays)))))
+        (faltoo-chat--highlight-block start (point-max) face 'faltoo-chat-tool-overlays)))))
 
 (defun faltoo-chat-finish-stream ()
-  "Refresh transcript after stream completion."
+  "Finish streaming in-place and append the next editable user prompt."
   (when (get-buffer faltoo-chat-buffer-name)
-    (faltoo-chat-render (faltoo-bridge-messages faltoo-chat-turns))))
+    (with-current-buffer faltoo-chat-buffer-name
+      (let ((inhibit-read-only t))
+        (when (markerp faltoo-chat-stream-heading-marker)
+          (save-excursion
+            (goto-char faltoo-chat-stream-heading-marker)
+            (when (looking-at "# Assistant · streaming")
+              (delete-region (point) (line-end-position))
+              (insert "# Assistant")))
+          (setq faltoo-chat-stream-heading-marker nil))
+        (goto-char (point-max))
+        (unless (looking-back "\n\n" nil)
+          (insert "\n"))
+        (faltoo-chat--insert-user-prompt)
+        (faltoo-ui-fontify-markdown)))))
+
 
 (provide 'faltoo-chat)
 ;;; faltoo-chat.el ends here

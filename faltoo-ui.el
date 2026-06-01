@@ -16,7 +16,15 @@
   (setq-local markdown-hide-markup t)
   (setq-local markdown-fontify-code-blocks-natively t)
   (setq-local markdown-fontify-whole-heading-line t)
-  (setq-local markdown-header-scaling t))
+  (setq-local markdown-header-scaling t)
+  (dolist (face-spec '((markdown-header-delimiter-face :inherit shadow :height 0.9)
+                       (markdown-header-face-1 :inherit outline-1 :height 1.35 :weight bold)
+                       (markdown-header-face-2 :inherit outline-2 :height 1.2 :weight bold)
+                       (markdown-header-face-3 :inherit outline-3 :height 1.1 :weight bold)
+                       (markdown-code-face :inherit fixed-pitch :extend t)
+                       (markdown-pre-face :inherit fixed-pitch :extend t)
+                       (markdown-blockquote-face :inherit font-lock-doc-face :slant italic)))
+    (apply #'face-remap-add-relative face-spec)))
 
 (defun faltoo-ui-fontify-markdown (&optional start end)
   "Refresh Markdown fontification between START and END."
@@ -87,15 +95,29 @@
         (select-window (frame-selected-window frame))
         (switch-to-buffer buffer)))))
 
-(defun faltoo-popup-append (buffer text)
-  "Append TEXT to BUFFER."
-  (with-current-buffer buffer
-    (let ((inhibit-read-only t)
-          (start (point-max)))
-      (goto-char (point-max))
-      (insert text)
-      (faltoo-ui-fontify-markdown start (point))
-      (goto-char (point-max)))))
+(defun faltoo-popup-append (buffer text &optional preserve-reader-position)
+  "Append TEXT to BUFFER.
+When PRESERVE-READER-POSITION is non-nil, keep existing window scroll and point."
+  (let ((window-state (mapcar (lambda (window)
+                              (list window (window-point window) (window-start window)))
+                            (get-buffer-window-list buffer nil t)))
+        (buffer-point nil))
+    (with-current-buffer buffer
+      (setq buffer-point (point))
+      (let ((inhibit-read-only t)
+            (start (point-max)))
+        (goto-char (point-max))
+        (insert text)
+        (faltoo-ui-fontify-markdown start (point))
+        (if preserve-reader-position
+            (goto-char buffer-point)
+          (goto-char (point-max)))))
+    (when preserve-reader-position
+      (dolist (state window-state)
+        (pcase-let ((`(,window ,point ,start) state))
+          (when (window-live-p window)
+            (set-window-point window point)
+            (set-window-start window start)))))))
 
 (provide 'faltoo-ui)
 ;;; faltoo-ui.el ends here
