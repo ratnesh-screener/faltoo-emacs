@@ -210,15 +210,17 @@
     ;; Then the appended region is explicitly fontified.
     (should ensured)))
 
-(ert-deftest faltoo-markdown-modes-remap-heading-and-quote-faces-for-pretty-rendering ()
-  "Scenario: Markdown buffers remap heading and quote faces for a cleaner view."
+(ert-deftest faltoo-markdown-modes-remap-heading-and-quote-faces-without-resizing-text ()
+  "Scenario: Pretty Markdown keeps heading sizes from fighting the user's theme."
   ;; Given a transcript buffer is rendered.
   (let ((buf (faltoo-chat-render nil)))
 
     ;; Then headings and blockquotes have local pretty Markdown face remaps,
-    ;; while inline/fenced code keep the user's markdown-mode styling.
+    ;; while inline/fenced code and heading size keep the user's markdown-mode styling.
     (with-current-buffer buf
-      (should (assoc 'markdown-header-face-1 face-remapping-alist))
+      (let ((heading-face (assoc 'markdown-header-face-1 face-remapping-alist)))
+        (should heading-face)
+        (should-not (plist-member (cdr heading-face) :height)))
       (should (assoc 'markdown-blockquote-face face-remapping-alist))
       (should-not (assoc 'markdown-code-face face-remapping-alist))
       (should-not (assoc 'markdown-pre-face face-remapping-alist)))))
