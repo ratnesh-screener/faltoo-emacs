@@ -115,9 +115,9 @@
 (defun faltoo-review-unstaged ()
   "Open unstaged files as full source review buffers."
   (interactive)
-  (faltoo-reset-workspace)
-  (setq faltoo-review-files (mapcar #'file-truename (faltoo-bridge-unstaged-files))
-        faltoo-current-review-index 0)
+  (let ((workspace (faltoo-reset-workspace)))
+    (setq faltoo-review-files (mapcar #'file-truename (faltoo-bridge-unstaged-files workspace))
+          faltoo-current-review-index 0))
   (unless faltoo-review-files
     (user-error "No unstaged files"))
   (dolist (file faltoo-review-files)

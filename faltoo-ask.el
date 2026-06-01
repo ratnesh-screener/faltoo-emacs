@@ -57,12 +57,13 @@
 (defun faltoo-ask ()
   "Ask Faltoo about active region or current line."
   (interactive)
-  (faltoo-workspace)
-  (let* ((context (faltoo-ask--context))
+  (let* ((workspace (faltoo-workspace))
+         (context (faltoo-ask--context))
          (buf (faltoo-popup-buffer faltoo-popup-buffer #'faltoo-ask-mode)))
     (setq faltoo-ask-last-context context)
     (with-current-buffer buf
-      (setq faltoo-ask-context context
+      (setq default-directory workspace
+            faltoo-ask-context context
             faltoo-ask-sent nil)
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -126,9 +127,10 @@
 (defun faltoo-show-last-response ()
   "Show latest assistant message in a posframe."
   (interactive)
-  (let ((message faltoo-last-assistant-message))
+  (let* ((workspace (faltoo-workspace))
+         (message (or (gethash workspace faltoo-last-assistant-messages) "")))
     (when (string-empty-p message)
-      (dolist (item (reverse (faltoo-bridge-messages)))
+      (dolist (item (reverse (faltoo-bridge-messages nil workspace)))
         (when (and (string-empty-p message)
                    (string= (alist-get 'role item) "assistant"))
           (setq message (alist-get 'text item)))))
@@ -136,7 +138,8 @@
       (user-error "No assistant response yet"))
     (let ((buf (faltoo-popup-buffer faltoo-last-response-buffer #'faltoo-ask-mode)))
       (with-current-buffer buf
-        (setq faltoo-ask-context nil
+        (setq default-directory workspace
+              faltoo-ask-context nil
               faltoo-ask-sent nil)
         (let ((inhibit-read-only t))
           (erase-buffer)

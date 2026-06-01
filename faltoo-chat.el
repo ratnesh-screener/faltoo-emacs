@@ -17,6 +17,7 @@
 (defvar-local faltoo-chat-assistant-overlays nil)
 (defvar-local faltoo-chat-stream-heading-marker nil)
 (defvar-local faltoo-chat-stream-answer-started nil)
+(defvar-local faltoo-chat-workspace nil)
 
 (defcustom faltoo-chat-turns 20
   "Number of recent user turns shown in the Faltoo transcript."
@@ -37,10 +38,18 @@
   (faltoo-ui-enable-pretty-markdown)
   (setq-local truncate-lines nil))
 
-(defun faltoo-chat-buffer ()
-  "Return the Faltoo chat buffer."
-  (let ((buf (get-buffer-create faltoo-chat-buffer-name)))
+(defun faltoo-chat-buffer-name-for (workspace)
+  "Return the transcript buffer name for WORKSPACE."
+  (let ((workspace (file-name-as-directory (file-truename workspace))))
+    (format "*Faltoo: %s*" (file-name-nondirectory (directory-file-name workspace)))))
+
+(defun faltoo-chat-buffer (&optional workspace)
+  "Return the Faltoo chat buffer for WORKSPACE."
+  (let* ((workspace (file-name-as-directory (file-truename (or workspace (faltoo-workspace)))))
+         (buf (get-buffer-create (faltoo-chat-buffer-name-for workspace))))
     (with-current-buffer buf
+      (setq default-directory workspace
+            faltoo-chat-workspace workspace)
       (unless (derived-mode-p 'faltoo-chat-mode)
         (faltoo-chat-mode)))
     buf))
@@ -98,9 +107,9 @@
     (setq faltoo-chat-prompt-marker (point-marker))
     (faltoo-chat--highlight-user-block start (line-end-position 0))))
 
-(defun faltoo-chat-render (messages)
-  "Render MESSAGES into `*Faltoo*' with an editable prompt."
-  (let ((buf (faltoo-chat-buffer)))
+(defun faltoo-chat-render (messages &optional workspace)
+  "Render MESSAGES into the workspace transcript with an editable prompt."
+  (let ((buf (faltoo-chat-buffer workspace)))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (mapc #'delete-overlay faltoo-chat-user-overlays)
@@ -122,7 +131,8 @@
 (defun faltoo-chat-refresh ()
   "Refresh transcript from FaltooBot session."
   (interactive)
-  (pop-to-buffer (faltoo-chat-render (faltoo-bridge-messages faltoo-chat-turns))))
+  (let ((workspace (faltoo-workspace)))
+    (pop-to-buffer (faltoo-chat-render (faltoo-bridge-messages faltoo-chat-turns workspace) workspace))))
 
 (defun faltoo-chat ()
   "Open Faltoo transcript."
@@ -143,7 +153,7 @@
   (string-trim (buffer-substring-no-properties faltoo-chat-prompt-marker (point-max))))
 
 (defun faltoo-chat-send ()
-  "Send the current `*Faltoo*' prompt."
+  "Send the current workspace transcript prompt."
   (interactive)
   (let ((text (faltoo-chat--prompt-text)))
     (faltoo-request-ensure-idle)
@@ -153,9 +163,9 @@
     (insert "\n\n")
     (faltoo-request-message text nil)))
 
-(defun faltoo-chat-start-stream (title)
-  "Prepare `*Faltoo*' for a streaming message titled TITLE."
-  (let ((buf (faltoo-chat-buffer)))
+(defun faltoo-chat-start-stream (title &optional workspace)
+  "Prepare the workspace transcript for a streaming message titled TITLE."
+  (let ((buf (faltoo-chat-buffer workspace)))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (goto-char (point-max))
@@ -170,9 +180,9 @@
           (insert "\n\n"))))
     buf))
 
-(defun faltoo-chat-append-stream (text)
+(defun faltoo-chat-append-stream (text &optional workspace)
   "Append assistant stream TEXT to transcript without moving the reader."
-  (let ((buf (faltoo-chat-buffer))
+  (let ((buf (faltoo-chat-buffer workspace))
         (prefix ""))
     (with-current-buffer buf
       (unless faltoo-chat-stream-answer-started
@@ -183,9 +193,9 @@
             (setq prefix "\n")))))
     (faltoo-popup-append buf (concat prefix text) t)))
 
-(defun faltoo-chat-append-stream-block (text &optional face)
+(defun faltoo-chat-append-stream-block (text &optional face workspace)
   "Append stream TEXT as a quoted transcript block, optionally with FACE."
-  (with-current-buffer (faltoo-chat-buffer)
+  (with-current-buffer (faltoo-chat-buffer workspace)
     (let ((inhibit-read-only t)
           (start (point-max)))
       (faltoo-popup-append (current-buffer)
@@ -194,25 +204,26 @@
       (when face
         (faltoo-chat--highlight-block start (point-max) face 'faltoo-chat-tool-overlays)))))
 
-(defun faltoo-chat-finish-stream ()
+(defun faltoo-chat-finish-stream (&optional workspace)
   "Finish streaming in-place and append the next editable user prompt."
-  (when (get-buffer faltoo-chat-buffer-name)
-    (with-current-buffer faltoo-chat-buffer-name
-      (let ((inhibit-read-only t))
-        (when (markerp faltoo-chat-stream-heading-marker)
-          (save-excursion
-            (goto-char faltoo-chat-stream-heading-marker)
-            (when (looking-at "# Assistant · answering")
-              (delete-region (point) (line-end-position))
-              (insert "# Assistant")))
-          (setq faltoo-chat-stream-heading-marker nil))
-        (goto-char (point-max))
-        (cond
-         ((looking-back "\n\n" nil))
-         ((looking-back "\n" nil) (insert "\n"))
-         (t (insert "\n\n")))
-        (faltoo-chat--insert-user-prompt)
-        (faltoo-ui-fontify-markdown)))))
+  (let ((buf (get-buffer (faltoo-chat-buffer-name-for (or workspace (faltoo-workspace))))))
+    (when buf
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (when (markerp faltoo-chat-stream-heading-marker)
+            (save-excursion
+              (goto-char faltoo-chat-stream-heading-marker)
+              (when (looking-at "# Assistant · answering")
+                (delete-region (point) (line-end-position))
+                (insert "# Assistant")))
+            (setq faltoo-chat-stream-heading-marker nil))
+          (goto-char (point-max))
+          (cond
+           ((looking-back "\n\n" nil))
+           ((looking-back "\n" nil) (insert "\n"))
+           (t (insert "\n\n")))
+          (faltoo-chat--insert-user-prompt)
+          (faltoo-ui-fontify-markdown))))))
 
 
 (provide 'faltoo-chat)

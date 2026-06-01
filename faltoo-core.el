@@ -7,16 +7,15 @@
   "Code-first Faltoo integration."
   :group 'tools)
 
-(defcustom faltoo-chat-buffer-name "*Faltoo*"
-  "Faltoo transcript buffer name."
-  :type 'string)
-
-(defvar faltoo-workspace nil)
+(defvar faltoo-workspace nil
+  "Last Faltoo workspace seen by this Emacs session.
+The active workspace is always recomputed from `default-directory'.")
 (defvar faltoo-status "idle")
 (defvar faltoo-submitting nil)
 (defvar faltoo-review-files nil)
 (defvar faltoo-current-review-index 0)
 (defvar faltoo-last-assistant-message "")
+(defvar faltoo-last-assistant-messages (make-hash-table :test #'equal))
 (defvar faltoo-after-reload-review-buffers-hook nil
   "Hook run after Faltoo reloads review buffers from disk.")
 
@@ -28,8 +27,8 @@
     (file-truename root)))
 
 (defun faltoo-workspace ()
-  "Return the active Faltoo workspace."
-  (setq faltoo-workspace (or faltoo-workspace (faltoo-git-root))))
+  "Return the active Faltoo workspace for `default-directory'."
+  (setq faltoo-workspace (faltoo-git-root)))
 
 (defun faltoo-reset-workspace ()
   "Use the Git root of `default-directory' as current workspace."

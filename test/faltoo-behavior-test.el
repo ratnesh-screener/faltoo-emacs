@@ -61,6 +61,112 @@
             ((symbol-function 'faltoo-popup-close) (lambda () nil)))
     (funcall body)))
 
+(defun faltoo-test--chat-buffer-name ()
+  "Return the current workspace transcript buffer name."
+  (faltoo-chat-buffer-name-for (faltoo-workspace)))
+
+(defun faltoo-test--kill-chat-buffer ()
+  "Kill the current workspace transcript buffer when it exists."
+  (let ((name (faltoo-test--chat-buffer-name)))
+    (when (get-buffer name)
+      (kill-buffer name))))
+
+(defun faltoo-test--with-two-temp-git-files (body)
+  "Create two temporary Git-backed files, then call BODY with file/root pairs."
+  (let* ((root-a (file-name-as-directory (make-temp-file "faltoo-root-a" t)))
+         (root-b (file-name-as-directory (make-temp-file "faltoo-root-b" t)))
+         (file-a (expand-file-name "a.py" root-a))
+         (file-b (expand-file-name "b.py" root-b)))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name ".git" root-a))
+          (make-directory (expand-file-name ".git" root-b))
+          (write-region "a = 1
+" nil file-a nil 'silent)
+          (write-region "b = 1
+" nil file-b nil 'silent)
+          (funcall body file-a root-a file-b root-b))
+      (when (get-file-buffer file-a) (kill-buffer (get-file-buffer file-a)))
+      (when (get-file-buffer file-b) (kill-buffer (get-file-buffer file-b)))
+      (let ((buf-a (get-buffer (faltoo-chat-buffer-name-for root-a)))
+            (buf-b (get-buffer (faltoo-chat-buffer-name-for root-b))))
+        (when buf-a (kill-buffer buf-a))
+        (when buf-b (kill-buffer buf-b)))
+      (delete-directory root-a t)
+      (delete-directory root-b t))))
+
+;;; Workspace specs
+
+(ert-deftest faltoo-workspace-follows-current-buffer-git-root ()
+  "Scenario: Opening files from different repos switches the active Faltoo workspace."
+  (faltoo-test--with-two-temp-git-files
+   (lambda (file-a root-a file-b root-b)
+     ;; Given two files from different Git repositories are open.
+     (let ((buf-a (find-file-noselect file-a))
+           (buf-b (find-file-noselect file-b)))
+
+       ;; When each buffer asks for its Faltoo workspace.
+       ;; Then the workspace follows that buffer's Git root.
+       (with-current-buffer buf-a
+         (should (equal (faltoo-workspace) (file-truename root-a))))
+       (with-current-buffer buf-b
+         (should (equal (faltoo-workspace) (file-truename root-b))))))))
+
+(ert-deftest faltoo-chat-uses-separate-transcripts-per-workspace ()
+  "Scenario: Each Git repo gets its own transcript buffer and default directory."
+  (faltoo-test--with-two-temp-git-files
+   (lambda (_file-a root-a _file-b root-b)
+     ;; Given two workspaces render transcripts.
+     (let ((chat-a (faltoo-chat-render '(((role . "assistant") (text . "from a"))) root-a))
+           (chat-b (faltoo-chat-render '(((role . "assistant") (text . "from b"))) root-b)))
+
+       ;; Then each transcript is separate and bound to its workspace root.
+       (should-not (eq chat-a chat-b))
+       (with-current-buffer chat-a
+         (should (equal default-directory (file-name-as-directory (file-truename root-a))))
+         (should (string-match-p "from a" (buffer-string))))
+       (with-current-buffer chat-b
+         (should (equal default-directory (file-name-as-directory (file-truename root-b))))
+         (should (string-match-p "from b" (buffer-string))))))))
+
+(ert-deftest faltoo-request-message-targets-current-buffer-workspace ()
+  "Scenario: Sending from a source buffer targets that file's Git repo session."
+  (faltoo-test--with-two-temp-git-files
+   (lambda (_file-a _root-a file-b root-b)
+     ;; Given point is in a source buffer from the second repository.
+     (let ((buf-b (find-file-noselect file-b)) captured-payload)
+
+       ;; When sending a message from that buffer.
+       (with-current-buffer buf-b
+         (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                    (lambda (_args payload _on-event on-done)
+                      (setq captured-payload payload)
+                      (funcall on-done t))))
+           (let ((faltoo-submitting nil))
+             (faltoo-request-message "hello from repo b"))))
+
+       ;; Then FaltooBot receives the second repo as workspace.
+       (should (equal (alist-get 'workspace captured-payload)
+                      (file-truename root-b)))))))
+
+(ert-deftest faltoo-chat-send-targets-transcript-workspace ()
+  "Scenario: Sending from a repo transcript keeps using that transcript's Git root."
+  (faltoo-test--with-two-temp-git-files
+   (lambda (_file-a _root-a _file-b root-b)
+     ;; Given a transcript exists for the second repository.
+     (let ((chat-b (faltoo-chat-render nil root-b)) captured-workspace)
+       (with-current-buffer chat-b
+         (insert "continue here")
+
+         ;; When sending from inside that transcript.
+         (cl-letf (((symbol-function 'faltoo-request-message)
+                    (lambda (_text &optional _popup _on-done)
+                      (setq captured-workspace (faltoo-workspace)))))
+           (faltoo-chat-send)))
+
+       ;; Then the transcript's workspace is used, not some other current buffer.
+       (should (equal captured-workspace (file-truename root-b)))))))
+
 ;;; Bridge specs
 
 (ert-deftest faltoo-bridge-messages-passes-turn-limit-to-bridge ()
@@ -227,8 +333,7 @@
 
 (ert-deftest faltoo-chat-stream-preserves-reader-position ()
   "Scenario: Streaming transcript text does not drag the reader to the bottom."
-  (when (get-buffer faltoo-chat-buffer-name)
-    (kill-buffer faltoo-chat-buffer-name))
+  (faltoo-test--kill-chat-buffer)
   ;; Given the reader is looking at the top of a visible transcript.
   (let ((buf (faltoo-chat-render '(((role . "assistant")
                                     (text . "old answer\nline 2\nline 3\nline 4"))))))
@@ -268,7 +373,7 @@
 
     ;; When refreshing the transcript.
     (cl-letf (((symbol-function 'faltoo-bridge-messages)
-               (lambda (&optional turns)
+               (lambda (&optional turns _workspace)
                  (setq captured-turns turns)
                  nil))
               ((symbol-function 'pop-to-buffer) (lambda (&rest _args) nil)))
@@ -284,7 +389,7 @@
 
     ;; When loading more without a prefix.
     (cl-letf (((symbol-function 'faltoo-bridge-messages)
-               (lambda (&optional turns)
+               (lambda (&optional turns _workspace)
                  (setq captured-turns turns)
                  nil))
               ((symbol-function 'pop-to-buffer) (lambda (&rest _args) nil)))
@@ -301,7 +406,7 @@
 
     ;; When loading exactly 50 turns.
     (cl-letf (((symbol-function 'faltoo-bridge-messages)
-               (lambda (&optional turns)
+               (lambda (&optional turns _workspace)
                  (setq captured-turns turns)
                  nil))
               ((symbol-function 'pop-to-buffer) (lambda (&rest _args) nil)))
@@ -339,8 +444,7 @@
 
 (ert-deftest faltoo-chat-stream-highlights-assistant-heading-only ()
   "Scenario: Streaming assistant output keeps heading styling off the answer body."
-  (when (get-buffer faltoo-chat-buffer-name)
-    (kill-buffer faltoo-chat-buffer-name))
+  (faltoo-test--kill-chat-buffer)
   ;; Given a streaming answer starts.
   (faltoo-chat-start-stream "Assistant · answering")
 
@@ -348,7 +452,7 @@
   (faltoo-chat-append-stream "answer body with `code`")
 
   ;; Then the assistant face is on the heading, not the body.
-  (with-current-buffer faltoo-chat-buffer-name
+  (with-current-buffer (faltoo-test--chat-buffer-name)
     (goto-char (point-min))
     (search-forward "Assistant")
     (backward-char 1)
@@ -363,8 +467,7 @@
 
 (ert-deftest faltoo-chat-finish-stream-appends-next-prompt-without-refreshing-history ()
   "Scenario: Completed streams stay in-place and add the next user turn."
-  (when (get-buffer faltoo-chat-buffer-name)
-    (kill-buffer faltoo-chat-buffer-name))
+  (faltoo-test--kill-chat-buffer)
   ;; Given a stream is active in the transcript.
   (faltoo-chat-start-stream "Assistant · answering")
   (faltoo-chat-append-stream "streamed answer")
@@ -376,7 +479,7 @@
     (faltoo-chat-finish-stream))
 
   ;; Then the assistant heading is finalized and a fresh user prompt is appended.
-  (with-current-buffer faltoo-chat-buffer-name
+  (with-current-buffer (faltoo-test--chat-buffer-name)
     (should (string-match-p "# Assistant\n\nstreamed answer\n\n---\n# User\n\n$" (buffer-string)))
     (should-not (string-match-p "Assistant · answering" (buffer-string)))
     (should (= (point) faltoo-chat-prompt-marker))))
@@ -506,7 +609,7 @@
      ;; Given a mocked bridge stream that emits status, answer, and done events.
      (setq faltoo-review-files nil
            faltoo-last-assistant-message "")
-     (when (get-buffer faltoo-chat-buffer-name) (kill-buffer faltoo-chat-buffer-name))
+     (faltoo-test--kill-chat-buffer)
      (let ((popup (get-buffer-create "*Faltoo Test Popup*")))
        (with-current-buffer popup (erase-buffer))
 
@@ -518,7 +621,7 @@
                     (funcall on-event '((classes . "done") (text . "Assistant response saved.")))
                     (funcall on-done t)))
                  ((symbol-function 'faltoo-bridge-messages)
-                  (lambda (&optional _turns) '(((role . "assistant") (text . "hello from assistant")))))
+                  (lambda (&optional _turns _workspace) '(((role . "assistant") (text . "hello from assistant")))))
                  ((symbol-function 'ding) (lambda (&rest _args) nil)))
          (faltoo-request-message "question" popup))
 
@@ -526,7 +629,7 @@
        (should (equal faltoo-last-assistant-message "hello from assistant"))
        (with-current-buffer popup
          (should (string-match-p "hello from assistant" (buffer-string))))
-       (with-current-buffer faltoo-chat-buffer-name
+       (with-current-buffer (faltoo-test--chat-buffer-name)
          (should (string-match-p "hello from assistant" (buffer-string))))
        (kill-buffer popup)))))
 
@@ -547,17 +650,16 @@
 
 (ert-deftest faltoo-request-renders-status-events-as-compact-quotes ()
   "Scenario: Streaming status/tool blocks are compact Markdown quotes."
-  (when (get-buffer faltoo-chat-buffer-name)
-    (kill-buffer faltoo-chat-buffer-name))
+  (faltoo-test--kill-chat-buffer)
   ;; Given a chat stream is active.
   (faltoo-chat-start-stream "Assistant · answering")
 
   ;; When status events are routed into the transcript.
-  (faltoo-request--route-event '((classes . "status") (text . "first block")) nil nil)
-  (faltoo-request--route-event '((classes . "tool") (text . "second block")) nil nil)
+  (faltoo-request--route-event '((classes . "status") (text . "first block")) (faltoo-workspace) nil nil)
+  (faltoo-request--route-event '((classes . "tool") (text . "second block")) (faltoo-workspace) nil nil)
 
   ;; Then status/tool blocks are quoted without blank lines between them and have a tool face.
-  (with-current-buffer faltoo-chat-buffer-name
+  (with-current-buffer (faltoo-test--chat-buffer-name)
     (should (string-match-p "> first block\n> second block\n" (buffer-string)))
     (should-not (string-match-p "> first block\n\n> second block" (buffer-string)))
     (goto-char (point-min))
@@ -568,24 +670,22 @@
 
 (ert-deftest faltoo-request-separates-tool-quotes-from-final-answer ()
   "Scenario: Final answer text starts after a blank line following compact tool calls."
-  (when (get-buffer faltoo-chat-buffer-name)
-    (kill-buffer faltoo-chat-buffer-name))
+  (faltoo-test--kill-chat-buffer)
   ;; Given tool/status blocks are already in the streaming assistant section.
   (faltoo-chat-start-stream "Assistant · answering")
-  (faltoo-request--route-event '((classes . "status") (text . "first block")) nil nil)
-  (faltoo-request--route-event '((classes . "tool") (text . "second block")) nil nil)
+  (faltoo-request--route-event '((classes . "status") (text . "first block")) (faltoo-workspace) nil nil)
+  (faltoo-request--route-event '((classes . "tool") (text . "second block")) (faltoo-workspace) nil nil)
 
   ;; When final answer text starts streaming.
-  (faltoo-request--route-event '((classes . "answer") (text . "final answer")) nil nil)
+  (faltoo-request--route-event '((classes . "answer") (text . "final answer")) (faltoo-workspace) nil nil)
 
   ;; Then the compact tool block is separated from the final answer body.
-  (with-current-buffer faltoo-chat-buffer-name
+  (with-current-buffer (faltoo-test--chat-buffer-name)
     (should (string-match-p "> first block\n> second block\n\nfinal answer" (buffer-string)))))
 
 (ert-deftest faltoo-request-renders-only-truncated-tool-summary ()
   "Scenario: Tool streams show FaltooChat-style summaries, not full command bodies."
-  (when (get-buffer faltoo-chat-buffer-name)
-    (kill-buffer faltoo-chat-buffer-name))
+  (faltoo-test--kill-chat-buffer)
   ;; Given a tool event contains a shell summary and hidden command body.
   (faltoo-chat-start-stream "Assistant · answering")
 
@@ -593,10 +693,10 @@
   (faltoo-request--route-event
    '((classes . "tool")
      (text . "**Shell:** inspect files\n\n<!-- shell-command -->\n\nsed -n '1,999p' giant-file.el"))
-   nil nil)
+   (faltoo-workspace) nil nil)
 
   ;; Then only the truncated summary is shown.
-  (with-current-buffer faltoo-chat-buffer-name
+  (with-current-buffer (faltoo-test--chat-buffer-name)
     (should (string-match-p "Shell: inspect files" (buffer-string)))
     (should-not (string-match-p "giant-file" (buffer-string)))))
 
@@ -657,8 +757,9 @@
 
 (ert-deftest faltoo-last-response-popup-renders-markdown-content ()
   "Scenario: Last response popup uses Markdown headings and an editable follow-up."
-  (let ((faltoo-last-assistant-message "answer body"))
-    ;; Given a latest assistant response exists.
+  (let ((workspace (faltoo-workspace)))
+    ;; Given a latest assistant response exists for the current workspace.
+    (puthash workspace "answer body" faltoo-last-assistant-messages)
 
     ;; When opening it without displaying the real posframe.
     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
@@ -675,8 +776,9 @@
 
 (ert-deftest faltoo-last-response-popup-sends-plain-follow-up-question ()
   "Scenario: Last response follow-up sends only the typed question."
-  (let ((faltoo-last-assistant-message "answer body") captured-message)
+  (let ((workspace (faltoo-workspace)) captured-message)
     ;; Given the last response popup is open with a typed follow-up.
+    (puthash workspace "answer body" faltoo-last-assistant-messages)
     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
       (faltoo-show-last-response))
     (with-current-buffer faltoo-last-response-buffer

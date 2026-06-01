@@ -24,7 +24,7 @@ Primary workflow:
 4. Use `diff-hl` for full-line Git change highlights inside source buffers.
 5. Use `posframe` for code-local Ask and review-comment input.
 6. Use Magit for staging/unstaging/status/diff operations.
-7. Use `*Faltoo*` as transcript/history, not the main interaction surface.
+7. Use per-workspace transcript buffers named like `*Faltoo: repo-name*` as history, not the main interaction surface.
 
 Do not turn Faltoo into a chat-first TUI clone. The Nvim plugin exists because the TUI was too chat-centered; keep this Emacs plugin code-centered.
 
@@ -51,7 +51,7 @@ faltoo-faces.el        Faces for popups, review comments, full-line diff highlig
 faltoo-ask.el          Source-buffer Ask UI and last-response popup.
 faltoo-comments.el     Pending review-comment model, posframe input, overlays, navigation, submit payload.
 faltoo-review.el       Review mode, review set, diff-hl integration, Magit wrappers, review file nav.
-faltoo-chat.el         `*Faltoo*` transcript/history rendering.
+faltoo-chat.el         Per-workspace transcript/history rendering.
 faltoo-quit.el         Quit guard for running requests / pending comments.
 python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 ```
@@ -76,12 +76,13 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - `C-c f C` opens file-level comment posframe.
 - `C-c f s` submits pending review comments.
 - `C-c f l` shows latest assistant response in posframe.
-- `C-c f h` opens transcript/history.
+- `C-c f h` opens the current Git repo's transcript/history.
 - `C-c f x` stops current review session.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
-- Ask responses stream in the posframe and transcript; completed Ask/last-response popups add an editable Follow-up section.
+- Ask responses stream in the posframe and current repo transcript; completed Ask/last-response popups add an editable Follow-up section.
+- Faltoo workspace/session follows the current buffer's Git root. Popup and transcript buffers set `default-directory` to that root so sends continue in the correct repo session.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
-- Review-comment submissions stream to `*Faltoo*` and status/mode-line, not a popup.
+- Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup.
 - Review buffers are read-only and show a header line with `Faltoo[1/N]`.
 - `diff-hl` is configured buffer-locally in review buffers for full-line highlights.
 - Faltoo never auto-stages assistant edits.
@@ -130,8 +131,8 @@ C-g       close popup
 C-c f c   add review comment
 C-c C-c   save comment
 C-c f s   submit comments
-C-c f h   view transcript
-C-c C-l   load more transcript turns from `*Faltoo*`
+C-c f h   view current repo transcript
+C-c C-l   load more transcript turns from the repo transcript
 ```
 
 Expected visual behavior:

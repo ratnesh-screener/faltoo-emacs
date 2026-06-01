@@ -33,41 +33,45 @@
   (when faltoo-submitting
     (user-error "Faltoo request already running")))
 
-(defun faltoo-request--route-event (event popup-buffer on-submitted)
+(defun faltoo-request--route-event (event workspace popup-buffer on-submitted)
   (let ((class (faltoo-request--event-class event))
         (text (faltoo-request--event-text event)))
     (cond
      ((string= class "answer")
       (setq faltoo-last-assistant-message (concat faltoo-last-assistant-message text))
+      (puthash workspace (concat (or (gethash workspace faltoo-last-assistant-messages) "") text)
+               faltoo-last-assistant-messages)
       (when popup-buffer
         (faltoo-popup-append popup-buffer (propertize text 'face 'faltoo-popup-assistant-face)))
-      (faltoo-chat-append-stream text))
+      (faltoo-chat-append-stream text workspace))
      ((member class '("status" "tool"))
       (when (and on-submitted (string-prefix-p "Submitted" text))
         (funcall on-submitted))
       (faltoo-set-status text)
-      (faltoo-chat-append-stream-block (faltoo-request--tool-summary text) 'faltoo-chat-tool-face))
+      (faltoo-chat-append-stream-block (faltoo-request--tool-summary text) 'faltoo-chat-tool-face workspace))
      ((string= class "done")
       (faltoo-set-status text)))))
 
 (defun faltoo-request-stream (args payload chat-title &optional popup-buffer on-submitted on-done)
   "Run Faltoo bridge ARGS with PAYLOAD and route stream output."
   (faltoo-request-ensure-idle)
-  (setq faltoo-submitting t
-        faltoo-last-assistant-message "")
-  (faltoo-set-status chat-title)
-  (faltoo-chat-start-stream "Assistant · answering")
-  (faltoo-bridge-stream
-   args payload
-   (lambda (event)
-     (faltoo-request--route-event event popup-buffer on-submitted))
-   (lambda (ok)
-     (setq faltoo-submitting nil)
-     (faltoo-set-status (if ok "Faltoo complete" "Faltoo failed"))
-     (faltoo-reload-review-buffers)
-     (faltoo-chat-finish-stream)
-     (when on-done (funcall on-done ok))
-     (when ok (ding)))))
+  (let ((workspace (alist-get 'workspace payload)))
+    (setq faltoo-submitting t
+          faltoo-last-assistant-message "")
+    (puthash workspace "" faltoo-last-assistant-messages)
+    (faltoo-set-status chat-title)
+    (faltoo-chat-start-stream "Assistant · answering" workspace)
+    (faltoo-bridge-stream
+     args payload
+     (lambda (event)
+       (faltoo-request--route-event event workspace popup-buffer on-submitted))
+     (lambda (ok)
+       (setq faltoo-submitting nil)
+       (faltoo-set-status (if ok "Faltoo complete" "Faltoo failed"))
+       (faltoo-reload-review-buffers)
+       (faltoo-chat-finish-stream workspace)
+       (when on-done (funcall on-done ok))
+       (when ok (ding))))))
 
 (defun faltoo-request-message (text &optional popup-buffer on-done)
   "Send TEXT as a chat message."

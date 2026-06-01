@@ -20,7 +20,9 @@ The author's `~/.emacs.d/init.el` already has a `use-package faltoo` block.
 
 ## Main flow
 
-Open a Git repo with unstaged changes, then run:
+Open a file in a Git repo, then run commands from that source buffer. Faltoo uses that file's Git root as the FaltooBot workspace/session. Open files from another repo to talk to that repo's persisted FaltooChat session.
+
+For review, open a Git repo with unstaged changes, then run:
 
 ```text
 M-x faltoo-review-unstaged
@@ -69,7 +71,7 @@ C-c C-f   insert file reference
 C-c /     insert slash command, Ask/last-response only
 ```
 
-In `*Faltoo*` transcript:
+In workspace transcript buffers, named like `*Faltoo: repo-name*`:
 
 ```text
 C-c C-c   send current prompt
@@ -102,9 +104,9 @@ This reloads all Faltoo `.el` files in dependency order, so restarting Emacs sho
 ## Notes
 
 - Source buffers are the primary UI.
-- `*Faltoo*` is transcript/history and receives long review streams.
+- Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo.
 - Ask responses stream in the centered posframe, including compact status/tool lines.
-- Review-comment submission streams to `*Faltoo*` and status/mode-line.
+- Review-comment submission streams to the current repo transcript and status/mode-line.
 - Faltoo never auto-stages changes.
 
 ## Quit guard

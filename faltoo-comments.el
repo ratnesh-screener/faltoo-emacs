@@ -84,7 +84,8 @@
 (defun faltoo-comment (&optional file-level)
   "Add or edit a pending Faltoo review comment."
   (interactive)
-  (let* ((path (faltoo-current-file))
+  (let* ((workspace (faltoo-workspace))
+         (path (faltoo-current-file))
          (file (faltoo-relative-file path))
          (range (if file-level
                     (list (point-min) (point-min) 0 0 "")
@@ -96,7 +97,8 @@
          (target (or existing (make-faltoo-comment :file file :path path :start start :end end :code code)))
          (buf (faltoo-popup-buffer "*Faltoo Comment*" #'faltoo-comment-mode)))
     (with-current-buffer buf
-      (setq faltoo-comment-target target)
+      (setq default-directory workspace
+            faltoo-comment-target target)
       (let ((inhibit-read-only t))
         (erase-buffer)
         (faltoo-compose-insert-title (if file-level "Faltoo File Comment" "Faltoo Review Comment"))

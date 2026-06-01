@@ -92,7 +92,7 @@ Planned components:
 faltoo.el              ; public commands, setup, command map
 faltoo-core.el         ; workspace/session state
 faltoo-bridge.el       ; Python bridge calls and streaming JSONL parser
-faltoo-chat.el         ; *Faltoo* transcript/chat buffer
+faltoo-chat.el         ; per-workspace transcript/chat buffers
 faltoo-review.el       ; review source-buffer minor mode and unstaged files
 faltoo-comments.el     ; pending comment data, overlays, navigation
 faltoo-compose.el      ; compose helpers for comments and posframe Ask
@@ -125,10 +125,10 @@ This is the Emacs-native equivalent of Faltoo review behavior in `faltoo.nvim`.
 
 ### `faltoo-chat-mode`
 
-A major mode for the main chat/transcript buffer, likely named:
+A major mode for per-workspace chat/transcript buffers, named like:
 
 ```text
-*Faltoo*
+*Faltoo: repo-name*
 ```
 
 Responsibilities:
@@ -143,7 +143,7 @@ Responsibilities:
 
 A mode for compose buffers if/when needed, especially for review comments.
 
-For chat, the initial preferred design is to type directly in `*Faltoo*` rather than opening a separate Ask modal.
+For chat, the initial preferred design is to type directly in the current repo transcript rather than opening a separate Ask modal.
 
 For comments, a compose buffer is still preferred because comment input has target metadata: file, line/range, selected code.
 
@@ -151,13 +151,13 @@ For comments, a compose buffer is still preferred because comment input has targ
 
 Faltoo should be code-first. The transcript is a background/history surface, not the primary review UI.
 
-The transcript buffer should be a persistent Emacs buffer:
+Each Git repo should have a persistent transcript buffer:
 
 ```text
-*Faltoo*
+*Faltoo: repo-name*
 ```
 
-It is used for viewing full conversation history, searching/copying responses, refreshing persisted messages, and continuing a longer chat when desired. During normal code review, users should be able to ask questions and submit comments from source buffers without switching to `*Faltoo*`.
+It is used for viewing full conversation history, searching/copying responses, refreshing persisted messages, and continuing a longer chat when desired. During normal code review, users should be able to ask questions and submit comments from source buffers without switching to the transcript.
 
 ### Transcript Format
 
@@ -214,7 +214,7 @@ Reasons:
 - It is simpler than managing a read-only transcript with a separate editable prompt region.
 - `C-c C-r` refresh can always restore canonical history from FaltooBot if the local buffer was edited.
 
-Canonical history remains FaltooBot's persisted session. Local edits to `*Faltoo*` are UI edits unless an explicit save/export feature is later added.
+Canonical history remains FaltooBot's persisted session. Local edits to transcript buffers are UI edits unless an explicit save/export feature is later added.
 
 ### Sending Chat Messages
 
@@ -224,7 +224,7 @@ This intentionally differs from `faltoo.nvim`, where Ask saves a pending questio
 
 Decision:
 
-- Chat/Ask = immediate send from `*Faltoo*`.
+- Chat/Ask = immediate send from the current repo transcript or source-buffer popup.
 - Review comments = prepared/batched and submitted together.
 
 Rationale:
@@ -279,10 +279,10 @@ faltoo-ask-file         ; optional future command
 Streaming response behavior:
 
 - Ask-from-code responses should stream in the posframe popup so the user can stay focused on code.
-- General chat started from `*Faltoo*` should stream in `*Faltoo*`.
-- Batched review-comment submissions should not stream full responses in a popup by default; they should stream to `*Faltoo*` and show lightweight progress in the mode-line/minibuffer.
-- Background/tool-heavy requests should use `*Faltoo*` for full stream details and lightweight status near code.
-- Every exchange should be appended to/persisted in the FaltooBot session and visible in `*Faltoo*` history.
+- General chat started from a repo transcript should stream in that repo's transcript.
+- Batched review-comment submissions should not stream full responses in a popup by default; they should stream to the current repo transcript and show lightweight progress in the mode-line/minibuffer.
+- Background/tool-heavy requests should use the current repo transcript for full stream details and lightweight status near code.
+- Every exchange should be appended to/persisted in the current repo's FaltooBot session and visible in that repo's transcript history.
 - Ask popups add an editable `## Follow-up` section after a successful response. `C-c C-c` sends the follow-up while reusing the original code context. Do not bind plain `q` in editable popups.
 
 Stream location policy:
@@ -290,11 +290,11 @@ Stream location policy:
 | Interaction | Stream location |
 |---|---|
 | Ask from code / region / defun / file | posframe popup |
-| Chat from `*Faltoo*` | `*Faltoo*` |
-| Submit batched review comments | `*Faltoo*` + mode-line/minibuffer status |
-| Background/tool-heavy request | `*Faltoo*` + lightweight status |
+| Chat from repo transcript | same repo transcript |
+| Submit batched review comments | repo transcript + mode-line/minibuffer status |
+| Background/tool-heavy request | repo transcript + lightweight status |
 
-The transcript command `faltoo-chat` should still open `*Faltoo*` for reviewing full history. A chat-style prompt inside `*Faltoo*` may exist, but it is secondary to source-buffer Ask.
+The transcript command `faltoo-chat` should open the current repo's `*Faltoo: repo-name*` buffer for reviewing full history. A chat-style prompt inside the repo transcript may exist, but it is secondary to source-buffer Ask.
 
 ### Last Assistant Message Popup
 
@@ -309,7 +309,7 @@ Behavior:
 - Fetch/use the latest assistant message from the current Faltoo session.
 - Display it in a centered `posframe` with an editable `## Follow-up` section.
 - `C-c C-c` sends the typed follow-up as a plain chat message; `C-g`/`C-c C-k` closes. Do not bind plain `q` globally because popup modes share editable text behavior.
-- This is for quick recall; full history remains in `*Faltoo*`.
+- This is for quick recall; full history remains in the repo transcript.
 
 ## File References
 
@@ -333,7 +333,7 @@ Behavior:
 
 This should work in:
 
-- `*Faltoo*` chat buffer.
+- Current repo transcript buffer.
 - Review comment compose buffers.
 
 Because it uses `completing-read`, it automatically benefits from Vertico, Ivy, Helm, Consult, Icomplete, etc.
@@ -397,7 +397,7 @@ Naming can be shortened for public commands, but the workflow should remain expl
 - Enable `faltoo-review-mode` in those buffers.
 - Mark them read-only.
 - Optionally close/bury unmodified review buffers not in the unstaged set.
-- If no unstaged files exist, show `*Faltoo*` instead.
+- If no unstaged files exist, show the repo transcript instead.
 
 Use the bridge's unstaged-file logic first, to match FaltooBot's workspace/git behavior. A pure-Elisp or Magit fallback can be added later.
 
@@ -510,7 +510,7 @@ These should navigate, inspect, edit, and delete pending comments before submiss
 
 ### Chat Submission
 
-Chat messages from `*Faltoo*` send immediately using bridge command:
+Chat messages from a repo transcript send immediately using bridge command:
 
 ```text
 append-message
@@ -518,7 +518,7 @@ append-message
 
 Behavior:
 
-- Insert/render user prompt in `*Faltoo*`.
+- Insert/render user prompt in the repo transcript.
 - Add an `# Assistant · answering` section.
 - Start async bridge process.
 - Stream JSONL events into the chat buffer.
@@ -538,7 +538,7 @@ Behavior:
 
 - Convert pending comment structs to bridge payload.
 - Start async bridge process.
-- Stream response into `*Faltoo*`.
+- Stream response into the repo transcript.
 - Remove only the submitted comment objects once the bridge confirms submission.
 - Keep comments added after submission started.
 - On completion, reload review buffers and refresh comment indicators.
@@ -557,7 +557,7 @@ Canonical history is loaded from FaltooBot through the bridge:
 messages --workspace <workspace> --limit <n>
 ```
 
-`*Faltoo*` should have a refresh command:
+Each repo transcript should have a refresh command:
 
 ```text
 g
@@ -691,13 +691,13 @@ Do not make aggressive single-key bindings global.
 
 1. Package skeleton and Python bridge.
 2. Bridge sync call and async streaming helpers.
-3. `faltoo-chat-mode` with `*Faltoo*` rendering and refresh.
-4. Chat sending from `*Faltoo*` with live streaming.
+3. `faltoo-chat-mode` with per-workspace transcript rendering and refresh.
+4. Chat sending from repo transcripts with live streaming.
 5. File reference and slash command insertion.
 6. Review mode and open-unstaged files.
 7. Pending review comments with compose buffer.
 8. Comment overlays/fringe markers and navigation.
-9. Submit review comments and stream response into `*Faltoo*`.
+9. Submit review comments and stream response into the repo transcript.
 10. Mode-line status and quit guard.
 11. Optional transient menu.
 12. Optional Magit/Ediff integrations.
@@ -706,7 +706,7 @@ Do not make aggressive single-key bindings global.
 
 These are intentionally undecided and can be revisited:
 
-- Should `*Faltoo*` eventually become partially read-only, with only the prompt editable?
+- Should transcript buffers eventually become partially read-only, with only the prompt editable?
 - Should we add prompt history with `M-p` / `M-n`?
 - Should there be a `transient` menu in MVP or after core behavior works?
 - Should Magit integration become a first-class workflow?
@@ -954,7 +954,7 @@ Use `diff-hl` as the base Git highlighting package and integrate/extend highligh
 
 ### Transcript
 
-`*Faltoo*` remains the full transcript/history buffer.
+`*Faltoo: repo-name*` remains the full transcript/history buffer for that repo.
 
 Implemented preference:
 
@@ -964,7 +964,7 @@ Implemented preference:
 
 The source-buffer workflow remains primary either way.
 
-Transcript loading defaults to recent user turns. `C-c C-l` inside `*Faltoo*` doubles the number of visible turns; a numeric prefix sets the exact turn count.
+Transcript loading defaults to recent user turns. `C-c C-l` inside a repo transcript doubles the number of visible turns; a numeric prefix sets the exact turn count.
 
 ### Keybindings
 

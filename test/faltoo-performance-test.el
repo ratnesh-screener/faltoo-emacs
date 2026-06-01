@@ -114,7 +114,7 @@
      0.35
      (lambda ()
        (faltoo-chat-render (nreverse messages))))
-    (kill-buffer faltoo-chat-buffer-name)))
+    (kill-buffer (faltoo-chat-buffer-name-for (faltoo-workspace)))))
 
 (ert-deftest faltoo-performance-routing-many-stream-chunks-stays-interactive ()
   "Scenario: Routing many stream chunks to popup and transcript stays interactive."
@@ -131,8 +131,9 @@
            0.25
            (lambda ()
              (dotimes (_ 1000)
-               (faltoo-request--route-event '((classes . "answer") (text . "x")) popup nil)))))
+               (faltoo-request--route-event '((classes . "answer") (text . "x")) (faltoo-workspace) popup nil)))))
       (when (get-buffer popup) (kill-buffer popup))
-      (when (get-buffer faltoo-chat-buffer-name) (kill-buffer faltoo-chat-buffer-name)))))
+      (let ((chat-buffer-name (faltoo-chat-buffer-name-for (faltoo-workspace))))
+        (when (get-buffer chat-buffer-name) (kill-buffer chat-buffer-name))))))
 
 ;;; faltoo-performance-test.el ends here

@@ -97,15 +97,15 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
     (process-send-eof proc)
     proc))
 
-(defun faltoo-bridge-messages (&optional turns)
-  (let ((args (list "messages" "--workspace" (faltoo-workspace) "--limit" "2000")))
+(defun faltoo-bridge-messages (&optional turns workspace)
+  (let ((args (list "messages" "--workspace" (or workspace (faltoo-workspace)) "--limit" "2000")))
     (when turns
       (setq args (append args (list "--turns" (number-to-string turns)))))
     (alist-get 'messages (faltoo-bridge-call-json args))))
 
-(defun faltoo-bridge-unstaged-files ()
+(defun faltoo-bridge-unstaged-files (&optional workspace)
   (let ((payload (faltoo-bridge-call-json
-                  (list "unstaged-files" "--workspace" (faltoo-workspace)))))
+                  (list "unstaged-files" "--workspace" (or workspace (faltoo-workspace))))))
     (if (eq (alist-get 'ok payload) :false)
         (user-error "%s" (alist-get 'error payload))
       (alist-get 'files payload))))
@@ -113,8 +113,8 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
 (defun faltoo-bridge-slash-commands ()
   (alist-get 'commands (faltoo-bridge-call-json (list "slash-commands"))))
 
-(defun faltoo-bridge-messages-path ()
-  (string-trim (faltoo-bridge-call-raw (list "messages-path" "--workspace" (faltoo-workspace)))))
+(defun faltoo-bridge-messages-path (&optional workspace)
+  (string-trim (faltoo-bridge-call-raw (list "messages-path" "--workspace" (or workspace (faltoo-workspace))))))
 
 (provide 'faltoo-bridge)
 ;;; faltoo-bridge.el ends here
