@@ -12,6 +12,7 @@
 The active workspace is always recomputed from `default-directory'.")
 (defvar faltoo-status "idle")
 (defvar faltoo-submitting nil)
+(defvar faltoo-submitting-workspaces (make-hash-table :test #'equal))
 (defvar faltoo-review-files nil)
 (defvar faltoo-current-review-index 0)
 (defvar faltoo-last-assistant-message "")
@@ -29,6 +30,21 @@ The active workspace is always recomputed from `default-directory'.")
 (defun faltoo-workspace ()
   "Return the active Faltoo workspace for `default-directory'."
   (setq faltoo-workspace (faltoo-git-root)))
+
+(defun faltoo-workspace-submitting-p (&optional workspace)
+  "Return non-nil when WORKSPACE has a running Faltoo request."
+  (gethash (or workspace (faltoo-workspace)) faltoo-submitting-workspaces))
+
+(defun faltoo-any-submitting-p ()
+  "Return non-nil when any Faltoo workspace has a running request."
+  (or faltoo-submitting (> (hash-table-count faltoo-submitting-workspaces) 0)))
+
+(defun faltoo-set-workspace-submitting (workspace running)
+  "Mark WORKSPACE as RUNNING or idle."
+  (if running
+      (puthash workspace t faltoo-submitting-workspaces)
+    (remhash workspace faltoo-submitting-workspaces))
+  (setq faltoo-submitting (> (hash-table-count faltoo-submitting-workspaces) 0)))
 
 (defun faltoo-reset-workspace ()
   "Use the Git root of `default-directory' as current workspace."
@@ -52,8 +68,10 @@ The active workspace is always recomputed from `default-directory'.")
 
 (defun faltoo-status-string ()
   "Return a compact status string for mode-line use."
-  (let ((parts nil))
-    (when faltoo-submitting (push "answering" parts))
+  (let ((parts nil)
+        (workspace (locate-dominating-file default-directory ".git")))
+    (when (and workspace (faltoo-workspace-submitting-p (file-truename workspace)))
+      (push "answering" parts))
     (when (and (boundp 'faltoo-comments) faltoo-comments)
       (push (format "%d comment%s" (length faltoo-comments)
                     (if (= (length faltoo-comments) 1) "" "s"))

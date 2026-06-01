@@ -129,6 +129,21 @@
          (should (equal default-directory (file-name-as-directory (file-truename root-b))))
          (should (string-match-p "from b" (buffer-string))))))))
 
+(ert-deftest faltoo-status-shows-answering-only-for-current-workspace ()
+  "Scenario: Mode-line answering status follows the current repo session."
+  (faltoo-test--with-two-temp-git-files
+   (lambda (file-a root-a file-b _root-b)
+     (let ((faltoo-submitting nil)
+           (faltoo-submitting-workspaces (make-hash-table :test #'equal)))
+       ;; Given repo A has a running request and repo B does not.
+       (faltoo-set-workspace-submitting (file-truename root-a) t)
+
+       ;; Then repo A shows answering, but repo B is not blocked/status-marked.
+       (with-current-buffer (find-file-noselect file-a)
+         (should (string-match-p "answering" (faltoo-status-string))))
+       (with-current-buffer (find-file-noselect file-b)
+         (should-not (string-match-p "answering" (faltoo-status-string))))))))
+
 (ert-deftest faltoo-request-message-targets-current-buffer-workspace ()
   "Scenario: Sending from a source buffer targets that file's Git repo session."
   (faltoo-test--with-two-temp-git-files
@@ -635,18 +650,72 @@
 
 ;;; Request specs
 
-(ert-deftest faltoo-request-rejects-overlapping-streams ()
-  "Scenario: Faltoo does not start a second request while one is running."
-  (let ((faltoo-submitting t)
-        (bridge-called nil))
-    ;; Given a Faltoo request is already running.
+(ert-deftest faltoo-request-rejects-overlapping-streams-in-same-workspace ()
+  "Scenario: Faltoo does not start a second request in the same repo session."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file root)
+     (let ((faltoo-submitting nil)
+           (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+           (bridge-called nil))
+       ;; Given a Faltoo request is already running for this workspace.
+       (puthash (file-truename root) t faltoo-submitting-workspaces)
 
-    ;; When another message is submitted.
-    (cl-letf (((symbol-function 'faltoo-bridge-stream)
-               (lambda (&rest _args) (setq bridge-called t))))
-      ;; Then the request is rejected before touching the bridge.
-      (should-error (faltoo-request-message "second request") :type 'user-error)
-      (should-not bridge-called))))
+       ;; When another message is submitted from the same workspace.
+       (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                  (lambda (&rest _args) (setq bridge-called t))))
+         ;; Then the request is rejected before touching the bridge.
+         (should-error (faltoo-request-message "second request") :type 'user-error)
+         (should-not bridge-called))))))
+
+(ert-deftest faltoo-request-allows-parallel-streams-in-different-workspaces ()
+  "Scenario: Running one repo session does not block prompts in another repo."
+  (faltoo-test--with-two-temp-git-files
+   (lambda (file-a root-a file-b root-b)
+     (let ((faltoo-submitting nil)
+           (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+           (started-workspaces nil))
+       ;; Given bridge streams stay running until the test ends.
+       (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args payload _on-event _on-done)
+                    (push (alist-get 'workspace payload) started-workspaces))))
+
+         ;; When a request starts in repo A and another starts in repo B.
+         (with-current-buffer (find-file-noselect file-a)
+           (faltoo-request-message "from repo a"))
+         (with-current-buffer (find-file-noselect file-b)
+           (faltoo-request-message "from repo b")))
+
+       ;; Then both workspace sessions were allowed to start.
+       (should (equal (sort started-workspaces #'string<)
+                      (sort (list (file-truename root-a) (file-truename root-b)) #'string<)))))))
+
+(ert-deftest faltoo-request-completion-clears-only-that-workspace ()
+  "Scenario: Completing one repo stream leaves other repo streams running."
+  (faltoo-test--with-two-temp-git-files
+   (lambda (file-a root-a file-b root-b)
+     (let ((faltoo-submitting nil)
+           (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+           done-a done-b)
+       ;; Given two repo requests are running.
+       (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args payload _on-event on-done)
+                    (if (string= (alist-get 'workspace payload) (file-truename root-a))
+                        (setq done-a on-done)
+                      (setq done-b on-done))))
+                 ((symbol-function 'ding) (lambda (&rest _args) nil)))
+         (with-current-buffer (find-file-noselect file-a)
+           (faltoo-request-message "from repo a"))
+         (with-current-buffer (find-file-noselect file-b)
+           (faltoo-request-message "from repo b"))
+
+         ;; When repo A finishes.
+         (funcall done-a t)
+
+         ;; Then repo A is idle and repo B is still marked running.
+         (should-not (faltoo-workspace-submitting-p (file-truename root-a)))
+         (should (faltoo-workspace-submitting-p (file-truename root-b)))
+         (funcall done-b t))))))
 
 (ert-deftest faltoo-request-renders-status-events-as-compact-quotes ()
   "Scenario: Streaming status/tool blocks are compact Markdown quotes."
@@ -1193,6 +1262,7 @@
   "Scenario: Quit guard treats pending comments as unsaved work."
   ;; Given a pending review comment.
   (let ((faltoo-submitting nil)
+        (faltoo-submitting-workspaces (make-hash-table :test #'equal))
         (faltoo-comments (list (make-faltoo-comment :file "x" :path "x" :start 1 :end 1 :text "note"))))
 
     ;; Then Faltoo reports pending work before Emacs quits.

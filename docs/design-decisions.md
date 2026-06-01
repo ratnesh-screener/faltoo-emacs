@@ -159,6 +159,8 @@ Each Git repo should have a persistent transcript buffer:
 
 It is used for viewing full conversation history, searching/copying responses, refreshing persisted messages, and continuing a longer chat when desired. During normal code review, users should be able to ask questions and submit comments from source buffers without switching to the transcript.
 
+The transcript buffer `default-directory` is the repo root, so chat sends, file references, slash commands, and refreshes use the same FaltooBot workspace/session as source-buffer commands from that repo. Running-request state is scoped by Git repo: one workspace can be answering while another workspace accepts a new prompt.
+
 ### Transcript Format
 
 Use Markdown formatting in `markdown-mode` because model output is Markdown. Enable local pretty Markdown settings (`markdown-hide-markup`, native code block fontification, whole-heading fontification) rather than maintaining a Markdown-to-Org converter:

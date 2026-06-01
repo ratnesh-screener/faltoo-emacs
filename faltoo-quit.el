@@ -5,7 +5,7 @@
 (defun faltoo-pending-work-labels ()
   "Return labels for pending Faltoo work."
   (append
-   (when faltoo-submitting (list "a running request"))
+   (when (faltoo-any-submitting-p) (list "a running request"))
    (when (and (boundp 'faltoo-comments) faltoo-comments)
      (list (format "%d pending review comment(s)" (length faltoo-comments))))))
 

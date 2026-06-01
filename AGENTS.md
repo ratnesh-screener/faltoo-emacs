@@ -81,6 +81,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
 - Ask responses stream in the posframe and current repo transcript; completed Ask/last-response popups add an editable Follow-up section.
 - Faltoo workspace/session follows the current buffer's Git root. Popup and transcript buffers set `default-directory` to that root so sends continue in the correct repo session.
+- Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
 - Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup.
 - Review buffers are read-only and show a header line with `Faltoo[1/N]`.

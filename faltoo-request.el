@@ -28,10 +28,10 @@
      (string-trim
       (replace-regexp-in-string "\\*\\*" "" summary)))))
 
-(defun faltoo-request-ensure-idle ()
-  "Signal when another Faltoo request is already running."
-  (when faltoo-submitting
-    (user-error "Faltoo request already running")))
+(defun faltoo-request-ensure-idle (&optional workspace)
+  "Signal when another Faltoo request is already running for WORKSPACE."
+  (when (faltoo-workspace-submitting-p (or workspace (faltoo-workspace)))
+    (user-error "Faltoo request already running for this workspace")))
 
 (defun faltoo-request--route-event (event workspace popup-buffer on-submitted)
   (let ((class (faltoo-request--event-class event))
@@ -54,10 +54,10 @@
 
 (defun faltoo-request-stream (args payload chat-title &optional popup-buffer on-submitted on-done)
   "Run Faltoo bridge ARGS with PAYLOAD and route stream output."
-  (faltoo-request-ensure-idle)
   (let ((workspace (alist-get 'workspace payload)))
-    (setq faltoo-submitting t
-          faltoo-last-assistant-message "")
+    (faltoo-request-ensure-idle workspace)
+    (faltoo-set-workspace-submitting workspace t)
+    (setq faltoo-last-assistant-message "")
     (puthash workspace "" faltoo-last-assistant-messages)
     (faltoo-set-status chat-title)
     (faltoo-chat-start-stream "Assistant · answering" workspace)
@@ -66,7 +66,7 @@
      (lambda (event)
        (faltoo-request--route-event event workspace popup-buffer on-submitted))
      (lambda (ok)
-       (setq faltoo-submitting nil)
+       (faltoo-set-workspace-submitting workspace nil)
        (faltoo-set-status (if ok "Faltoo complete" "Faltoo failed"))
        (faltoo-reload-review-buffers)
        (faltoo-chat-finish-stream workspace)
