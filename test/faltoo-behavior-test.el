@@ -189,6 +189,36 @@
        (with-current-buffer (faltoo-test--chat-buffer-name)
          (should (string-match-p "timed answer\n\n> Assistant took: 20.0s\n\n---\n# User" (buffer-string))))))))
 
+(ert-deftest faltoo-request-completion-records-codex-limit-in-transcript-footer ()
+  "Scenario: Codex rate-limit events are shown in the assistant footer."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (faltoo-test--kill-chat-buffer)
+     (let ((times '(10.0 30.0))
+           (faltoo-request-start-times (make-hash-table :test #'equal))
+           (faltoo-request-rate-limits (make-hash-table :test #'equal))
+           (faltoo-last-rate-limits (make-hash-table :test #'equal)))
+       ;; Given the bridge emits the Codex remaining limit during streaming.
+       (cl-letf (((symbol-function 'float-time)
+                  (lambda () (or (pop times) 30.0)))
+                 ((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args _payload on-event on-done)
+                    (funcall on-event '((classes . "rate-limit") (text . "Remaining limit: 5h = 98%")))
+                    (funcall on-event '((classes . "answer") (text . "limited answer")))
+                    (funcall on-done t)))
+                 ((symbol-function 'ding) (lambda (&rest _args) nil)))
+
+         ;; When the request completes.
+         (faltoo-request-message "show limit"))
+
+       ;; Then the limit is remembered and appears with the assistant footer, not as an earlier tool quote.
+       (should (equal (gethash (faltoo-workspace) faltoo-last-rate-limits)
+                      "Remaining limit: 5h = 98%"))
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "limited answer\n\n> Assistant took: 20.0s\n> Remaining limit: 5h = 98%\n\n---\n# User" (buffer-string)))
+         (should-not (string-match-p "> Remaining limit: 5h = 98%\n\nlimited answer" (buffer-string))))))))
+
 (ert-deftest faltoo-chat-send-targets-transcript-workspace ()
   "Scenario: Sending from a repo transcript keeps using that transcript's Git root."
   (faltoo-test--with-two-temp-git-files
@@ -327,6 +357,24 @@
                              (eq (overlay-get overlay 'face) 'faltoo-chat-assistant-face))
                            (overlays-at (point)))))))
 
+(ert-deftest faltoo-insert-slash-command-pastes-selected-prompt-template ()
+  "Scenario: Picking a saved prompt inserts its contents, not the slash command."
+  (with-temp-buffer
+    ;; Given saved prompts are available from FaltooBot.
+    (cl-letf (((symbol-function 'faltoo-bridge-slash-commands)
+               (lambda ()
+                 '(((command . "/commit")
+                    (preview . "Write a commit")
+                    (template . "Please write a focused commit message.")))))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _args) "/commit — Write a commit")))
+
+      ;; When choosing the slash command from completion.
+      (faltoo-insert-slash-command))
+
+    ;; Then the reusable prompt text is pasted for review/editing.
+    (should (equal (buffer-string) "Please write a focused commit message."))))
+
 (ert-deftest faltoo-markdown-modes-enable-pretty-rendering ()
   "Scenario: Transcript and popup buffers hide Markdown noise where possible."
   ;; Given a transcript and popup buffer are created.
@@ -389,6 +437,45 @@
       ;; Then the reader's point and scroll position stay where they were.
       (should (= (window-point window) (point-min)))
       (should (= (window-start window) (point-min))))))
+
+(ert-deftest faltoo-chat-jumps-between-persisted-user-messages ()
+  "Scenario: Transcript navigation jumps between user turns without stopping on the draft prompt."
+  (let ((buf (faltoo-chat-render '(((role . "user") (text . "first question"))
+                                   ((role . "assistant") (text . "first answer"))
+                                   ((role . "user") (text . "second question"))
+                                   ((role . "assistant") (text . "second answer"))))))
+    ;; Given a transcript has multiple persisted user turns and an editable draft prompt.
+    (with-current-buffer buf
+      (goto-char (point-max))
+
+      ;; When jumping backward from the draft prompt.
+      (faltoo-chat-prev-user-message)
+
+      ;; Then point lands on the latest persisted user message, not the empty draft prompt.
+      (should (looking-at "# User"))
+      (should (save-excursion
+                (search-forward "second question" nil t)))
+
+      ;; When jumping backward and forward between persisted user messages.
+      (faltoo-chat-prev-user-message)
+      (should (save-excursion
+                (search-forward "first question" nil t)))
+      (faltoo-chat-next-user-message)
+      (should (save-excursion
+                (search-forward "second question" nil t)))
+
+      ;; Then the editable draft prompt is skipped by next-user navigation.
+      (should-error (faltoo-chat-next-user-message) :type 'user-error))))
+
+(ert-deftest faltoo-chat-user-message-navigation-has-transcript-bindings ()
+  "Scenario: Transcript buffers expose explicit previous/next user-turn bindings."
+  ;; Given transcript-mode keybindings are active.
+
+  ;; Then C-c C-p and C-c C-n navigate user messages.
+  (should (eq (lookup-key faltoo-chat-mode-map (kbd "C-c C-p"))
+              #'faltoo-chat-prev-user-message))
+  (should (eq (lookup-key faltoo-chat-mode-map (kbd "C-c C-n"))
+              #'faltoo-chat-next-user-message)))
 
 (ert-deftest faltoo-chat-render-shows-persisted-tool-summaries-without-headings ()
   "Scenario: Persisted tool summaries do not inflate the heading list."
@@ -539,6 +626,20 @@
     (should (string-match-p "# Assistant\n\nstreamed answer\n\n> Assistant took: 20.0s\n\n---\n# User\n\n$" (buffer-string)))
     (should-not (string-match-p "# Assistant · 20.0s" (buffer-string)))))
 
+(ert-deftest faltoo-chat-finish-stream-shows-codex-limit-in-footer ()
+  "Scenario: Completed streams can include the latest Codex remaining limit."
+  (faltoo-test--kill-chat-buffer)
+  ;; Given a stream is active in the transcript.
+  (faltoo-chat-start-stream "Assistant · answering")
+  (faltoo-chat-append-stream "streamed answer")
+
+  ;; When the stream finishes with a captured rate-limit event.
+  (faltoo-chat-finish-stream nil 20.0 "Remaining limit: 5h = 98%")
+
+  ;; Then the duration and usage sit together in the assistant footer.
+  (with-current-buffer (faltoo-test--chat-buffer-name)
+    (should (string-match-p "streamed answer\n\n> Assistant took: 20.0s\n> Remaining limit: 5h = 98%\n\n---\n# User" (buffer-string)))))
+
 ;;; Ask specs
 
 (ert-deftest faltoo-ask-uses-current-line-when-region-is-not-active ()
@@ -686,6 +787,41 @@
          (should (string-match-p "hello from assistant" (buffer-string))))
        (with-current-buffer (faltoo-test--chat-buffer-name)
          (should (string-match-p "hello from assistant" (buffer-string))))
+       (kill-buffer popup)))))
+
+(ert-deftest faltoo-ask-stream-shows-codex-limit-before-follow-up ()
+  "Scenario: Ask popups show the latest Codex limit before the next follow-up prompt."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (faltoo-test--kill-chat-buffer)
+     (let ((popup (get-buffer-create "*Faltoo Test Popup*"))
+           (faltoo-request-rate-limits (make-hash-table :test #'equal)))
+       (with-current-buffer popup (erase-buffer))
+
+       ;; Given an Ask response receives a rate-limit event.
+       (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args _payload on-event on-done)
+                    (funcall on-event '((classes . "rate-limit") (text . "Remaining limit: 5h = 98%")))
+                    (funcall on-event '((classes . "answer") (text . "popup answer")))
+                    (funcall on-done t)))
+                 ((symbol-function 'ding) (lambda (&rest _args) nil)))
+
+         ;; When the popup request completes and installs its follow-up section.
+         (faltoo-request-message
+          "question" popup
+          (lambda (_ok)
+            (with-current-buffer popup
+              (faltoo-compose-insert-section "Follow-up")))))
+
+       ;; Then the usage footer is visible before the editable follow-up area.
+       (with-current-buffer popup
+         (goto-char (point-min))
+         (let ((answer (search-forward "popup answer"))
+               (limit (search-forward "> Remaining limit: 5h = 98%"))
+               (follow-up (search-forward "## Follow-up")))
+           (should (< answer limit))
+           (should (< limit follow-up))))
        (kill-buffer popup)))))
 
 ;;; Request specs
@@ -1229,15 +1365,20 @@
        (should removed)
        (should updated)))))
 
-(ert-deftest faltoo-review-mode-keybindings-keep-comment-management-on-prefix ()
-  "Scenario: Review buffers keep comment management on the Faltoo prefix."
+(ert-deftest faltoo-review-mode-keybindings-use-plain-keys-in-read-only-review-buffers ()
+  "Scenario: Review buffers use direct single-key commands because code is read-only."
   ;; Given review-mode keybindings are active.
 
-  ;; Then C-c f d deletes a pending comment and C-c f m shows pending comments.
-  (should (eq (lookup-key faltoo-review-mode-map (kbd "C-c f d"))
-              #'faltoo-delete-current-comment))
-  (should (eq (lookup-key faltoo-review-mode-map (kbd "C-c f m"))
-              #'faltoo-comments-summary)))
+  ;; Then common review actions do not require the global Faltoo prefix.
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "a")) #'faltoo-ask))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "c")) #'faltoo-comment))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "d")) #'faltoo-delete-current-comment))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "m")) #'faltoo-comments-summary))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "]")) #'faltoo-next-change))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "H s")) #'faltoo-stage-current-hunk))
+
+  ;; And the review-local keymap does not duplicate C-c f commands.
+  (should-not (commandp (lookup-key faltoo-review-mode-map (kbd "C-c f d")))))
 
 ;;; Review mode specs
 

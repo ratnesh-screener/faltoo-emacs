@@ -17,6 +17,7 @@ The active workspace is always recomputed from `default-directory'.")
 (defvar faltoo-current-review-index 0)
 (defvar faltoo-last-assistant-message "")
 (defvar faltoo-last-assistant-messages (make-hash-table :test #'equal))
+(defvar faltoo-last-rate-limits (make-hash-table :test #'equal))
 (defvar faltoo-after-reload-review-buffers-hook nil
   "Hook run after Faltoo reloads review buffers from disk.")
 

@@ -12,6 +12,7 @@
 (declare-function faltoo-request-ensure-idle "faltoo-request")
 
 (defvar-local faltoo-chat-prompt-marker nil)
+(defvar-local faltoo-chat-prompt-heading-marker nil)
 (defvar-local faltoo-chat-user-overlays nil)
 (defvar-local faltoo-chat-tool-overlays nil)
 (defvar-local faltoo-chat-assistant-overlays nil)
@@ -29,6 +30,8 @@
     (define-key map (kbd "C-c C-c") #'faltoo-chat-send)
     (define-key map (kbd "C-c C-r") #'faltoo-chat-refresh)
     (define-key map (kbd "C-c C-l") #'faltoo-chat-load-more)
+    (define-key map (kbd "C-c C-p") #'faltoo-chat-prev-user-message)
+    (define-key map (kbd "C-c C-n") #'faltoo-chat-next-user-message)
     (define-key map (kbd "C-c C-f") #'faltoo-insert-file-reference)
     (define-key map (kbd "C-c /") #'faltoo-insert-slash-command)
     map))
@@ -103,6 +106,7 @@
   (let ((start (point)))
     (faltoo-chat--insert-rule)
     (setq start (point))
+    (setq faltoo-chat-prompt-heading-marker (point-marker))
     (insert "# User\n\n")
     (setq faltoo-chat-prompt-marker (point-marker))
     (faltoo-chat--highlight-user-block start (line-end-position 0))))
@@ -119,7 +123,8 @@
               faltoo-chat-tool-overlays nil
               faltoo-chat-assistant-overlays nil
               faltoo-chat-stream-heading-marker nil
-              faltoo-chat-stream-answer-started nil)
+              faltoo-chat-stream-answer-started nil
+              faltoo-chat-prompt-heading-marker nil)
         (erase-buffer)
         (dolist (message messages)
           (faltoo-chat--insert-message message))
@@ -138,6 +143,39 @@
   "Open Faltoo transcript."
   (interactive)
   (faltoo-chat-refresh))
+
+
+(defun faltoo-chat-prev-user-message ()
+  "Jump to the previous persisted user message heading in the transcript."
+  (interactive)
+  (when (and (markerp faltoo-chat-prompt-heading-marker)
+             (>= (point) faltoo-chat-prompt-heading-marker))
+    (goto-char faltoo-chat-prompt-heading-marker))
+  (beginning-of-line)
+  (when (looking-at "^# User$")
+    (forward-line -1))
+  (let (found)
+    (while (and (not found) (re-search-backward "^# User$" nil t))
+      (unless (and (markerp faltoo-chat-prompt-heading-marker)
+                   (= (match-beginning 0) faltoo-chat-prompt-heading-marker))
+        (setq found (match-beginning 0))))
+    (unless found
+      (user-error "No previous user message"))))
+
+(defun faltoo-chat-next-user-message ()
+  "Jump to the next persisted user message heading in the transcript."
+  (interactive)
+  (beginning-of-line)
+  (when (looking-at "^# User$")
+    (forward-line 1))
+  (let (found)
+    (while (and (not found) (re-search-forward "^# User$" nil t))
+      (unless (and (markerp faltoo-chat-prompt-heading-marker)
+                   (= (match-beginning 0) faltoo-chat-prompt-heading-marker))
+        (setq found (match-beginning 0))))
+    (if found
+        (goto-char found)
+      (user-error "No next user message"))))
 
 (defun faltoo-chat-load-more (arg)
   "Load more transcript turns. With prefix ARG, show exactly that many user turns."
@@ -207,7 +245,7 @@
 (defun faltoo-chat--duration-label (elapsed-seconds)
   (format "%.1fs" elapsed-seconds))
 
-(defun faltoo-chat-finish-stream (&optional workspace elapsed-seconds)
+(defun faltoo-chat-finish-stream (&optional workspace elapsed-seconds rate-limit)
   "Finish streaming in-place and append the next editable user prompt."
   (let ((buf (get-buffer (faltoo-chat-buffer-name-for (or workspace (faltoo-workspace))))))
     (when buf
@@ -226,8 +264,12 @@
            ((looking-back "\n" nil) (insert "\n"))
            (t (insert "\n\n")))
           (when elapsed-seconds
-            (insert (format "> Assistant took: %s\n\n"
+            (insert (format "> Assistant took: %s\n"
                             (faltoo-chat--duration-label elapsed-seconds))))
+          (when rate-limit
+            (insert (format "> %s\n" rate-limit)))
+          (when (or elapsed-seconds rate-limit)
+            (insert "\n"))
           (faltoo-chat--insert-user-prompt)
           (faltoo-ui-fontify-markdown))))))
 

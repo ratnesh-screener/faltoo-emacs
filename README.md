@@ -32,33 +32,38 @@ This opens changed files as normal source buffers, enables `faltoo-review-mode`,
 
 ## Keybindings
 
-Main prefix: `C-c f`
+Normal source buffers use main prefix: `C-c f`
 
 ```text
 C-c f u   review unstaged files
 C-c f x   stop review session
-C-c f a   ask about active region/current line
-C-c f l   show last assistant response
-C-c f c   add review comment on line/region
-C-c f C   add file-level review comment
-C-c f m   show pending comments summary
-C-c f d   delete pending comment at point
-C-c f s   submit pending review comments
-C-c f h   open transcript
-C-c f r   reload Faltoo plugin code
-C-c f g   Magit status
-C-c f D   Magit diff for current file
-C-c f ]   next Git hunk
-C-c f [   previous Git hunk
-C-c f =   show Git hunk
-C-c f n   next Faltoo comment
-C-c f p   previous Faltoo comment
-C-c f N   next review file
-C-c f P   previous review file
-C-c f S   stage current file
-C-c f U   unstage current file
-C-c f H s stage current hunk
-C-c f H r revert current hunk
+```
+
+Review buffers are read-only, so review actions use direct keys:
+
+```text
+a     ask about active region/current line
+l     show last assistant response
+c     add review comment on line/region
+C     add file-level review comment
+m     show pending comments summary
+d     delete pending comment at point
+s     submit pending review comments
+h     open transcript
+r     reload Faltoo plugin code
+g     Magit status
+D     Magit diff for current file
+]     next Git hunk
+[     previous Git hunk
+=     show Git hunk
+n     next Faltoo comment
+p     previous Faltoo comment
+N     next review file
+P     previous review file
+S     stage current file
+U     unstage current file
+H s   stage current hunk
+H r   revert current hunk
 ```
 
 In Ask/comment posframes:
@@ -68,7 +73,7 @@ C-c C-c   send/save/follow-up
 C-c C-k   cancel/close
 C-g       close
 C-c C-f   insert file reference
-C-c /     insert slash command, Ask/last-response only
+C-c /     paste saved prompt template, Ask/last-response only
 ```
 
 In workspace transcript buffers, named like `*Faltoo: repo-name*`:
@@ -77,8 +82,10 @@ In workspace transcript buffers, named like `*Faltoo: repo-name*`:
 C-c C-c   send current prompt
 C-c C-r   refresh transcript
 C-c C-l   load more transcript turns; numeric prefix sets exact turn count
+C-c C-p   previous user message
+C-c C-n   next user message
 C-c C-f   insert file reference
-C-c /     insert slash command
+C-c /     paste saved prompt template
 ```
 
 In `*Faltoo Comments*`:
@@ -106,7 +113,7 @@ This reloads all Faltoo `.el` files in dependency order, so restarting Emacs sho
 - Source buffers are the primary UI.
 - Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo.
 - Ask responses stream in the centered posframe, including compact status/tool lines.
-- Completed assistant transcript footers include elapsed time, e.g. `> Assistant took: 20.0s`.
+- Completed assistant transcript footers include elapsed time and the latest streamed Codex limit when available, e.g. `> Assistant took: 20.0s` / `> Remaining limit: 5h = 98%`.
 - Review-comment submission streams to the current repo transcript and status/mode-line.
 - Faltoo never auto-stages changes.
 

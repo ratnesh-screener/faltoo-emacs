@@ -71,20 +71,20 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 
 - `C-c f` is the main prefix.
 - `C-c f u` starts review of unstaged files.
-- `C-c f a` opens Ask posframe for active region or current line.
-- `C-c f c` opens review-comment posframe for active region/current line.
-- `C-c f C` opens file-level comment posframe.
-- `C-c f s` submits pending review comments.
-- `C-c f l` shows latest assistant response in posframe.
+- In normal source buffers, `C-c f a` opens Ask posframe for active region or current line.
+- In normal source buffers, `C-c f c` opens review-comment posframe for active region/current line.
+- In normal source buffers, `C-c f C` opens file-level comment posframe.
+- In normal source buffers, `C-c f s` submits pending review comments.
+- In normal source buffers, `C-c f l` shows latest assistant response in posframe.
 - `C-c f h` opens the current Git repo's transcript/history.
-- `C-c f x` stops current review session.
+- In normal source buffers, `C-c f x` stops current review session.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
 - Ask responses stream in the posframe and current repo transcript; completed Ask/last-response popups add an editable Follow-up section.
 - Faltoo workspace/session follows the current buffer's Git root. Popup and transcript buffers set `default-directory` to that root so sends continue in the correct repo session.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
 - Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup.
-- Review buffers are read-only and show a header line with `Faltoo[1/N]`.
+- Review buffers are read-only, use direct single-key review bindings, and show a header line with `Faltoo[1/N]`.
 - `diff-hl` is configured buffer-locally in review buffers for full-line highlights.
 - Faltoo never auto-stages assistant edits.
 
@@ -97,6 +97,7 @@ Main test files:
 ```text
 test/faltoo-behavior-test.el      Behavior/spec tests.
 test/faltoo-performance-test.el   Performance behavior tests.
+test/faltoo-bridge-behavior-test.py Python bridge behavior tests.
 test/byte-compile-smoke.el        Byte compile smoke.
 test/load-smoke.el                Load smoke with dependency stubs.
 ```
@@ -106,6 +107,7 @@ Run before committing:
 ```sh
 emacs -Q --batch -l test/faltoo-behavior-test.el -f ert-run-tests-batch-and-exit
 emacs -Q --batch -l test/faltoo-performance-test.el -f ert-run-tests-batch-and-exit
+python3 -m unittest test/faltoo-bridge-behavior-test.py
 emacs -Q --batch -l test/byte-compile-smoke.el
 rm -f *.elc
 ```
@@ -126,14 +128,15 @@ In a Git repo with unstaged changes:
 
 ```text
 C-c f u   review unstaged files
-C-c f a   ask about region/current line
+a         ask about region/current line in review buffers
 C-c C-c   send from Ask popup
 C-g       close popup
-C-c f c   add review comment
+c         add review comment in review buffers
 C-c C-c   save comment
-C-c f s   submit comments
-C-c f h   view current repo transcript
+s         submit comments in review buffers
+h         view current repo transcript in review buffers
 C-c C-l   load more transcript turns from the repo transcript
+C-c C-p/n jump previous/next user message in the repo transcript
 ```
 
 Expected visual behavior:

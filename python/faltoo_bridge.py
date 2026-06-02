@@ -150,18 +150,6 @@ def slash_commands() -> int:
     return 0
 
 
-def _expand_slash_command(text: str) -> str:
-    command = text.strip()
-    prompt = (
-        SlashCommandStore(excluded_commands=BUILTIN_SLASH_COMMANDS)
-        .commands()
-        .get(command)
-    )
-    if prompt is None:
-        return text
-    return prompt.template
-
-
 def _emit(is_new: bool, classes: str, text: str) -> None:
     print(
         json.dumps(
@@ -178,6 +166,8 @@ async def _stream_answer(session: Session) -> None:
         # Some stream events only update state and have no visible text.
         if not text.strip():
             continue
+        if classes == "tool" and text.startswith("Remaining limit"):
+            classes = "rate-limit"
         _emit(is_new, classes, text)
 
     _emit(True, "done", "Assistant response saved.")
@@ -202,7 +192,7 @@ async def append_review(workspace: Path, items: list[dict[str, Any]]) -> int:
 
 
 async def append_message(workspace: Path, text: str) -> int:
-    text = _expand_slash_command(text.strip())
+    text = text.strip()
     # FaltooBot requires a non-empty user turn.
     if not text:
         _emit(True, "done", "No message to submit.")

@@ -55,7 +55,7 @@
     (insert "`" file "`")))
 
 (defun faltoo-insert-slash-command ()
-  "Insert a saved Faltoo slash command."
+  "Insert the selected saved Faltoo prompt template."
   (interactive)
   (let* ((commands (faltoo-bridge-slash-commands))
          (labels (mapcar (lambda (cmd)
@@ -64,8 +64,10 @@
                              (if (string-empty-p preview) name (format "%s — %s" name preview))))
                          commands))
          (choice (completing-read "Command: " labels nil t))
-         (index (cl-position choice labels :test #'string=)))
-    (insert (alist-get 'command (nth index commands)))))
+         (index (cl-position choice labels :test #'string=))
+         (command (nth index commands)))
+    (insert (or (alist-get 'template command)
+                (alist-get 'command command)))))
 
 (provide 'faltoo-compose)
 ;;; faltoo-compose.el ends here

@@ -157,11 +157,11 @@ Each Git repo should have a persistent transcript buffer:
 *Faltoo: repo-name*
 ```
 
-It is used for viewing full conversation history, searching/copying responses, refreshing persisted messages, and continuing a longer chat when desired. During normal code review, users should be able to ask questions and submit comments from source buffers without switching to the transcript.
+It is used for viewing full conversation history, jumping between user turns, searching/copying responses, refreshing persisted messages, and continuing a longer chat when desired. During normal code review, users should be able to ask questions and submit comments from source buffers without switching to the transcript.
 
 The transcript buffer `default-directory` is the repo root, so chat sends, file references, slash commands, and refreshes use the same FaltooBot workspace/session as source-buffer commands from that repo. Running-request state is scoped by Git repo: one workspace can be answering while another workspace accepts a new prompt.
 
-When a streamed assistant response completes, the finalized assistant heading stays clean and a quoted footer records elapsed wall-clock time, e.g. `> Assistant took: 20.0s`.
+When a streamed assistant response completes, the finalized assistant heading stays clean and a quoted footer records elapsed wall-clock time, e.g. `> Assistant took: 20.0s`. If the Codex stream includes a `codex.rate_limits` event, store the latest formatted `Remaining limit: ...` text per workspace and append it to the same assistant footer. This is not a separate LLM call or standalone quota endpoint in the current FaltooBot path; it is metadata delivered by the Codex response stream.
 
 ### Transcript Format
 
@@ -196,13 +196,16 @@ Transcript headings after the first turn are separated with Markdown horizontal 
 Submitting message...
 ```
 
-Tool/status events should be compact by default and must not create their own transcript headings:
+Tool/status events should be compact by default and must not create their own transcript headings. Codex rate-limit events are special: capture them during the stream and show the latest one in the assistant footer instead of rendering them as ordinary tool quotes:
 
 ```markdown
 > reading `foo.py`
 > running tests
 
 Final response starts here.
+
+> Assistant took: 20.0s
+> Remaining limit: 5h = 98%
 ```
 
 Assistant answer text should be preserved in full. Tool/status bullets may be clipped or summarized.
@@ -252,8 +255,10 @@ Initial preferred keys:
 ```text
 C-c C-c   send current prompt
 C-c C-r   refresh from FaltooBot session
+C-c C-p   previous persisted user message
+C-c C-n   next persisted user message
 C-c C-f   insert file reference
-C-c /     insert slash command
+C-c /     paste saved prompt template
 ```
 
 Because the transcript is editable, avoid overusing plain single-letter keys where they interfere with normal text entry. Plain keys are acceptable only when point is not in editable prompt text or if the mode design makes that safe.
@@ -269,7 +274,7 @@ Preferred UI:
 - `C-c C-c` sends immediately.
 - `C-c C-k`/`C-g` cancels.
 - `C-c C-f` inserts a file reference.
-- `C-c /` inserts a slash command.
+- `C-c /` pastes a saved prompt template.
 
 Ask commands:
 
@@ -314,6 +319,10 @@ Behavior:
 - Display it in a centered `posframe` with an editable `## Follow-up` section.
 - `C-c C-c` sends the typed follow-up as a plain chat message; `C-g`/`C-c C-k` closes. Do not bind plain `q` globally because popup modes share editable text behavior.
 - This is for quick recall; full history remains in the repo transcript.
+
+## Saved Prompt Slash Commands
+
+`C-c /` uses Emacs completion to choose a saved Faltoo prompt and paste its template text into the active prompt buffer. This mirrors FaltooChat's saved prompts while keeping the Emacs buffer editable before submission. Manually typed slash commands are sent as plain text; prompt expansion only happens through the picker.
 
 ## File References
 
@@ -360,8 +369,8 @@ Behavior:
 
 - Fetch saved FaltooBot slash commands.
 - Use `completing-read`.
-- Insert selected command name into the prompt.
-- Let the bridge/FaltooBot expand the command at submission time, matching `faltoo.nvim` behavior.
+- Paste the selected prompt template into the prompt.
+- Send manually typed slash commands as plain text; use `C-c /` for prompt expansion.
 
 Initial key in chat/comment buffers:
 
@@ -680,16 +689,18 @@ C-c f n   faltoo-next-comment
 C-c f p   faltoo-prev-comment
 ```
 
-Inside `faltoo-review-mode`, optional single-key bindings can be considered because review buffers are read-only:
+Inside `faltoo-review-mode`, use direct single-key bindings because review buffers are read-only:
 
 ```text
-c         faltoo-comment
-C         faltoo-file-comment
-R         faltoo-open-unstaged
-n/p       next/previous pending comment, or ]c/[c if we want Vim-like keys
+a/c/s     ask, comment, submit comments
+]/[/=     next hunk, previous hunk, show hunk
+n/p       next/previous pending comment
+N/P       next/previous review file
+S/U       stage/unstage current file
+H s/H r   stage/revert current hunk
 ```
 
-Do not make aggressive single-key bindings global.
+Do not make aggressive single-key bindings global or in editable prompt buffers.
 
 ## Suggested Implementation Order
 

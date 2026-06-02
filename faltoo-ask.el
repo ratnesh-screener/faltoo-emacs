@@ -145,6 +145,8 @@
           (erase-buffer)
           (faltoo-compose-insert-title "Last Assistant Response")
           (insert "\n" message)
+          (when-let ((rate-limit (gethash workspace faltoo-last-rate-limits)))
+            (insert "\n\n> " rate-limit "\n"))
           (faltoo-compose-insert-help "C-c C-c send follow-up · C-c C-k/C-g close · C-c C-f file · C-c / command")
           (faltoo-compose-insert-section "Follow-up")
           (setq faltoo-ask-question-marker (point-marker))
