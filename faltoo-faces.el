@@ -28,6 +28,10 @@
   '((t :inherit font-lock-comment-face))
   "Theme-aware face for truncated tool blocks in the Faltoo transcript.")
 
+(defface faltoo-chat-error-face
+  '((t :inherit error))
+  "Theme-aware face for Faltoo stream errors in the transcript.")
+
 (defface faltoo-diff-insert-line-face
   '((t :extend t :background "#12381f"))
   "Face for inserted Git lines in Faltoo review buffers.")

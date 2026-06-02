@@ -164,7 +164,8 @@ async def _stream_answer(session: Session) -> None:
     async for event in get_answer_streaming(session):
         is_new, classes, text = get_event_text(event)
         # Some stream events only update state and have no visible text.
-        if not text.strip():
+        # Newline-only answer chunks are visible and keep Markdown fences intact.
+        if text == "":
             continue
         if classes == "tool" and text.startswith("Remaining limit"):
             classes = "rate-limit"

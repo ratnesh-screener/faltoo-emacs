@@ -91,6 +91,41 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         # Then the bridge sends the literal prompt text.
         self.assertEqual(captured_questions, ["/commit"])
 
+    async def test_answer_stream_preserves_whitespace_only_chunks(self):
+        """Scenario: Newline-only assistant chunks keep Markdown code fences intact."""
+        bridge = load_bridge()
+        emitted = []
+        events = ["language", "newline", "body"]
+
+        # Given the model streams a newline as its own answer chunk.
+        bridge.get_event_text = lambda event: {
+            "language": (False, "answer", "```text"),
+            "newline": (False, "answer", "\n"),
+            "body": (False, "answer", "M faltoo.el"),
+        }[event]
+        bridge._emit = lambda _is_new, classes, text: emitted.append(
+            {"classes": classes, "text": text}
+        )
+
+        async def answer_stream(_session):
+            for event in events:
+                yield event
+
+        bridge.get_answer_streaming = answer_stream
+
+        # When the bridge streams the answer.
+        await bridge._stream_answer({})
+
+        # Then the newline-only chunk is not discarded.
+        self.assertEqual(
+            [item for item in emitted if item["classes"] == "answer"],
+            [
+                {"classes": "answer", "text": "```text"},
+                {"classes": "answer", "text": "\n"},
+                {"classes": "answer", "text": "M faltoo.el"},
+            ],
+        )
+
     async def test_codex_rate_limit_event_gets_distinct_stream_class(self):
         """Scenario: Codex remaining-limit events are distinguishable from tool calls."""
         bridge = load_bridge()

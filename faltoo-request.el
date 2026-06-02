@@ -51,6 +51,12 @@
       (puthash workspace text faltoo-request-rate-limits)
       (puthash workspace text faltoo-last-rate-limits)
       (faltoo-set-status text))
+     ((string= class "error")
+      (faltoo-set-status text)
+      (when popup-buffer
+        (faltoo-popup-append popup-buffer (format "\n\n> Error: %s\n" (string-trim text))))
+      (faltoo-chat-append-stream-block (format "Error: %s" (string-trim text))
+                                       'faltoo-chat-error-face workspace))
      ((member class '("status" "tool"))
       (when (and on-submitted (string-prefix-p "Submitted" text))
         (funcall on-submitted))

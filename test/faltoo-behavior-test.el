@@ -893,6 +893,38 @@
          (should (faltoo-workspace-submitting-p (file-truename root-b)))
          (funcall done-b t))))))
 
+(ert-deftest faltoo-request-renders-stream-errors-in-popup-and-transcript ()
+  "Scenario: Bridge failures are visible in the UI instead of only the message area."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (faltoo-test--kill-chat-buffer)
+     (let ((popup (get-buffer-create "*Faltoo Test Popup*")))
+       (with-current-buffer popup (erase-buffer))
+
+       ;; Given the bridge reports a stream error and fails the request.
+       (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args _payload on-event on-done)
+                    (funcall on-event '((classes . "error")
+                                        (text . "OpenAI websocket closed")))
+                    (funcall on-done nil))))
+
+         ;; When a popup-backed request runs.
+         (faltoo-request-message "question" popup))
+
+       ;; Then the error is visible near code and in the transcript.
+       (should (equal faltoo-status "Faltoo failed"))
+       (with-current-buffer popup
+         (should (string-match-p "> Error: OpenAI websocket closed" (buffer-string))))
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "> Error: OpenAI websocket closed" (buffer-string)))
+         (goto-char (point-min))
+         (search-forward "OpenAI websocket closed")
+         (should (cl-some (lambda (overlay)
+                            (eq (overlay-get overlay 'face) 'faltoo-chat-error-face))
+                          (overlays-at (point)))))
+       (kill-buffer popup)))))
+
 (ert-deftest faltoo-request-renders-status-events-as-compact-quotes ()
   "Scenario: Streaming status/tool blocks are compact Markdown quotes."
   (faltoo-test--kill-chat-buffer)

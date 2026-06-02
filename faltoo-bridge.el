@@ -66,6 +66,7 @@
 Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
   (let* ((cmd (faltoo-bridge--command args))
          (buffer (generate-new-buffer " *faltoo-bridge*"))
+         (stderr-buffer (generate-new-buffer " *faltoo-bridge-stderr*"))
          (pending "")
          (stderr "")
          (proc (make-process
@@ -74,6 +75,7 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
                 :command cmd
                 :connection-type 'pipe
                 :noquery t
+                :stderr stderr-buffer
                 :filter (lambda (_proc chunk)
                           (setq pending (concat pending chunk))
                           (let ((lines (split-string pending "\n")))
@@ -89,9 +91,15 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
                                          (json-parse-string pending :object-type 'alist :array-type 'list)))
                               (let ((ok (zerop (process-exit-status proc))))
                                 (unless ok
-                                  (setq stderr (with-current-buffer buffer (buffer-string)))
-                                  (message "%s" (if (string-empty-p stderr) "Faltoo bridge failed" stderr)))
+                                  (setq stderr (string-trim
+                                                (with-current-buffer stderr-buffer
+                                                  (buffer-string))))
+                                  (when (string-empty-p stderr)
+                                    (setq stderr "Faltoo bridge failed"))
+                                  (funcall on-event `((classes . "error") (text . ,stderr)))
+                                  (message "%s" stderr))
                                 (kill-buffer buffer)
+                                (kill-buffer stderr-buffer)
                                 (funcall on-done ok)))))))
     (process-send-string proc (json-serialize payload))
     (process-send-eof proc)
