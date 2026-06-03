@@ -8,6 +8,8 @@
 (defvar faltoo-popup-buffer "*Faltoo Popup*")
 
 (defvar-local faltoo-popup-return-window nil)
+(defvar-local faltoo-popup-stream-answer-started nil)
+(defvar-local faltoo-popup-stream-needs-answer-separator nil)
 
 (defun faltoo-ui-enable-pretty-markdown ()
   "Use Markdown mode as a lightweight rendered view while keeping text editable."
@@ -104,6 +106,7 @@ When PRESERVE-READER-POSITION is non-nil, keep existing window scroll and point.
             (start (point-max)))
         (goto-char (point-max))
         (insert text)
+        (add-text-properties start (point) '(rear-nonsticky t))
         (faltoo-ui-fontify-markdown start (point))
         (if preserve-reader-position
             (goto-char buffer-point)
@@ -114,6 +117,31 @@ When PRESERVE-READER-POSITION is non-nil, keep existing window scroll and point.
           (when (window-live-p window)
             (set-window-point window point)
             (set-window-start window start)))))))
+
+(defun faltoo-popup-start-stream (buffer)
+  "Reset popup stream state in BUFFER."
+  (with-current-buffer buffer
+    (setq faltoo-popup-stream-answer-started nil
+          faltoo-popup-stream-needs-answer-separator nil)))
+
+(defun faltoo-popup-append-stream (buffer text)
+  "Append assistant answer TEXT to popup BUFFER."
+  (let (prefix)
+    (with-current-buffer buffer
+      (setq prefix (if (and faltoo-popup-stream-needs-answer-separator
+                            (not faltoo-popup-stream-answer-started))
+                       "\n"
+                     ""))
+      (setq faltoo-popup-stream-answer-started t
+            faltoo-popup-stream-needs-answer-separator nil))
+    (faltoo-popup-append buffer (concat prefix text))))
+
+(defun faltoo-popup-append-stream-block (buffer text &optional face)
+  "Append compact quoted stream block TEXT to popup BUFFER."
+  (let ((quoted (concat "> " (mapconcat #'identity (split-string text "\n") "\n> ") "\n")))
+    (with-current-buffer buffer
+      (setq faltoo-popup-stream-needs-answer-separator t))
+    (faltoo-popup-append buffer (if face (propertize quoted 'face face) quoted))))
 
 (provide 'faltoo-ui)
 ;;; faltoo-ui.el ends here

@@ -45,7 +45,7 @@
       (puthash workspace (concat (or (gethash workspace faltoo-last-assistant-messages) "") text)
                faltoo-last-assistant-messages)
       (when popup-buffer
-        (faltoo-popup-append popup-buffer (propertize text 'face 'faltoo-popup-assistant-face)))
+        (faltoo-popup-append-stream popup-buffer text))
       (faltoo-chat-append-stream text workspace))
      ((string= class "rate-limit")
       (puthash workspace text faltoo-request-rate-limits)
@@ -54,13 +54,17 @@
      ((string= class "error")
       (faltoo-set-status text)
       (when popup-buffer
-        (faltoo-popup-append popup-buffer (format "\n\n> Error: %s\n" (string-trim text))))
+        (faltoo-popup-append-stream-block popup-buffer (format "Error: %s" (string-trim text))
+                                          'faltoo-chat-error-face))
       (faltoo-chat-append-stream-block (format "Error: %s" (string-trim text))
                                        'faltoo-chat-error-face workspace))
      ((member class '("status" "tool"))
       (when (and on-submitted (string-prefix-p "Submitted" text))
         (funcall on-submitted))
       (faltoo-set-status text)
+      (when popup-buffer
+        (faltoo-popup-append-stream-block popup-buffer (faltoo-request--tool-summary text)
+                                          'faltoo-chat-tool-face))
       (faltoo-chat-append-stream-block (faltoo-request--tool-summary text) 'faltoo-chat-tool-face workspace))
      ((string= class "done")
       (faltoo-set-status text)))))
@@ -75,6 +79,8 @@
     (setq faltoo-last-assistant-message "")
     (puthash workspace "" faltoo-last-assistant-messages)
     (faltoo-set-status chat-title)
+    (when popup-buffer
+      (faltoo-popup-start-stream popup-buffer))
     (faltoo-chat-start-stream "Assistant · answering" workspace)
     (faltoo-bridge-stream
      args payload

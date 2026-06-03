@@ -811,7 +811,10 @@
        ;; Then latest response, popup, and transcript all receive the answer.
        (should (equal faltoo-last-assistant-message "hello from assistant"))
        (with-current-buffer popup
-         (should (string-match-p "hello from assistant" (buffer-string))))
+         (should (string-match-p "> Submitted message\n\nhello from assistant" (buffer-string)))
+         (goto-char (point-min))
+         (search-forward "hello from assistant")
+         (should-not (eq (get-text-property (match-beginning 0) 'face) 'faltoo-popup-assistant-face)))
        (with-current-buffer (faltoo-test--chat-buffer-name)
          (should (string-match-p "hello from assistant" (buffer-string))))
        (kill-buffer popup)))))
@@ -1069,7 +1072,18 @@
     (faltoo-compose-insert-section "Question")
 
     ;; Then the rule, heading, and editable body are adjacent.
-    (should (equal (buffer-string) "\n---\n## Question\n\n"))))
+    (should (equal (buffer-string) "---\n## Question\n\n"))))
+
+
+(ert-deftest faltoo-popup-section-rules-have-markdown-paragraph-boundaries ()
+  "Scenario: Popup section rules are separated from preceding body text."
+  (with-temp-buffer
+    ;; When a section is inserted after typed body text.
+    (insert "typed prompt")
+    (faltoo-compose-insert-section "Assistant")
+
+    ;; Then Markdown sees the rule as its own block, not part of the prompt.
+    (should (equal (buffer-string) "typed prompt\n\n---\n## Assistant\n\n"))))
 
 (ert-deftest faltoo-popup-section-body-starts-after-heading-boundary ()
   "Scenario: Typed popup text starts outside the heading line."
@@ -1097,8 +1111,8 @@
       (should (derived-mode-p 'markdown-mode))
       (should (derived-mode-p 'faltoo-ask-mode))
       (should (string-match-p "# Last Assistant Response" (buffer-string)))
-      (should (string-match-p "answer body" (buffer-string)))
-      (should (string-match-p "## Follow-up" (buffer-string)))
+      (should (string-match-p "---\n## Assistant\n\nanswer body" (buffer-string)))
+      (should (string-match-p "---\n## Follow-up\n\n" (buffer-string)))
       (should (= (point) faltoo-ask-question-marker)))))
 
 (ert-deftest faltoo-last-response-popup-preserves-follow-up-draft-after-close ()

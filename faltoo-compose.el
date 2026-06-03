@@ -18,8 +18,15 @@
           "\n"))
 
 (defun faltoo-compose-insert-section (title)
-  "Insert Markdown section TITLE."
-  (insert "\n---\n## " title "\n\n"))
+  "Insert Markdown section TITLE with a proper rule boundary."
+  (let ((start (point)))
+    (unless (bobp)
+      (cond
+       ((looking-back "\n\n" nil))
+       ((looking-back "\n" nil) (insert "\n"))
+       (t (insert "\n\n"))))
+    (insert "---\n## " title "\n\n")
+    (add-text-properties start (point) '(rear-nonsticky t))))
 
 (defun faltoo-compose-insert-code (code)
   "Insert CODE as a Markdown code block."
