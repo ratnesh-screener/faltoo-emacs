@@ -100,23 +100,68 @@
        (when on-done (funcall on-done ok))
        (when ok (ding))))))
 
+
+(defun faltoo-request--group-review-comments (comments)
+  "Group review COMMENTS by filename while preserving submission order."
+  (let (groups)
+    (dolist (comment comments)
+      (let* ((filename (alist-get 'filename comment))
+             (group (assoc filename groups)))
+        (if group
+            (setcdr group (append (cdr group) (list comment)))
+          (setq groups (append groups (list (cons filename (list comment))))))))
+    groups))
+
+(defun faltoo-request--review-prompt (comments)
+  "Return the user prompt FaltooBot receives for review COMMENTS."
+  (let ((groups (faltoo-request--group-review-comments comments))
+        (lines '("# Comments in code review" "")))
+    (dolist (group groups)
+      (let ((filename (car group)))
+        (setq lines (append lines (list (format "## File name `%s`" filename) "")))
+        (dolist (comment (cdr group))
+          (let* ((start (or (alist-get 'file_line_number_start comment)
+                            (alist-get 'line_number_start comment)))
+                 (end (or (alist-get 'file_line_number_end comment)
+                          (alist-get 'line_number_end comment))))
+            (if (and (= start 0) (= end 0))
+                (setq lines (append lines '("### File comment" "")))
+              (setq lines (append lines
+                                  (list (format "### Line `%s-%s`" start end)
+                                        ""
+                                        "Code:"
+                                        ""
+                                        "```"
+                                        (alist-get 'code comment)
+                                        "```"
+                                        ""))))
+            (setq lines (append lines (list "Comment:" (alist-get 'comment comment) ""))))))
+      (unless (eq group (car (last groups)))
+        (setq lines (append lines '("---" "")))))
+    (string-trim (string-join lines "\n"))))
+
 (defun faltoo-request-message (text &optional popup-buffer on-done skip-transcript-user)
   "Send TEXT as a chat message."
-  (unless skip-transcript-user
-    (faltoo-chat-append-user-message text))
-  (faltoo-request-stream
-   (list "append-message")
-   (list (cons 'workspace (faltoo-workspace)) (cons 'text text))
-   "Submitting ask..."
-   popup-buffer nil on-done))
+  (let ((workspace (faltoo-workspace)))
+    (faltoo-request-ensure-idle workspace)
+    (unless skip-transcript-user
+      (faltoo-chat-append-user-message text workspace))
+    (faltoo-request-stream
+     (list "append-message")
+     (list (cons 'workspace workspace) (cons 'text text))
+     "Submitting ask..."
+     popup-buffer nil on-done)))
 
 (defun faltoo-request-review (comments on-submitted &optional on-done)
   "Submit COMMENTS as review comments."
-  (faltoo-request-stream
-   (list "append-review")
-   (list (cons 'workspace (faltoo-workspace)) (cons 'comments (vconcat comments)))
-   "Submitting review comments..."
-   nil on-submitted on-done))
+  (let ((workspace (faltoo-workspace)))
+    (faltoo-request-ensure-idle workspace)
+    (faltoo-chat-append-user-message (faltoo-request--review-prompt comments) workspace)
+    (faltoo-request-stream
+     (list "append-review")
+     (list (cons 'workspace workspace) (cons 'comments (vconcat comments)))
+     "Submitting review comments..."
+     nil on-submitted on-done)))
 
 (provide 'faltoo-request)
 ;;; faltoo-request.el ends here

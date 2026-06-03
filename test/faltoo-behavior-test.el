@@ -878,6 +878,39 @@
                 "# User\n\nsource question\n\n---\n# Assistant"
                 (buffer-string)))))))
 
+(ert-deftest faltoo-request-review-records-review-prompt-in-transcript ()
+  "Scenario: Review submissions write the user review prompt to the transcript."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (faltoo-test--kill-chat-buffer)
+     ;; Given the bridge will immediately stream the review answer.
+     (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                (lambda (_args _payload on-event on-done)
+                  (funcall on-event '((classes . "answer") (text . "review answer")))
+                  (funcall on-done t)))
+               ((symbol-function 'ding) (lambda (&rest _args) nil)))
+
+       ;; When review comments are submitted.
+       (faltoo-request-review
+        '(((filename . "sample.py")
+           (line_number_start . 2)
+           (line_number_end . 3)
+           (file_line_number_start . 20)
+           (file_line_number_end . 21)
+           (code . "changed code")
+           (comment . "please fix this")))
+        (lambda () nil)))
+
+     ;; Then the transcript shows the same user prompt sent to FaltooBot.
+     (with-current-buffer (faltoo-test--chat-buffer-name)
+       (should (string-match-p "# User\n\n# Comments in code review" (buffer-string)))
+       (should (string-match-p "## File name `sample.py`" (buffer-string)))
+       (should (string-match-p "### Line `20-21`" (buffer-string)))
+       (should (string-match-p "```\nchanged code\n```" (buffer-string)))
+       (should (string-match-p "Comment:\nplease fix this" (buffer-string)))
+       (should (string-match-p "---\n# Assistant" (buffer-string)))))))
+
 (ert-deftest faltoo-request-rejects-overlapping-streams-in-same-workspace ()
   "Scenario: Faltoo does not start a second request in the same repo session."
   (faltoo-test--with-temp-git-file
