@@ -71,6 +71,11 @@
     (when (get-buffer name)
       (kill-buffer name))))
 
+(defun faltoo-test--kill-last-response-buffer (&optional workspace)
+  "Kill the last-response popup buffer for WORKSPACE when it exists."
+  (let ((buf (get-buffer (faltoo-last-response-buffer-name (or workspace (faltoo-workspace))))))
+    (when buf (kill-buffer buf))))
+
 (defun faltoo-test--with-two-temp-git-files (body)
   "Create two temporary Git-backed files, then call BODY with file/root pairs."
   (let* ((root-a (file-name-as-directory (make-temp-file "faltoo-root-a" t)))
@@ -230,7 +235,7 @@
 
          ;; When sending from inside that transcript.
          (cl-letf (((symbol-function 'faltoo-request-message)
-                    (lambda (_text &optional _popup _on-done)
+                    (lambda (_text &optional _popup _on-done _skip-transcript-user)
                       (setq captured-workspace (faltoo-workspace)))))
            (faltoo-chat-send)))
 
@@ -562,7 +567,7 @@
 
       ;; When sending the prompt.
       (cl-letf (((symbol-function 'faltoo-request-message)
-                 (lambda (text &optional _popup _on-done)
+                 (lambda (text &optional _popup _on-done _skip-transcript-user)
                    (setq captured-text text))))
         (faltoo-chat-send)))
 
@@ -691,6 +696,28 @@
      (with-current-buffer "*Faltoo Popup*"
        (should (string-match-p "---\n## Code\n\n" (buffer-string)))
        (should (string-match-p "---\n## Question\n\n" (buffer-string)))))))
+
+(ert-deftest faltoo-ask-recomputes-current-line-each-time ()
+  "Scenario: Ask always starts from the current source context."
+  (faltoo-test--with-temp-git-file
+   '("one" "two")
+   (lambda (_file _root)
+     ;; Given Ask is opened on the first line.
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+       (goto-char (point-min))
+       (faltoo-ask)
+       (with-current-buffer "*Faltoo Popup*"
+         (should (string-match-p "```text\none\n```" (buffer-string))))
+
+       ;; When Ask is opened again on another line.
+       (goto-char (point-min))
+       (forward-line 1)
+       (faltoo-ask)
+
+       ;; Then the popup is rebuilt from the new source context.
+       (with-current-buffer "*Faltoo Popup*"
+         (should (string-match-p "```text\ntwo\n```" (buffer-string)))
+         (should-not (string-match-p "```text\none\n```" (buffer-string))))))))
 
 (ert-deftest faltoo-ask-empty-question-does-not-capture-help-text ()
   "Scenario: Ask help text is not submitted as the question."
@@ -825,6 +852,28 @@
        (kill-buffer popup)))))
 
 ;;; Request specs
+
+(ert-deftest faltoo-request-message-records-source-prompt-in-transcript ()
+  "Scenario: Source-buffer prompts are written to transcript before assistant output."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (faltoo-test--kill-chat-buffer)
+     ;; Given the bridge will immediately stream an assistant answer.
+     (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                (lambda (_args _payload on-event on-done)
+                  (funcall on-event '((classes . "answer") (text . "assistant answer")))
+                  (funcall on-done t)))
+               ((symbol-function 'ding) (lambda (&rest _args) nil)))
+
+       ;; When a source-buffer request is sent.
+       (faltoo-request-message "source question"))
+
+     ;; Then the transcript contains the source prompt before the assistant response.
+     (with-current-buffer (faltoo-test--chat-buffer-name)
+       (should (string-match-p
+                "# User\n\nsource question\n\n---\n# Assistant"
+                (buffer-string)))))))
 
 (ert-deftest faltoo-request-rejects-overlapping-streams-in-same-workspace ()
   "Scenario: Faltoo does not start a second request in the same repo session."
@@ -1035,6 +1084,7 @@
 (ert-deftest faltoo-last-response-popup-renders-markdown-content ()
   "Scenario: Last response popup uses Markdown headings and an editable follow-up."
   (let ((workspace (faltoo-workspace)))
+    (faltoo-test--kill-last-response-buffer workspace)
     ;; Given a latest assistant response exists for the current workspace.
     (puthash workspace "answer body" faltoo-last-assistant-messages)
 
@@ -1043,7 +1093,7 @@
       (faltoo-show-last-response))
 
     ;; Then the popup uses Markdown mode and starts in the follow-up prompt.
-    (with-current-buffer faltoo-last-response-buffer
+    (with-current-buffer (faltoo-last-response-buffer-name workspace)
       (should (derived-mode-p 'markdown-mode))
       (should (derived-mode-p 'faltoo-ask-mode))
       (should (string-match-p "# Last Assistant Response" (buffer-string)))
@@ -1051,14 +1101,57 @@
       (should (string-match-p "## Follow-up" (buffer-string)))
       (should (= (point) faltoo-ask-question-marker)))))
 
+(ert-deftest faltoo-last-response-popup-preserves-follow-up-draft-after-close ()
+  "Scenario: Last response follow-up drafts survive closing and reopening the posframe."
+  (let ((workspace (faltoo-workspace)))
+    (faltoo-test--kill-last-response-buffer workspace)
+    ;; Given the last response popup has an unsent follow-up draft.
+    (puthash workspace "answer body" faltoo-last-assistant-messages)
+    (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+      (faltoo-show-last-response))
+    (with-current-buffer (faltoo-last-response-buffer-name workspace)
+      (insert "long follow-up draft"))
+
+    ;; When opening the last response popup again.
+    (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+      (faltoo-show-last-response))
+
+    ;; Then the existing follow-up text is still present.
+    (with-current-buffer (faltoo-last-response-buffer-name workspace)
+      (should (string-match-p "answer body" (buffer-string)))
+      (should (string-match-p "long follow-up draft" (buffer-string)))
+      (should (= (point) faltoo-ask-question-marker)))))
+
+(ert-deftest faltoo-last-response-popup-keeps-draft-when-response-updates ()
+  "Scenario: Last response popup keeps typed follow-up text when rendering a newer answer."
+  (let ((workspace (faltoo-workspace)))
+    (faltoo-test--kill-last-response-buffer workspace)
+    ;; Given the last response popup has an unsent follow-up draft.
+    (puthash workspace "older answer" faltoo-last-assistant-messages)
+    (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+      (faltoo-show-last-response))
+    (with-current-buffer (faltoo-last-response-buffer-name workspace)
+      (insert "long follow-up draft"))
+
+    ;; When a newer answer becomes the latest response and the popup is reopened.
+    (puthash workspace "newer answer" faltoo-last-assistant-messages)
+    (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+      (faltoo-show-last-response))
+
+    ;; Then the displayed answer updates without dropping the typed follow-up.
+    (with-current-buffer (faltoo-last-response-buffer-name workspace)
+      (should (string-match-p "newer answer" (buffer-string)))
+      (should (string-match-p "long follow-up draft" (buffer-string))))))
+
 (ert-deftest faltoo-last-response-popup-sends-plain-follow-up-question ()
   "Scenario: Last response follow-up sends only the typed question."
   (let ((workspace (faltoo-workspace)) captured-message)
+    (faltoo-test--kill-last-response-buffer workspace)
     ;; Given the last response popup is open with a typed follow-up.
     (puthash workspace "answer body" faltoo-last-assistant-messages)
     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
       (faltoo-show-last-response))
-    (with-current-buffer faltoo-last-response-buffer
+    (with-current-buffer (faltoo-last-response-buffer-name workspace)
       (insert "please explain")
 
       ;; When sending from that popup.

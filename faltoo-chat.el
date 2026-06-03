@@ -190,6 +190,27 @@
 (defun faltoo-chat--prompt-text ()
   (string-trim (buffer-substring-no-properties faltoo-chat-prompt-marker (point-max))))
 
+(defun faltoo-chat-append-user-message (text &optional workspace)
+  "Append TEXT as a user turn in the workspace transcript."
+  (with-current-buffer (faltoo-chat-buffer workspace)
+    (let ((inhibit-read-only t)
+          (start nil))
+      (goto-char (point-max))
+      (unless (or (bobp) (bolp))
+        (insert "
+"))
+      (faltoo-chat--insert-rule)
+      (setq start (point))
+      (insert "# User
+
+" text "
+
+")
+      (faltoo-chat--highlight-user-block start (save-excursion
+                                                (goto-char start)
+                                                (line-end-position)))
+      (faltoo-ui-fontify-markdown start (point)))))
+
 (defun faltoo-chat-send ()
   "Send the current workspace transcript prompt."
   (interactive)
@@ -199,7 +220,7 @@
       (user-error "Prompt is empty"))
     (goto-char (point-max))
     (insert "\n\n")
-    (faltoo-request-message text nil)))
+    (faltoo-request-message text nil nil t)))
 
 (defun faltoo-chat-start-stream (title &optional workspace)
   "Prepare the workspace transcript for a streaming message titled TITLE."

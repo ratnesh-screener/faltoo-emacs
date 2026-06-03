@@ -1,13 +1,11 @@
 ;;; faltoo-ui.el --- Posframe UI helpers for Faltoo -*- lexical-binding: t; -*-
 
 (require 'posframe)
-(require 'subr-x)
 (require 'markdown-mode)
 
 (declare-function posframe-poshandler-frame-center "posframe")
 
 (defvar faltoo-popup-buffer "*Faltoo Popup*")
-(defvar faltoo-last-response-buffer "*Faltoo Last Response*")
 
 (defvar-local faltoo-popup-return-window nil)
 

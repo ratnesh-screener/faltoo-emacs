@@ -112,7 +112,7 @@ This reloads all Faltoo `.el` files in dependency order, so restarting Emacs sho
 
 - Source buffers are the primary UI.
 - Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo.
-- Ask responses stream in the centered posframe, including compact status/tool lines.
+- Ask always rebuilds from the active region/current line and streams responses in the centered posframe and transcript. The last-response popup preserves follow-up drafts after close/reopen.
 - Completed assistant transcript footers include elapsed time and the latest streamed Codex limit when available, e.g. `> Assistant took: 20.0s` / `> Remaining limit: 5h = 98%`.
 - Review-comment submission streams to the current repo transcript and status/mode-line.
 - Faltoo never auto-stages changes.

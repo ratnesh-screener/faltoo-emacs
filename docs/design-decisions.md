@@ -316,7 +316,7 @@ faltoo-show-last-response
 Behavior:
 
 - Fetch/use the latest assistant message from the current Faltoo session.
-- Display it in a centered `posframe` with an editable `## Follow-up` section.
+- Display it in a centered `posframe` with an editable `## Follow-up` section. The popup buffer is per workspace and preserves typed follow-up text across close/reopen.
 - `C-c C-c` sends the typed follow-up as a plain chat message; `C-g`/`C-c C-k` closes. Do not bind plain `q` globally because popup modes share editable text behavior.
 - This is for quick recall; full history remains in the repo transcript.
 
@@ -945,12 +945,12 @@ Ask uses centered `posframe` input while keeping focus on code.
 MVP behavior:
 
 - `C-c C-c` sends immediately.
-- Response streams in the same popup.
+- Response streams in the same popup and current repo transcript. Opening Ask again rebuilds from the current source region/line instead of restoring old Ask state.
 - Popup remains open after completion until closed.
 - `C-g`/`C-c C-k` closes and returns focus to the source window.
 - Plain `q` is not a close key because it must remain typeable in editable popups.
 
-Follow-up support is implemented for Ask and last-response popups. Ask follow-ups reuse the original code context; last-response follow-ups send a plain chat message.
+Follow-up support is implemented for completed Ask and last-response popups. Ask follow-ups reuse the original code context while that popup is open; last-response follow-ups send a plain chat message and preserve typed drafts across close/reopen.
 
 ### Comment Input and Marking
 

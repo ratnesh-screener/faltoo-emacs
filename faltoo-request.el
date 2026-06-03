@@ -94,8 +94,10 @@
        (when on-done (funcall on-done ok))
        (when ok (ding))))))
 
-(defun faltoo-request-message (text &optional popup-buffer on-done)
+(defun faltoo-request-message (text &optional popup-buffer on-done skip-transcript-user)
   "Send TEXT as a chat message."
+  (unless skip-transcript-user
+    (faltoo-chat-append-user-message text))
   (faltoo-request-stream
    (list "append-message")
    (list (cons 'workspace (faltoo-workspace)) (cons 'text text))

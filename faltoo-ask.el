@@ -1,17 +1,15 @@
 ;;; faltoo-ask.el --- Code-local Ask UI for Faltoo -*- lexical-binding: t; -*-
 
-(require 'cl-lib)
 (require 'subr-x)
 (require 'faltoo-core)
 (require 'faltoo-ui)
-(require 'faltoo-chat)
 (require 'faltoo-request)
 (require 'faltoo-compose)
 
 (defvar-local faltoo-ask-context nil)
 (defvar-local faltoo-ask-question-marker nil)
 (defvar-local faltoo-ask-sent nil)
-(defvar faltoo-ask-last-context nil)
+(defvar-local faltoo-last-response-message nil)
 
 (defvar faltoo-ask-mode-map
   (let ((map (make-sparse-keymap)))
@@ -60,7 +58,6 @@
   (let* ((workspace (faltoo-workspace))
          (context (faltoo-ask--context))
          (buf (faltoo-popup-buffer faltoo-popup-buffer #'faltoo-ask-mode)))
-    (setq faltoo-ask-last-context context)
     (with-current-buffer buf
       (setq default-directory workspace
             faltoo-ask-context context
@@ -124,6 +121,31 @@
          (with-current-buffer buf
            (faltoo-ask--insert-follow-up)))))))
 
+(defun faltoo-last-response-buffer-name (workspace)
+  (format "*Faltoo Last Response: %s*"
+          (file-name-nondirectory (directory-file-name workspace))))
+
+(defun faltoo-show-last-response--render (buf workspace message follow-up)
+  (with-current-buffer buf
+    (unless (derived-mode-p 'faltoo-ask-mode)
+      (faltoo-ask-mode))
+    (setq default-directory workspace
+          faltoo-ask-context nil
+          faltoo-ask-sent nil
+          faltoo-last-response-message message)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (faltoo-compose-insert-title "Last Assistant Response")
+      (insert "\n" message)
+      (when-let ((rate-limit (gethash workspace faltoo-last-rate-limits)))
+        (insert "\n\n> " rate-limit "\n"))
+      (faltoo-compose-insert-help "C-c C-c send follow-up · C-c C-k/C-g close · C-c C-f file · C-c / command")
+      (faltoo-compose-insert-section "Follow-up")
+      (setq faltoo-ask-question-marker (point-marker))
+      (insert follow-up)
+      (faltoo-ui-fontify-markdown)
+      (goto-char faltoo-ask-question-marker))))
+
 (defun faltoo-show-last-response ()
   "Show latest assistant message in a posframe."
   (interactive)
@@ -136,22 +158,18 @@
           (setq message (alist-get 'text item)))))
     (when (string-empty-p message)
       (user-error "No assistant response yet"))
-    (let ((buf (faltoo-popup-buffer faltoo-last-response-buffer #'faltoo-ask-mode)))
+    (let* ((buf (get-buffer-create (faltoo-last-response-buffer-name workspace)))
+           (follow-up (if (and (buffer-live-p buf)
+                               (with-current-buffer buf faltoo-ask-question-marker))
+                          (with-current-buffer buf
+                            (string-trim-left
+                             (buffer-substring-no-properties faltoo-ask-question-marker (point-max))))
+                        "")))
       (with-current-buffer buf
-        (setq default-directory workspace
-              faltoo-ask-context nil
-              faltoo-ask-sent nil)
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (faltoo-compose-insert-title "Last Assistant Response")
-          (insert "\n" message)
-          (when-let ((rate-limit (gethash workspace faltoo-last-rate-limits)))
-            (insert "\n\n> " rate-limit "\n"))
-          (faltoo-compose-insert-help "C-c C-c send follow-up · C-c C-k/C-g close · C-c C-f file · C-c / command")
-          (faltoo-compose-insert-section "Follow-up")
-          (setq faltoo-ask-question-marker (point-marker))
-          (faltoo-ui-fontify-markdown)
-          (goto-char faltoo-ask-question-marker)))
+        (when (or (not (derived-mode-p 'faltoo-ask-mode))
+                  (not (equal faltoo-last-response-message message)))
+          (faltoo-show-last-response--render buf workspace message follow-up))
+        (goto-char faltoo-ask-question-marker))
       (faltoo-popup-show buf 100 28))))
 
 (provide 'faltoo-ask)
