@@ -72,12 +72,18 @@
                 (overlay-put overlay 'face 'faltoo-review-comment-face)
                 (setf (faltoo-comment-overlay comment) overlay)))))))))
 
-(defun faltoo-comments-refresh ()
-  "Refresh all pending comment overlays."
-  (dolist (comment faltoo-comments)
+
+(defun faltoo-comments--delete-overlays (comments)
+  "Delete source overlays for COMMENTS."
+  (dolist (comment comments)
     (when (overlayp (faltoo-comment-overlay comment))
       (delete-overlay (faltoo-comment-overlay comment)))
-    (setf (faltoo-comment-overlay comment) nil)
+    (setf (faltoo-comment-overlay comment) nil)))
+
+(defun faltoo-comments-refresh ()
+  "Refresh all pending comment overlays."
+  (faltoo-comments--delete-overlays faltoo-comments)
+  (dolist (comment faltoo-comments)
     (faltoo-comments--mark comment))
   (force-mode-line-update t))
 
@@ -241,6 +247,7 @@
     (faltoo-request-review
      (faltoo-comments--payload submitted)
      (lambda ()
+       (faltoo-comments--delete-overlays submitted)
        (setq faltoo-comments (cl-set-difference faltoo-comments submitted))
        (faltoo-comments-refresh)))))
 

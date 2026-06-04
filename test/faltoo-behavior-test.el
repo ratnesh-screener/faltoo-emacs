@@ -1475,6 +1475,33 @@
      (with-current-buffer "*Faltoo Comment*"
        (should (= (point) faltoo-comment-text-marker))))))
 
+(ert-deftest faltoo-submit-review-comments-clears-submitted-overlays ()
+  "Scenario: Submitted review comments remove their source highlights."
+  (faltoo-test--with-temp-git-file
+   '("one" "two" "three")
+   (lambda (file _root)
+     ;; Given a pending review comment has marked its source line.
+     (let ((comment (make-faltoo-comment :file "sample.py"
+                                         :path (file-truename file)
+                                         :start 2
+                                         :end 2
+                                         :code "two"
+                                         :text "review note")))
+       (setq faltoo-comments (list comment))
+       (faltoo-comments-refresh)
+       (let ((overlay (faltoo-comment-overlay comment)))
+         (should (overlayp overlay))
+
+         ;; When the bridge accepts the submitted comment batch.
+         (cl-letf (((symbol-function 'faltoo-request-review)
+                    (lambda (_comments on-submitted &optional _on-done)
+                      (funcall on-submitted))))
+           (faltoo-submit-review-comments))
+
+         ;; Then the submitted marker disappears from the source buffer.
+         (should-not faltoo-comments)
+         (should-not (overlay-buffer overlay)))))))
+
 (ert-deftest faltoo-submit-review-comments-sends-json-object-payload ()
   "Scenario: Review submission serializes a bridge-safe JSON payload."
   (let ((faltoo-comments
