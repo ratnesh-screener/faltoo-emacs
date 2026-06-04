@@ -33,7 +33,8 @@
     (define-key map (kbd "C-c C-p") #'faltoo-chat-prev-user-message)
     (define-key map (kbd "C-c C-n") #'faltoo-chat-next-user-message)
     (define-key map (kbd "C-c C-f") #'faltoo-insert-file-reference)
-    (define-key map (kbd "C-c /") #'faltoo-insert-slash-command)
+    (define-key map (kbd "C-c /") #'faltoo-run-session-command)
+    (define-key map (kbd "C-c p") #'faltoo-insert-prompt-template)
     map))
 
 (define-derived-mode faltoo-chat-mode markdown-mode "Faltoo"
@@ -215,9 +216,9 @@
   "Send the current workspace transcript prompt."
   (interactive)
   (let ((text (faltoo-chat--prompt-text)))
-    (faltoo-request-ensure-idle)
     (when (string-empty-p text)
       (user-error "Prompt is empty"))
+    (faltoo-request-ensure-idle)
     (goto-char (point-max))
     (insert "\n\n")
     (faltoo-request-message text nil nil t)))

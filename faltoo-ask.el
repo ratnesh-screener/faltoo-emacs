@@ -16,7 +16,8 @@
     (set-keymap-parent map faltoo-popup-mode-map)
     (define-key map (kbd "C-c C-c") #'faltoo-ask-send)
     (define-key map (kbd "C-c C-f") #'faltoo-insert-file-reference)
-    (define-key map (kbd "C-c /") #'faltoo-insert-slash-command)
+    (define-key map (kbd "C-c /") #'faltoo-run-session-command)
+    (define-key map (kbd "C-c p") #'faltoo-insert-prompt-template)
     map))
 
 (define-derived-mode faltoo-ask-mode faltoo-popup-mode "Faltoo-Ask"
@@ -47,7 +48,7 @@
     (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
     (faltoo-compose-insert-section "Code")
     (faltoo-compose-insert-code code)
-    (faltoo-compose-insert-help "C-c C-c send · C-c C-k/C-g close · C-c C-f file · C-c / command")
+    (faltoo-compose-insert-help "C-c C-c send · C-c C-k/C-g close · C-c C-f file · C-c / command · C-c p prompt")
     (faltoo-compose-insert-section "Question")
     (setq faltoo-ask-question-marker (point-marker))
     (goto-char faltoo-ask-question-marker)))
@@ -140,7 +141,7 @@
       (insert message)
       (when-let ((rate-limit (gethash workspace faltoo-last-rate-limits)))
         (insert "\n\n> " rate-limit "\n"))
-      (faltoo-compose-insert-help "C-c C-c send follow-up · C-c C-k/C-g close · C-c C-f file · C-c / command")
+      (faltoo-compose-insert-help "C-c C-c send follow-up · C-c C-k/C-g close · C-c C-f file · C-c / command · C-c p prompt")
       (faltoo-compose-insert-section "Follow-up")
       (setq faltoo-ask-question-marker (point-marker))
       (insert follow-up)

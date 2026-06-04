@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 from pathlib import Path
+from contextlib import redirect_stdout
 import sys
 import types
 import unittest
@@ -19,6 +21,14 @@ class SlashCommandStore:
 
     def commands(self):
         return {"/commit": Prompt()}
+
+
+class Session:
+    def __init__(self, chat_key="chat", session_id="current", workspace=Path("/tmp/workspace")):
+        self.chat_key = chat_key
+        self.session_id = session_id
+        self.workspace = workspace
+        self.messages_path = workspace / session_id / "messages.json"
 
 
 def install_faltoobot_stubs() -> None:
@@ -41,10 +51,22 @@ def install_faltoobot_stubs() -> None:
     modules["faltoobot.faltoochat.slash_commands"].SlashCommandStore = SlashCommandStore
     modules["faltoobot.faltoochat.messages_rendering"].get_item_text = lambda _item: None
     modules["faltoobot.faltoochat.stream"].get_event_text = lambda event: event
-    modules["faltoobot.sessions"].Session = object
+    modules["faltoobot.sessions"].Session = Session
     modules["faltoobot.sessions"].get_dir_chat_key = lambda workspace: str(workspace)
-    modules["faltoobot.sessions"].get_messages = lambda _session: {"messages": []}
-    modules["faltoobot.sessions"].get_session = lambda _key, workspace: {"workspace": workspace}
+    modules["faltoobot.sessions"].get_messages = lambda session: {
+        "messages": [],
+        "workspace": str(getattr(session, "workspace", Path("/tmp/workspace"))),
+    }
+    modules["faltoobot.sessions"].get_session = lambda key, session_id=None, workspace=None: Session(
+        key, session_id or "current", workspace or Path("/tmp/workspace")
+    )
+    modules["faltoobot.sessions"].list_sessions = lambda _key: [
+        {"id": "current", "name": "current - 1 Jan"},
+        {"id": "older", "name": "older - 1 Jan"},
+    ]
+    modules["faltoobot.sessions"].set_session_name = lambda session, name: setattr(
+        session, "session_id", name or "generated"
+    )
 
     async def append_user_turn(_session, question):
         return None
@@ -69,6 +91,29 @@ def load_bridge():
 
 
 class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
+
+    def test_session_commands_use_workspace_chat_key(self):
+        """Scenario: Session commands operate on the current workspace chat key."""
+        bridge = load_bridge()
+        renamed = []
+
+        # Given the bridge is pointed at a Git workspace.
+        bridge.set_session_name = lambda session, name: (renamed.append((session.chat_key, name)), setattr(session, "session_id", name))
+
+        # When listing, naming, resetting, and resuming sessions.
+        with redirect_stdout(io.StringIO()):
+            sessions_result = bridge.sessions_list(Path("/tmp/project"))
+            name_result = bridge.name_session(Path("/tmp/project"), "Focused")
+            reset_result = bridge.reset_session(Path("/tmp/project"))
+            resume_result = bridge.resume_session(Path("/tmp/project"), "older")
+
+        # Then each command stays under the workspace-derived chat key.
+        self.assertEqual(sessions_result, 0)
+        self.assertEqual(renamed, [("/private/tmp/project", "Focused")])
+        self.assertEqual(name_result, 0)
+        self.assertEqual(reset_result, 0)
+        self.assertEqual(resume_result, 0)
+
     async def test_manual_slash_command_is_submitted_as_plain_text(self):
         """Scenario: Manually typed slash commands are not expanded by the bridge."""
         bridge = load_bridge()

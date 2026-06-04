@@ -362,7 +362,32 @@
                              (eq (overlay-get overlay 'face) 'faltoo-chat-assistant-face))
                            (overlays-at (point)))))))
 
-(ert-deftest faltoo-insert-slash-command-pastes-selected-prompt-template ()
+
+(ert-deftest faltoo-command-and-prompt-template-bindings-are-separate ()
+  "Scenario: Commands and saved prompt templates use separate keybindings."
+  ;; Then command completion is on C-c /, while template insertion is on C-c p.
+  (dolist (map (list faltoo-chat-mode-map faltoo-ask-mode-map))
+    (should (eq (lookup-key map (kbd "C-c /")) #'faltoo-run-session-command))
+    (should (eq (lookup-key map (kbd "C-c p")) #'faltoo-insert-prompt-template))))
+
+(ert-deftest faltoo-run-session-command-runs-built-in-command ()
+  "Scenario: Session commands run from their own command picker."
+  (with-temp-buffer
+    (let (reset-called)
+      ;; Given built-in session commands are available in completion.
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (&rest _args) "/reset — start a fresh session"))
+                ((symbol-function 'faltoo-session-reset)
+                 (lambda () (setq reset-called t))))
+
+        ;; When choosing /reset from the command picker.
+        (faltoo-run-session-command))
+
+      ;; Then no prompt text is inserted; the command executes directly.
+      (should reset-called)
+      (should (string-empty-p (buffer-string))))))
+
+(ert-deftest faltoo-insert-prompt-template-pastes-selected-template ()
   "Scenario: Picking a saved prompt inserts its contents, not the slash command."
   (with-temp-buffer
     ;; Given saved prompts are available from FaltooBot.
@@ -374,8 +399,8 @@
               ((symbol-function 'completing-read)
                (lambda (&rest _args) "/commit — Write a commit")))
 
-      ;; When choosing the slash command from completion.
-      (faltoo-insert-slash-command))
+      ;; When choosing the prompt template from completion.
+      (faltoo-insert-prompt-template))
 
     ;; Then the reusable prompt text is pasted for review/editing.
     (should (equal (buffer-string) "Please write a focused commit message."))))
@@ -557,6 +582,26 @@
               'secondary-selection))
   (should (eq (face-attribute 'faltoo-chat-tool-face :inherit nil)
               'font-lock-comment-face)))
+
+(ert-deftest faltoo-chat-send-submits-typed-slash-text-as-prompt ()
+  "Scenario: Typed slash text in the transcript is submitted as a normal prompt."
+  (let (captured-text reset-called)
+    ;; Given the transcript prompt contains text that looks like a command.
+    (with-current-buffer (faltoo-chat-render nil)
+      (insert "/reset")
+
+      ;; When sending the prompt.
+      (cl-letf (((symbol-function 'faltoo-session-reset)
+                 (lambda () (setq reset-called t)))
+                ((symbol-function 'faltoo-request-ensure-idle)
+                 (lambda ()))
+                ((symbol-function 'faltoo-request-message)
+                 (lambda (text &rest _args) (setq captured-text text))))
+        (faltoo-chat-send)))
+
+    ;; Then submit remains honest: text is sent to the model, not intercepted.
+    (should (equal captured-text "/reset"))
+    (should-not reset-called)))
 
 (ert-deftest faltoo-chat-send-submits-current-user-prompt ()
   "Scenario: Sending from transcript submits only the current prompt."

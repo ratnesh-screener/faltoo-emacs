@@ -258,7 +258,8 @@ C-c C-r   refresh from FaltooBot session
 C-c C-p   previous persisted user message
 C-c C-n   next persisted user message
 C-c C-f   insert file reference
-C-c /     paste saved prompt template
+C-c /     run session command
+C-c p     paste saved prompt template
 ```
 
 Because the transcript is editable, avoid overusing plain single-letter keys where they interfere with normal text entry. Plain keys are acceptable only when point is not in editable prompt text or if the mode design makes that safe.
@@ -274,7 +275,7 @@ Preferred UI:
 - `C-c C-c` sends immediately.
 - `C-c C-k`/`C-g` cancels.
 - `C-c C-f` inserts a file reference.
-- `C-c /` pastes a saved prompt template.
+- `C-c /` runs built-in session commands. `C-c p` pastes a saved prompt template.
 
 Ask commands:
 
@@ -320,9 +321,13 @@ Behavior:
 - `C-c C-c` sends the typed follow-up as a plain chat message; `C-g`/`C-c C-k` closes. Do not bind plain `q` globally because popup modes share editable text behavior.
 - This is for quick recall; full history remains in the repo transcript.
 
-## Saved Prompt Slash Commands
+## Commands and Saved Prompts
 
-`C-c /` uses Emacs completion to choose a saved Faltoo prompt and paste its template text into the active prompt buffer. This mirrors FaltooChat's saved prompts while keeping the Emacs buffer editable before submission. Manually typed slash commands are sent as plain text; prompt expansion only happens through the picker.
+Commands and prompt templates are separate so prompt submission stays honest:
+
+- `C-c /` opens command completion for built-in session commands: `/reset`, `/resume`, `/name`.
+- `C-c p` opens saved prompt completion and pastes the full template text into the active prompt buffer for editing.
+- Manually typed slash text is submitted to the model as plain prompt text.
 
 ## File References
 
@@ -351,31 +356,40 @@ This should work in:
 
 Because it uses `completing-read`, it automatically benefits from Vertico, Ivy, Helm, Consult, Icomplete, etc.
 
-## Slash Commands
+## Slash Command Implementation
 
-Use the Faltoo bridge command:
+Bridge commands:
 
 ```text
 slash-commands
+reset-session
+resume-session
+name-session
+list-sessions
+session-info
 ```
 
-Command:
+Elisp commands:
 
 ```elisp
-faltoo-insert-slash-command
+faltoo-run-session-command
+faltoo-insert-prompt-template
 ```
 
 Behavior:
 
-- Fetch saved FaltooBot slash commands.
-- Use `completing-read`.
-- Paste the selected prompt template into the prompt.
-- Send manually typed slash commands as plain text; use `C-c /` for prompt expansion.
+- Add Emacs-local built-ins for `/reset`, `/resume`, and `/name`.
+- Fetch saved FaltooBot prompt templates through `slash-commands`.
+- Use `completing-read` for command/session/template selection.
+- Run session commands directly from `C-c /`.
+- Paste saved prompt templates from `C-c p`.
+- Do not intercept typed slash text during prompt submission.
 
-Initial key in chat/comment buffers:
+Initial keys in transcript and Ask/last-response buffers:
 
 ```text
 C-c /
+C-c p
 ```
 
 Do not overload literal `/` in MVP.

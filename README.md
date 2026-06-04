@@ -66,14 +66,15 @@ H s   stage current hunk
 H r   revert current hunk
 ```
 
-In Ask/comment posframes:
+In Ask/last-response posframes:
 
 ```text
 C-c C-c   send/save/follow-up
 C-c C-k   cancel/close
 C-g       close
 C-c C-f   insert file reference
-C-c /     paste saved prompt template, Ask/last-response only
+C-c /     run session command
+C-c p     paste saved prompt template
 ```
 
 In workspace transcript buffers, named like `*Faltoo: repo-name*`:
@@ -85,7 +86,8 @@ C-c C-l   load more transcript turns; numeric prefix sets exact turn count
 C-c C-p   previous user message
 C-c C-n   next user message
 C-c C-f   insert file reference
-C-c /     paste saved prompt template
+C-c /     run session command
+C-c p     paste saved prompt template
 ```
 
 In `*Faltoo Comments*`:
@@ -107,6 +109,25 @@ M-x faltoo-reload
 ```
 
 This reloads all Faltoo `.el` files in dependency order, so restarting Emacs should not be necessary.
+
+## Session commands and saved prompts
+
+Commands and prompt templates are deliberately separate:
+
+```text
+C-c /     run a built-in FaltooChat session command
+C-c p     paste a saved prompt template for editing
+```
+
+Built-in commands:
+
+```text
+/reset        start a fresh session for the current Git workspace
+/resume       pick another session for the current Git workspace
+/name         rename the current session; empty name clears it
+```
+
+Manually typed slash text is sent to the LLM as normal prompt text. Use `C-c /` for session commands.
 
 ## Notes
 

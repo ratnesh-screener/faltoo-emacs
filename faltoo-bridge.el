@@ -121,6 +121,32 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
 (defun faltoo-bridge-slash-commands ()
   (alist-get 'commands (faltoo-bridge-call-json (list "slash-commands"))))
 
+(defun faltoo-bridge-session-info (&optional workspace)
+  "Return current Faltoo session info for WORKSPACE."
+  (faltoo-bridge-call-json (list "session-info" "--workspace" (or workspace (faltoo-workspace)))))
+
+(defun faltoo-bridge-reset-session (&optional workspace)
+  "Start a fresh Faltoo session for WORKSPACE and return session info."
+  (faltoo-bridge-call-json (list "reset-session" "--workspace" (or workspace (faltoo-workspace)))))
+
+(defun faltoo-bridge-name-session (name &optional workspace)
+  "Rename current Faltoo session to NAME and return session info."
+  (faltoo-bridge-call-json
+   (list "name-session" "--workspace" (or workspace (faltoo-workspace)))
+   (json-serialize (list (cons 'name name)))))
+
+(defun faltoo-bridge-list-sessions (&optional workspace)
+  "Return sessions for WORKSPACE's Faltoo chat key."
+  (alist-get 'sessions
+             (faltoo-bridge-call-json
+              (list "list-sessions" "--workspace" (or workspace (faltoo-workspace))))))
+
+(defun faltoo-bridge-resume-session (session-id &optional workspace)
+  "Resume SESSION-ID for WORKSPACE and return session info."
+  (faltoo-bridge-call-json
+   (list "resume-session" "--workspace" (or workspace (faltoo-workspace)))
+   (json-serialize (list (cons 'session_id session-id)))))
+
 (defun faltoo-bridge-messages-path (&optional workspace)
   (string-trim (faltoo-bridge-call-raw (list "messages-path" "--workspace" (or workspace (faltoo-workspace))))))
 

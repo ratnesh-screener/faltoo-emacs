@@ -83,6 +83,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Faltoo workspace/session follows the current buffer's Git root. Popup and transcript buffers set `default-directory` to that root so sends continue in the correct repo session.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
+- `C-c /` runs built-in session commands (`/reset`, `/resume`, `/name`); `C-c p` inserts saved prompt templates. Typed slash text submits as a normal prompt.
 - Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup.
 - Review buffers are read-only, use direct single-key review bindings, and show a header line with `Faltoo[1/N]`.
 - `diff-hl` is configured buffer-locally in review buffers for full-line highlights.

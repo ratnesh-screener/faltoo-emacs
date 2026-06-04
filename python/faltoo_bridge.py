@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+from uuid import uuid4
 import sys
 from typing import Any
 
@@ -22,12 +23,32 @@ from faltoobot.sessions import (  # ty: ignore[unresolved-import]
     get_dir_chat_key,
     get_messages,
     get_session,
+    list_sessions,
+    set_session_name,
 )
 
 
+def _workspace(workspace: Path) -> Path:
+    return workspace.expanduser().resolve()
+
+
+def _chat_key(workspace: Path) -> str:
+    return get_dir_chat_key(_workspace(workspace))
+
+
 def _session(workspace: Path) -> Session:
-    workspace = workspace.expanduser().resolve()
-    return get_session(get_dir_chat_key(workspace), workspace=workspace)
+    workspace = _workspace(workspace)
+    return get_session(_chat_key(workspace), workspace=workspace)
+
+
+def _session_payload(session: Session) -> dict[str, str]:
+    messages = get_messages(session)
+    return {
+        "session_id": session.session_id,
+        "chat_key": session.chat_key,
+        "workspace": str(messages["workspace"]),
+        "messages_path": str(session.messages_path),
+    }
 
 
 def _tool_summary(text: str) -> str:
@@ -136,6 +157,36 @@ BUILTIN_SLASH_COMMANDS = frozenset(
 )
 
 
+def session_info(workspace: Path) -> int:
+    print(json.dumps(_session_payload(_session(workspace)), ensure_ascii=False))
+    return 0
+
+
+def reset_session(workspace: Path) -> int:
+    workspace = _workspace(workspace)
+    session = get_session(_chat_key(workspace), session_id=str(uuid4()), workspace=workspace)
+    print(json.dumps(_session_payload(session), ensure_ascii=False))
+    return 0
+
+
+def name_session(workspace: Path, name: str) -> int:
+    session = _session(workspace)
+    set_session_name(session, name)
+    print(json.dumps(_session_payload(session), ensure_ascii=False))
+    return 0
+
+
+def sessions_list(workspace: Path) -> int:
+    print(json.dumps({"sessions": list_sessions(_chat_key(workspace))}, ensure_ascii=False))
+    return 0
+
+
+def resume_session(workspace: Path, session_id: str) -> int:
+    session = get_session(_chat_key(workspace), session_id=session_id)
+    print(json.dumps(_session_payload(session), ensure_ascii=False))
+    return 0
+
+
 def slash_commands() -> int:
     commands = SlashCommandStore(excluded_commands=BUILTIN_SLASH_COMMANDS).commands()
     payload = [
@@ -221,6 +272,21 @@ def main() -> int:
     unstaged_parser = sub.add_parser("unstaged-files")
     unstaged_parser.add_argument("--workspace", default=str(Path.cwd()))
 
+    session_info_parser = sub.add_parser("session-info")
+    session_info_parser.add_argument("--workspace", default=str(Path.cwd()))
+
+    reset_session_parser = sub.add_parser("reset-session")
+    reset_session_parser.add_argument("--workspace", default=str(Path.cwd()))
+
+    name_session_parser = sub.add_parser("name-session")
+    name_session_parser.add_argument("--workspace", default=str(Path.cwd()))
+
+    list_sessions_parser = sub.add_parser("list-sessions")
+    list_sessions_parser.add_argument("--workspace", default=str(Path.cwd()))
+
+    resume_session_parser = sub.add_parser("resume-session")
+    resume_session_parser.add_argument("--workspace", default=str(Path.cwd()))
+
     sub.add_parser("append-review")
     sub.add_parser("append-message")
     sub.add_parser("slash-commands")
@@ -232,6 +298,18 @@ def main() -> int:
         return messages_path(Path(args.workspace))
     if args.command == "unstaged-files":
         return unstaged_files(Path(args.workspace))
+    if args.command == "session-info":
+        return session_info(Path(args.workspace))
+    if args.command == "reset-session":
+        return reset_session(Path(args.workspace))
+    if args.command == "name-session":
+        payload = _stdin_payload()
+        return name_session(Path(args.workspace), str(payload.get("name") or ""))
+    if args.command == "list-sessions":
+        return sessions_list(Path(args.workspace))
+    if args.command == "resume-session":
+        payload = _stdin_payload()
+        return resume_session(Path(args.workspace), str(payload.get("session_id") or ""))
     if args.command == "append-review":
         payload = _stdin_payload()
         workspace = Path(str(payload.get("workspace") or Path.cwd()))
