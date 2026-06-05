@@ -93,7 +93,7 @@
          (remhash workspace faltoo-request-rate-limits)
          (faltoo-set-workspace-submitting workspace nil)
          (faltoo-set-status (if ok "Faltoo complete" "Faltoo failed"))
-         (faltoo-reload-review-buffers)
+         (faltoo-reload-workspace-buffers workspace)
          (faltoo-chat-finish-stream workspace elapsed rate-limit)
          (when (and ok popup-buffer rate-limit)
            (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit))))

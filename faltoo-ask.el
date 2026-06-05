@@ -24,18 +24,12 @@
   "Mode for asking Faltoo about code.")
 
 (defun faltoo-ask--context ()
-  "Return context from active region or current line."
-  (if (use-region-p)
-      (let ((beg (region-beginning))
-            (end (region-end)))
-        (list :file (faltoo-relative-file (faltoo-current-file))
-              :start (line-number-at-pos beg)
-              :end (line-number-at-pos end)
-              :code (buffer-substring-no-properties beg end)))
+  "Return full-line context from active region or current line."
+  (let ((range (faltoo-current-line-range)))
     (list :file (faltoo-relative-file (faltoo-current-file))
-          :start (line-number-at-pos)
-          :end (line-number-at-pos)
-          :code (string-trim-right (thing-at-point 'line t)))))
+          :start (nth 2 range)
+          :end (nth 3 range)
+          :code (nth 4 range))))
 
 (defun faltoo-ask--insert-prompt (context)
   "Insert Ask popup content for CONTEXT."

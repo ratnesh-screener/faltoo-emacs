@@ -709,24 +709,48 @@
        (should (equal (plist-get context :end) 2))
        (should (equal (plist-get context :code) "two"))))))
 
-(ert-deftest faltoo-ask-uses-active-region-when-present ()
-  "Scenario: Ask uses the active region when one is selected."
+(ert-deftest faltoo-ask-uses-full-lines-for-active-region ()
+  "Scenario: Ask expands a partial active region to complete source lines."
   (faltoo-test--with-temp-git-file
    '("one" "two" "three")
    (lambda (_file _root)
-     ;; Given lines 1-2 are selected.
+     ;; Given text inside lines 1-3 is selected, not whole lines.
      (goto-char (point-min))
+     (forward-char 1)
      (set-mark (point))
      (forward-line 2)
+     (forward-char 2)
      (activate-mark)
 
      ;; When Ask builds context.
      (let ((context (faltoo-ask--context)))
 
-       ;; Then selected code is included instead of the current line.
+       ;; Then the snippet contains complete lines 1-3.
        (should (equal (plist-get context :start) 1))
        (should (equal (plist-get context :end) 3))
-       (should (equal (plist-get context :code) "one\ntwo\n"))))))
+       (should (equal (plist-get context :code) "one\ntwo\nthree"))))))
+
+(ert-deftest faltoo-comment-uses-full-lines-for-active-region ()
+  "Scenario: Review comments expand a partial active region to complete source lines."
+  (faltoo-test--with-temp-git-file
+   '("one" "two" "three")
+   (lambda (_file _root)
+     ;; Given text inside lines 2-3 is selected, not whole lines.
+     (goto-char (point-min))
+     (forward-line 1)
+     (forward-char 1)
+     (set-mark (point))
+     (forward-line 1)
+     (forward-char 2)
+     (activate-mark)
+
+     ;; When comment range is built.
+     (let ((range (faltoo-comments--range)))
+
+       ;; Then the comment snippet contains complete lines 2-3.
+       (should (equal (nth 2 range) 2))
+       (should (equal (nth 3 range) 3))
+       (should (equal (nth 4 range) "two\nthree"))))))
 
 (ert-deftest faltoo-ask-popup-separates-sections-with-horizontal-rules ()
   "Scenario: Ask popup sections are visually separated."
@@ -1694,7 +1718,42 @@
     (should (faltoo-has-pending-work-p))
     (should (equal (faltoo-pending-work-labels) '("1 pending review comment(s)")))))
 
-;;; faltoo-behavior-test.el ends here
+
+;;; Buffer reload specs
+
+(ert-deftest faltoo-reload-workspace-buffers-refreshes-unmodified-stale-buffers ()
+  "Scenario: Assistant-edited files refresh in Emacs before the user saves."
+  (faltoo-test--with-temp-git-file
+   '("old")
+   (lambda (file root)
+     ;; Given an unmodified source buffer is stale because the file changed on disk.
+     (should (equal (buffer-string) "old"))
+     (with-temp-file file (insert "new"))
+
+     ;; When Faltoo reloads buffers after the request completes.
+     (faltoo-reload-workspace-buffers root)
+
+     ;; Then the buffer is refreshed instead of later triggering a save conflict.
+     (should (equal (buffer-string) "new"))
+     (should-not (buffer-modified-p)))))
+
+(ert-deftest faltoo-reload-workspace-buffers-preserves-unsaved-local-edits ()
+  "Scenario: Reloading assistant edits does not discard unsaved user edits."
+  (faltoo-test--with-temp-git-file
+   '("old")
+   (lambda (file root)
+     ;; Given the user has local unsaved edits and the file also changed on disk.
+     (erase-buffer)
+     (insert "local edit")
+     (set-buffer-modified-p t)
+     (with-temp-file file (insert "assistant edit"))
+
+     ;; When Faltoo reloads workspace buffers.
+     (faltoo-reload-workspace-buffers root)
+
+     ;; Then local unsaved edits are left alone for Emacs' normal conflict handling.
+     (should (equal (buffer-string) "local edit"))
+     (should (buffer-modified-p)))))
 
 (ert-deftest faltoo-reload-review-buffers-refreshes-review-ui-state ()
   "Scenario: Reloading assistant-edited review buffers refreshes overlays and diff highlights."
@@ -1711,3 +1770,6 @@
           ;; Then review UI refresh hooks run once at the architecture boundary.
           (should refreshed))
       (setq faltoo-after-reload-review-buffers-hook nil))))
+
+
+;;; faltoo-behavior-test.el ends here

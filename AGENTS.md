@@ -79,6 +79,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - `C-c f h` opens the current Git repo's transcript/history.
 - In normal source buffers, `C-c f x` stops current review session.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
+- Ask/comment snippets always expand to full source lines: current line when no region, or all lines touched by the active region.
 - Ask always rebuilds from the active region/current line when invoked; responses stream in the posframe and current repo transcript. Last-response popups preserve follow-up drafts across close/reopen.
 - Faltoo workspace/session follows the current buffer's Git root. Popup and transcript buffers set `default-directory` to that root so sends continue in the correct repo session.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.

@@ -56,6 +56,28 @@ The active workspace is always recomputed from `default-directory'.")
   "Return FILE relative to the active workspace."
   (file-relative-name (file-truename file) (faltoo-workspace)))
 
+
+(defun faltoo-current-line-range ()
+  "Return full-line range for active region or current line.
+The result is (BEG END START-LINE END-LINE CODE)."
+  (if (use-region-p)
+      (let* ((beg (region-beginning))
+             (end (region-end))
+             (last-pos (if (and (> end beg)
+                                (save-excursion (goto-char end) (bolp)))
+                           (1- end)
+                         end))
+             (line-beg (save-excursion (goto-char beg) (line-beginning-position)))
+             (line-end (save-excursion (goto-char last-pos) (line-end-position))))
+        (list line-beg line-end
+              (line-number-at-pos line-beg)
+              (line-number-at-pos last-pos)
+              (buffer-substring-no-properties line-beg line-end)))
+    (let ((beg (line-beginning-position))
+          (end (line-end-position)))
+      (list beg end (line-number-at-pos) (line-number-at-pos)
+            (buffer-substring-no-properties beg end)))))
+
 (defun faltoo-current-file ()
   "Return the current buffer file or signal an error."
   (unless buffer-file-name
@@ -84,15 +106,23 @@ The active workspace is always recomputed from `default-directory'.")
 (unless (member '(:eval (faltoo-status-string)) global-mode-string)
   (add-to-list 'global-mode-string '(:eval (faltoo-status-string)) t))
 
-(defun faltoo-reload-review-buffers ()
-  "Reload live Faltoo review buffers from disk and refresh review UI."
-  (dolist (file faltoo-review-files)
-    (let ((buf (find-buffer-visiting file)))
-      (when buf
-        (with-current-buffer buf
+(defun faltoo-reload-workspace-buffers (workspace)
+  "Reload unmodified file-visiting buffers under WORKSPACE from disk."
+  (let ((root (file-name-as-directory (file-truename workspace))))
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (and buffer-file-name
+                   (file-exists-p buffer-file-name)
+                   (string-prefix-p root (file-truename buffer-file-name))
+                   (not (buffer-modified-p))
+                   (not (verify-visited-file-modtime)))
           (let ((buffer-read-only nil))
             (revert-buffer :ignore-auto :noconfirm))))))
   (run-hooks 'faltoo-after-reload-review-buffers-hook))
+
+(defun faltoo-reload-review-buffers ()
+  "Reload live Faltoo review buffers from disk and refresh review UI."
+  (faltoo-reload-workspace-buffers (faltoo-workspace)))
 
 (provide 'faltoo-core)
 ;;; faltoo-core.el ends here

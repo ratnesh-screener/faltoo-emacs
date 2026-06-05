@@ -293,6 +293,7 @@ Streaming response behavior:
 - Batched review-comment submissions should not stream full responses in a popup by default; they should stream to the current repo transcript and show lightweight progress in the mode-line/minibuffer.
 - Background/tool-heavy requests should use the current repo transcript for full stream details and lightweight status near code.
 - Every exchange should be appended to/persisted in the current repo's FaltooBot session and visible in that repo's transcript history.
+- After a request completes, refresh unmodified file-visiting buffers under that workspace from disk. This avoids Emacs stale-file save prompts when the assistant edits files externally. Leave modified buffers untouched so native conflict handling protects user edits.
 - Ask popups add an editable `## Follow-up` section after a successful response. `C-c C-c` sends the follow-up while reusing the original code context. Do not bind plain `q` in editable popups.
 
 Stream location policy:

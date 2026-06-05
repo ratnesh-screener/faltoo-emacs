@@ -136,6 +136,7 @@ Manually typed slash text is sent to the LLM as normal prompt text. Use `C-c /` 
 - Ask always rebuilds from the active region/current line and streams responses in the centered posframe and transcript. The last-response popup preserves follow-up drafts after close/reopen.
 - Completed assistant transcript footers include elapsed time and the latest streamed Codex limit when available, e.g. `> Assistant took: 20.0s` / `> Remaining limit: 5h = 98%`.
 - Review-comment submission streams to the current repo transcript and status/mode-line.
+- After a Faltoo request finishes, unmodified open buffers in that repo are refreshed from disk so assistant edits do not trigger stale-file save prompts. Buffers with unsaved local edits are left alone.
 - Faltoo never auto-stages changes.
 
 ## Quit guard

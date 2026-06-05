@@ -43,13 +43,7 @@
   (length faltoo-comments))
 
 (defun faltoo-comments--range ()
-  (if (use-region-p)
-      (let ((beg (region-beginning)) (end (region-end)))
-        (list beg end (line-number-at-pos beg) (line-number-at-pos end)
-              (buffer-substring-no-properties beg end)))
-    (let ((beg (line-beginning-position)) (end (line-end-position)))
-      (list beg end (line-number-at-pos) (line-number-at-pos)
-            (buffer-substring-no-properties beg end)))))
+  (faltoo-current-line-range))
 
 (defun faltoo-comments--existing (path start end)
   (cl-find-if (lambda (comment)
