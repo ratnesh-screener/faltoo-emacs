@@ -41,6 +41,7 @@ def install_faltoobot_stubs() -> None:
         "faltoobot.faltoochat.slash_commands": types.ModuleType("faltoobot.faltoochat.slash_commands"),
         "faltoobot.faltoochat.messages_rendering": types.ModuleType("faltoobot.faltoochat.messages_rendering"),
         "faltoobot.faltoochat.stream": types.ModuleType("faltoobot.faltoochat.stream"),
+        "faltoobot.config": types.ModuleType("faltoobot.config"),
         "faltoobot.sessions": types.ModuleType("faltoobot.sessions"),
     }
 
@@ -51,6 +52,11 @@ def install_faltoobot_stubs() -> None:
     modules["faltoobot.faltoochat.slash_commands"].SlashCommandStore = SlashCommandStore
     modules["faltoobot.faltoochat.messages_rendering"].get_item_text = lambda _item: None
     modules["faltoobot.faltoochat.stream"].get_event_text = lambda event: event
+    modules["faltoobot.config"].build_config = lambda: {"config": "ok"}
+    modules["faltoobot.config"].config_status_text = (
+        lambda _config, last_usage, *, session_id=None, workspace=None:
+        f"Faltoobot status\n\nSession\n• session_id={session_id}\n• workspace={workspace}\n\nSession usage\n• last_usage={last_usage}"
+    )
     modules["faltoobot.sessions"].Session = Session
     modules["faltoobot.sessions"].get_dir_chat_key = lambda workspace: str(workspace)
     modules["faltoobot.sessions"].get_messages = lambda session: {
@@ -60,6 +66,7 @@ def install_faltoobot_stubs() -> None:
     modules["faltoobot.sessions"].get_session = lambda key, session_id=None, workspace=None: Session(
         key, session_id or "current", workspace or Path("/tmp/workspace")
     )
+    modules["faltoobot.sessions"].get_last_usage = lambda _session: {"input_tokens": 1}
     modules["faltoobot.sessions"].list_sessions = lambda _key: [
         {"id": "current", "name": "current - 1 Jan"},
         {"id": "older", "name": "older - 1 Jan"},
@@ -106,6 +113,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             name_result = bridge.name_session(Path("/tmp/project"), "Focused")
             reset_result = bridge.reset_session(Path("/tmp/project"))
             resume_result = bridge.resume_session(Path("/tmp/project"), "older")
+            status_result = bridge.session_status(Path("/tmp/project"))
 
         # Then each command stays under the workspace-derived chat key.
         self.assertEqual(sessions_result, 0)
@@ -113,6 +121,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(name_result, 0)
         self.assertEqual(reset_result, 0)
         self.assertEqual(resume_result, 0)
+        self.assertEqual(status_result, 0)
 
     async def test_manual_slash_command_is_submitted_as_plain_text(self):
         """Scenario: Manually typed slash commands are not expanded by the bridge."""

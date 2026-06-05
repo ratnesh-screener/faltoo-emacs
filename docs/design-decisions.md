@@ -326,7 +326,8 @@ Behavior:
 
 Commands and prompt templates are separate so prompt submission stays honest:
 
-- `C-c /` opens command completion for built-in session commands: `/reset`, `/resume`, `/name`.
+- `C-c /` opens command completion for built-in session commands: `/reset`, `/resume`, `/name`, `/tree`, `/status`.
+- `/tree` opens the current session `messages.json`; `/status` renders FaltooBot config/session/usage status in a temporary popup.
 - `C-c p` opens saved prompt completion and pastes the full template text into the active prompt buffer for editing.
 - Manually typed slash text is submitted to the model as plain prompt text.
 
@@ -379,7 +380,7 @@ faltoo-insert-prompt-template
 
 Behavior:
 
-- Add Emacs-local built-ins for `/reset`, `/resume`, and `/name`.
+- Add Emacs-local built-ins for `/reset`, `/resume`, `/name`, `/tree`, and `/status`.
 - Fetch saved FaltooBot prompt templates through `slash-commands`.
 - Use `completing-read` for command/session/template selection.
 - Run session commands directly from `C-c /`.

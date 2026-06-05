@@ -2,6 +2,7 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'json)
 (require 'faltoo-core)
 (require 'faltoo-bridge)
 (require 'faltoo-faces)
@@ -58,7 +59,9 @@
 (defconst faltoo-session-commands
   '(((command . "/name") (preview . "name the current session"))
     ((command . "/reset") (preview . "start a fresh session"))
-    ((command . "/resume") (preview . "resume another session")))
+    ((command . "/resume") (preview . "resume another session"))
+    ((command . "/status") (preview . "show Faltoo status"))
+    ((command . "/tree") (preview . "open current session messages.json")))
   "Built-in Faltoo session commands handled by Emacs.")
 
 (defun faltoo-session-reset ()
@@ -76,6 +79,57 @@
     (when (fboundp 'faltoo-chat-refresh)
       (faltoo-chat-refresh))
     (message "Faltoo session named: %s" (alist-get 'session_id info))))
+
+
+(defun faltoo-session-tree ()
+  "Open the current Faltoo session messages JSON file."
+  (interactive)
+  (find-file (faltoo-bridge-messages-path (faltoo-workspace))))
+
+(defun faltoo-session-status--pretty-json (text)
+  "Return pretty JSON for TEXT, or TEXT when parsing fails."
+  (with-temp-buffer
+    (insert text)
+    (condition-case nil
+        (progn
+          (json-pretty-print (point-min) (point-max))
+          (string-trim (buffer-string)))
+      (error text))))
+
+(defun faltoo-session-status--markdown (text)
+  "Return pretty Markdown for Faltoo status TEXT."
+  (mapconcat
+   (lambda (line)
+     (cond
+      ((string-empty-p line) "")
+      ((string= line "Faltoobot status") "")
+      ((member line '("Session" "Config status" "Session usage"))
+       (format "---\n## %s" line))
+      ((string-prefix-p "• last_usage=" line)
+       (concat "- last_usage:\n```json\n"
+               (faltoo-session-status--pretty-json (substring line 13))
+               "\n```"))
+      ((string-prefix-p "• " line)
+       (concat "- " (substring line 2)))
+      (t line)))
+   (split-string text "\n")
+   "\n"))
+
+(defun faltoo-session-status ()
+  "Show current Faltoo status in a temporary popup."
+  (interactive)
+  (let* ((status (faltoo-bridge-status (faltoo-workspace)))
+         (buf (faltoo-popup-buffer "*Faltoo Status*" #'faltoo-popup-mode)))
+    (with-current-buffer buf
+      (setq default-directory (file-name-as-directory (alist-get 'workspace status)))
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (faltoo-compose-insert-title "Faltoo Status")
+        (insert "\n" (faltoo-session-status--markdown (alist-get 'text status)))
+        (faltoo-compose-insert-help "C-c C-k/C-g close")
+        (goto-char (point-min))
+        (setq buffer-read-only t)))
+    (faltoo-popup-show buf 100 30)))
 
 (defun faltoo-session-resume (&optional session-id)
   "Resume Faltoo SESSION-ID for the current workspace."
@@ -112,7 +166,9 @@
     (pcase command
       ("/reset" (faltoo-session-reset))
       ("/name" (call-interactively #'faltoo-session-name))
-      ("/resume" (faltoo-session-resume)))))
+      ("/resume" (faltoo-session-resume))
+      ("/status" (faltoo-session-status))
+      ("/tree" (faltoo-session-tree)))))
 
 (defun faltoo-insert-file-reference ()
   "Insert a backtick file reference using Git tracked/untracked files."

@@ -125,6 +125,8 @@ Built-in commands:
 /reset        start a fresh session for the current Git workspace
 /resume       pick another session for the current Git workspace
 /name         rename the current session; empty name clears it
+/tree         open the current session messages.json
+/status       show Faltoo status in a temporary popup
 ```
 
 Manually typed slash text is sent to the LLM as normal prompt text. Use `C-c /` for session commands.

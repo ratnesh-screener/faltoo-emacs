@@ -387,6 +387,47 @@
       (should reset-called)
       (should (string-empty-p (buffer-string))))))
 
+(ert-deftest faltoo-session-tree-opens-current-messages-json ()
+  "Scenario: The /tree command opens the current session messages JSON file."
+  (let (opened-file)
+    ;; Given the command picker selects /tree.
+    (cl-letf (((symbol-function 'faltoo-workspace) (lambda () "/repo"))
+              ((symbol-function 'faltoo-bridge-messages-path)
+               (lambda (_workspace) "/repo/.faltoobot/messages.json"))
+              ((symbol-function 'find-file)
+               (lambda (file) (setq opened-file file))))
+
+      ;; When running the tree command.
+      (faltoo-session-tree))
+
+    ;; Then the current session's messages.json is opened directly.
+    (should (equal opened-file "/repo/.faltoobot/messages.json"))))
+
+(ert-deftest faltoo-session-status-shows-pretty-popup ()
+  "Scenario: The /status command renders Faltoo status in a popup."
+  (let (shown-buffer)
+    ;; Given the bridge returns FaltooChat's status text.
+    (cl-letf (((symbol-function 'faltoo-workspace) (lambda () "/repo"))
+              ((symbol-function 'faltoo-bridge-status)
+               (lambda (_workspace)
+                 '((workspace . "/repo")
+                   (text . "Faltoobot status\n\nVersion: test\n\nSession\n• session_id=\"abc\"\n\nConfig status\n• openai_model=\"gpt\"\n\nSession usage\n• last_usage={\"input_tokens\":1}"))))
+              ((symbol-function 'faltoo-popup-show)
+               (lambda (buffer &rest _args) (setq shown-buffer buffer))))
+
+      ;; When running the status command.
+      (faltoo-session-status))
+
+    ;; Then the temporary popup contains Markdown sections and bullets.
+    (with-current-buffer shown-buffer
+      (should (string-match-p "# Faltoo Status" (buffer-string)))
+      (should (string-match-p "## Session" (buffer-string)))
+      (should (string-match-p "- session_id=\"abc\"" (buffer-string)))
+      (should (string-match-p "## Config status" (buffer-string)))
+      (should (string-match-p "- openai_model=\"gpt\"" (buffer-string)))
+      (should (string-match-p "```json" (buffer-string)))
+      (should (string-match-p "\"input_tokens\": 1" (buffer-string))))))
+
 (ert-deftest faltoo-insert-prompt-template-pastes-selected-template ()
   "Scenario: Picking a saved prompt inserts its contents, not the slash command."
   (with-temp-buffer

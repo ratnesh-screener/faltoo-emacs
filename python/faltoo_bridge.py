@@ -16,11 +16,13 @@ from faltoobot.faltoochat.review_api import Review, reviews_prompt  # ty: ignore
 from faltoobot.faltoochat.slash_commands import SlashCommandStore  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.messages_rendering import get_item_text  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.stream import get_event_text  # ty: ignore[unresolved-import]
+from faltoobot.config import build_config, config_status_text  # ty: ignore[unresolved-import]
 from faltoobot.sessions import (  # ty: ignore[unresolved-import]
     Session,
     append_user_turn,
     get_answer_streaming,
     get_dir_chat_key,
+    get_last_usage,
     get_messages,
     get_session,
     list_sessions,
@@ -187,6 +189,19 @@ def resume_session(workspace: Path, session_id: str) -> int:
     return 0
 
 
+def session_status(workspace: Path) -> int:
+    session = _session(workspace)
+    payload = _session_payload(session)
+    payload["text"] = config_status_text(
+        build_config(),
+        get_last_usage(session),
+        session_id=session.session_id,
+        workspace=payload["workspace"],
+    )
+    print(json.dumps(payload, ensure_ascii=False))
+    return 0
+
+
 def slash_commands() -> int:
     commands = SlashCommandStore(excluded_commands=BUILTIN_SLASH_COMMANDS).commands()
     payload = [
@@ -287,6 +302,9 @@ def main() -> int:
     resume_session_parser = sub.add_parser("resume-session")
     resume_session_parser.add_argument("--workspace", default=str(Path.cwd()))
 
+    status_parser = sub.add_parser("status")
+    status_parser.add_argument("--workspace", default=str(Path.cwd()))
+
     sub.add_parser("append-review")
     sub.add_parser("append-message")
     sub.add_parser("slash-commands")
@@ -310,6 +328,8 @@ def main() -> int:
     if args.command == "resume-session":
         payload = _stdin_payload()
         return resume_session(Path(args.workspace), str(payload.get("session_id") or ""))
+    if args.command == "status":
+        return session_status(Path(args.workspace))
     if args.command == "append-review":
         payload = _stdin_payload()
         workspace = Path(str(payload.get("workspace") or Path.cwd()))

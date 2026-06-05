@@ -147,6 +147,10 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
    (list "resume-session" "--workspace" (or workspace (faltoo-workspace)))
    (json-serialize (list (cons 'session_id session-id)))))
 
+(defun faltoo-bridge-status (&optional workspace)
+  "Return Faltoo status for WORKSPACE."
+  (faltoo-bridge-call-json (list "status" "--workspace" (or workspace (faltoo-workspace)))))
+
 (defun faltoo-bridge-messages-path (&optional workspace)
   (string-trim (faltoo-bridge-call-raw (list "messages-path" "--workspace" (or workspace (faltoo-workspace))))))
 
