@@ -1688,8 +1688,8 @@
      ;; Then diff-hl uses Faltoo's full-line highlighter, not gutter-only marks.
      (should (eq diff-hl-highlight-function #'faltoo-diff-hl-highlight-line)))))
 
-(ert-deftest faltoo-review-stop-restores-review-buffer-writability ()
-  "Scenario: Stopping review mode restores source buffer writability."
+(ert-deftest faltoo-review-stop-restores-review-buffer-ui-state ()
+  "Scenario: Stopping review mode removes read-only state, header, and review highlighting."
   (faltoo-test--with-temp-git-file
    '("one")
    (lambda (file _root)
@@ -1697,13 +1697,36 @@
      (setq faltoo-review-files (list (file-truename file)))
      (faltoo-review-mode 1)
      (should buffer-read-only)
+     (should header-line-format)
+     (should diff-hl-mode)
 
      ;; When stopping the review session.
      (faltoo-review-stop)
 
-     ;; Then the source buffer is writable again.
+     ;; Then the source buffer is fully back to normal editing UI.
      (should-not faltoo-review-mode)
-     (should-not buffer-read-only))))
+     (should-not buffer-read-only)
+     (should-not header-line-format)
+     (should-not diff-hl-mode))))
+
+(ert-deftest faltoo-review-stop-restores-existing-diff-hl-state ()
+  "Scenario: Stopping review mode restores pre-existing diff-hl buffer settings."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (file _root)
+     ;; Given diff-hl was already enabled before Faltoo review mode.
+     (setq faltoo-review-files (list (file-truename file)))
+     (setq-local diff-hl-highlight-function #'ignore)
+     (diff-hl-mode 1)
+
+     ;; When review mode is enabled and then stopped.
+     (faltoo-review-mode 1)
+     (faltoo-review-stop)
+
+     ;; Then Faltoo removes only its review UI and restores the previous diff-hl setup.
+     (should-not faltoo-review-mode)
+     (should diff-hl-mode)
+     (should (eq diff-hl-highlight-function #'ignore)))))
 
 ;;; Quit guard specs
 

@@ -13,9 +13,13 @@
 (declare-function diff-hl-remove-overlays "diff-hl")
 (declare-function faltoo-reload "faltoo")
 
+(defvar-local faltoo-review--saved-state nil)
 (defvar-local faltoo-review--saved-read-only nil)
 (defvar-local faltoo-review--saved-header-line-format nil)
+(defvar-local faltoo-review--saved-header-line-format-local nil)
+(defvar-local faltoo-review--saved-diff-hl-mode nil)
 (defvar-local faltoo-review--saved-diff-hl-highlight-function nil)
+(defvar-local faltoo-review--saved-diff-hl-highlight-function-local nil)
 
 (defvar faltoo-review-mode-map
   (let ((map (make-sparse-keymap)))
@@ -69,9 +73,14 @@
   :keymap faltoo-review-mode-map
   (if faltoo-review-mode
       (progn
-        (setq faltoo-review--saved-read-only buffer-read-only
-              faltoo-review--saved-header-line-format header-line-format
-              faltoo-review--saved-diff-hl-highlight-function diff-hl-highlight-function)
+        (unless faltoo-review--saved-state
+          (setq faltoo-review--saved-state t
+                faltoo-review--saved-read-only buffer-read-only
+                faltoo-review--saved-header-line-format header-line-format
+                faltoo-review--saved-header-line-format-local (local-variable-p 'header-line-format)
+                faltoo-review--saved-diff-hl-mode (bound-and-true-p diff-hl-mode)
+                faltoo-review--saved-diff-hl-highlight-function diff-hl-highlight-function
+                faltoo-review--saved-diff-hl-highlight-function-local (local-variable-p 'diff-hl-highlight-function)))
         (setq buffer-read-only t)
         (setq-local header-line-format (faltoo-review-header-line))
         (setq-local diff-hl-highlight-function #'faltoo-diff-hl-highlight-line)
@@ -79,11 +88,21 @@
         (diff-hl-remove-overlays)
         (diff-hl-update)
         (faltoo-comments-refresh))
-    (setq buffer-read-only faltoo-review--saved-read-only
-          header-line-format faltoo-review--saved-header-line-format)
-    (setq-local diff-hl-highlight-function faltoo-review--saved-diff-hl-highlight-function)
-    (diff-hl-remove-overlays)
-    (diff-hl-update)))
+    (when faltoo-review--saved-state
+      (setq buffer-read-only faltoo-review--saved-read-only)
+      (if faltoo-review--saved-header-line-format-local
+          (setq-local header-line-format faltoo-review--saved-header-line-format)
+        (kill-local-variable 'header-line-format))
+      (if faltoo-review--saved-diff-hl-highlight-function-local
+          (setq-local diff-hl-highlight-function faltoo-review--saved-diff-hl-highlight-function)
+        (kill-local-variable 'diff-hl-highlight-function))
+      (diff-hl-remove-overlays)
+      (if faltoo-review--saved-diff-hl-mode
+          (progn
+            (diff-hl-mode 1)
+            (diff-hl-update))
+        (diff-hl-mode -1))
+      (setq faltoo-review--saved-state nil))))
 
 (defun faltoo-review-file-p (file)
   "Return non-nil when FILE is in current review set."
