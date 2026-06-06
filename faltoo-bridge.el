@@ -89,21 +89,30 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
                               (when (not (string-empty-p pending))
                                 (funcall on-event
                                          (json-parse-string pending :object-type 'alist :array-type 'list)))
-                              (let ((ok (zerop (process-exit-status proc))))
-                                (unless ok
+                              (let ((ok (zerop (process-exit-status proc)))
+                                    (cancelled (process-get proc 'faltoo-cancelled)))
+                                (cond
+                                 (cancelled
+                                  (funcall on-event '((classes . "status") (text . "Cancelled."))))
+                                 ((not ok)
                                   (setq stderr (string-trim
                                                 (with-current-buffer stderr-buffer
                                                   (buffer-string))))
                                   (when (string-empty-p stderr)
                                     (setq stderr "Faltoo bridge failed"))
                                   (funcall on-event `((classes . "error") (text . ,stderr)))
-                                  (message "%s" stderr))
+                                  (message "%s" stderr)))
                                 (kill-buffer buffer)
                                 (kill-buffer stderr-buffer)
                                 (funcall on-done ok)))))))
     (process-send-string proc (json-serialize payload))
     (process-send-eof proc)
     proc))
+
+(defun faltoo-bridge-cancel-stream (process)
+  "Cancel a running Faltoo bridge PROCESS."
+  (process-put process 'faltoo-cancelled t)
+  (delete-process process))
 
 (defun faltoo-bridge-messages (&optional turns workspace)
   (let ((args (list "messages" "--workspace" (or workspace (faltoo-workspace)) "--limit" "2000")))

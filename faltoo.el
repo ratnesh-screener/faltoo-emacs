@@ -48,6 +48,7 @@
     (define-key map (kbd "d") #'faltoo-delete-current-comment)
     (define-key map (kbd "h") #'faltoo-chat)
     (define-key map (kbd "r") #'faltoo-reload)
+    (define-key map (kbd "q") #'faltoo-request-cancel)
     (define-key map (kbd "u") #'faltoo-review-unstaged)
     (define-key map (kbd "x") #'faltoo-review-stop)
     (define-key map (kbd "g") #'faltoo-magit-status)

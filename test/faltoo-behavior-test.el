@@ -363,6 +363,11 @@
                            (overlays-at (point)))))))
 
 
+(ert-deftest faltoo-main-prefix-q-cancels-running-request ()
+  "Scenario: The main Faltoo prefix exposes request cancellation."
+  ;; Then C-c f q cancels the current workspace request.
+  (should (eq (lookup-key faltoo-command-map (kbd "q")) #'faltoo-request-cancel)))
+
 (ert-deftest faltoo-command-and-prompt-template-bindings-are-separate ()
   "Scenario: Commands and saved prompt templates use separate keybindings."
   ;; Then command completion is on C-c /, while template insertion is on C-c p.
@@ -1061,6 +1066,41 @@
        (should (equal (sort started-workspaces #'string<)
                       (sort (list (file-truename root-a) (file-truename root-b)) #'string<)))))))
 
+(ert-deftest faltoo-request-cancel-stops-current-workspace-process ()
+  "Scenario: Cancelling a running request stops the bridge process for this workspace."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file root)
+     (let ((faltoo-submitting nil)
+           (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+           (faltoo-request-processes (make-hash-table :test #'equal))
+           (faltoo-request-cancelled (make-hash-table :test #'equal))
+           cancelled-process done)
+       ;; Given a request is running for the current workspace.
+       (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args _payload _on-event on-done)
+                    (setq done on-done)
+                    'bridge-process))
+                 ((symbol-function 'faltoo-bridge-cancel-stream)
+                  (lambda (process) (setq cancelled-process process))))
+         (faltoo-request-message "question")
+
+         ;; When cancelling it.
+         (faltoo-request-cancel (file-truename root))
+
+         ;; Then the bridge process is cancelled and the workspace is marked cancelled.
+         (should (eq cancelled-process 'bridge-process))
+         (should (gethash (file-truename root) faltoo-request-cancelled))
+
+         ;; When the bridge sentinel reports completion after cancellation.
+         (cl-letf (((symbol-function 'ding) (lambda (&rest _args) nil)))
+           (funcall done nil))
+
+         ;; Then the workspace is idle and the status reflects cancellation.
+         (should-not (faltoo-workspace-submitting-p (file-truename root)))
+         (should-not (gethash (file-truename root) faltoo-request-processes))
+         (should (equal faltoo-status "Faltoo cancelled")))))))
+
 (ert-deftest faltoo-request-completion-clears-only-that-workspace ()
   "Scenario: Completing one repo stream leaves other repo streams running."
   (faltoo-test--with-two-temp-git-files
@@ -1683,6 +1723,7 @@
   (should (eq (lookup-key faltoo-review-mode-map (kbd "c")) #'faltoo-comment))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "d")) #'faltoo-delete-current-comment))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "m")) #'faltoo-comments-summary))
+  (should-not (lookup-key faltoo-review-mode-map (kbd "k")))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "]")) #'faltoo-next-change))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "H s")) #'faltoo-stage-current-hunk))
 

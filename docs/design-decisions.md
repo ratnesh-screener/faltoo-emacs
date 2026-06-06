@@ -290,6 +290,7 @@ Streaming response behavior:
 
 - Ask-from-code responses should stream in the posframe popup so the user can stay focused on code.
 - General chat started from a repo transcript should stream in that repo's transcript.
+- Running streams can be cancelled per workspace; cancellation kills only that repo's bridge process and leaves other repo streams alone.
 - Batched review-comment submissions should not stream full responses in a popup by default; they should stream to the current repo transcript and show lightweight progress in the mode-line/minibuffer.
 - Background/tool-heavy requests should use the current repo transcript for full stream details and lightweight status near code.
 - Every exchange should be appended to/persisted in the current repo's FaltooBot session and visible in that repo's transcript history.

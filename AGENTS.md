@@ -83,6 +83,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Ask always rebuilds from the active region/current line when invoked; responses stream in the posframe and current repo transcript. Last-response popups preserve follow-up drafts across close/reopen.
 - Faltoo workspace/session follows the current buffer's Git root. Popup and transcript buffers set `default-directory` to that root so sends continue in the correct repo session.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
+- Request cancellation is per workspace: `C-c f q` from source/review buffers through the main Faltoo prefix.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
 - `C-c /` runs built-in session commands (`/reset`, `/resume`, `/name`, `/tree`, `/status`); `C-c p` inserts saved prompt templates. Typed slash text submits as a normal prompt.
 - Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup.

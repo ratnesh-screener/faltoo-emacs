@@ -10,6 +10,8 @@
 
 (defvar faltoo-request-start-times (make-hash-table :test #'equal))
 (defvar faltoo-request-rate-limits (make-hash-table :test #'equal))
+(defvar faltoo-request-processes (make-hash-table :test #'equal))
+(defvar faltoo-request-cancelled (make-hash-table :test #'equal))
 
 (defun faltoo-request--event-text (event)
   (or (alist-get 'text event) ""))
@@ -35,6 +37,17 @@
   "Signal when another Faltoo request is already running for WORKSPACE."
   (when (faltoo-workspace-submitting-p (or workspace (faltoo-workspace)))
     (user-error "Faltoo request already running for this workspace")))
+
+(defun faltoo-request-cancel (&optional workspace)
+  "Cancel the running Faltoo request for WORKSPACE."
+  (interactive)
+  (let* ((target (or workspace (faltoo-workspace)))
+         (process (gethash target faltoo-request-processes)))
+    (unless process
+      (user-error "No Faltoo request running for this workspace"))
+    (puthash target t faltoo-request-cancelled)
+    (faltoo-set-status "Cancelling Faltoo request...")
+    (faltoo-bridge-cancel-stream process)))
 
 (defun faltoo-request--route-event (event workspace popup-buffer on-submitted)
   (let ((class (faltoo-request--event-class event))
@@ -82,23 +95,31 @@
     (when popup-buffer
       (faltoo-popup-start-stream popup-buffer))
     (faltoo-chat-start-stream "Assistant · answering" workspace)
-    (faltoo-bridge-stream
-     args payload
-     (lambda (event)
-       (faltoo-request--route-event event workspace popup-buffer on-submitted))
-     (lambda (ok)
-       (let ((elapsed (- (float-time) (gethash workspace faltoo-request-start-times)))
-             (rate-limit (gethash workspace faltoo-request-rate-limits)))
-         (remhash workspace faltoo-request-start-times)
-         (remhash workspace faltoo-request-rate-limits)
-         (faltoo-set-workspace-submitting workspace nil)
-         (faltoo-set-status (if ok "Faltoo complete" "Faltoo failed"))
-         (faltoo-reload-workspace-buffers workspace)
-         (faltoo-chat-finish-stream workspace elapsed rate-limit)
-         (when (and ok popup-buffer rate-limit)
-           (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit))))
-       (when on-done (funcall on-done ok))
-       (when ok (ding))))))
+    (puthash
+     workspace
+     (faltoo-bridge-stream
+      args payload
+      (lambda (event)
+        (faltoo-request--route-event event workspace popup-buffer on-submitted))
+      (lambda (ok)
+        (let ((elapsed (- (float-time) (gethash workspace faltoo-request-start-times)))
+              (rate-limit (gethash workspace faltoo-request-rate-limits))
+              (cancelled (gethash workspace faltoo-request-cancelled)))
+          (remhash workspace faltoo-request-start-times)
+          (remhash workspace faltoo-request-rate-limits)
+          (remhash workspace faltoo-request-processes)
+          (remhash workspace faltoo-request-cancelled)
+          (faltoo-set-workspace-submitting workspace nil)
+          (faltoo-set-status (cond (cancelled "Faltoo cancelled")
+                                   (ok "Faltoo complete")
+                                   (t "Faltoo failed")))
+          (faltoo-reload-workspace-buffers workspace)
+          (faltoo-chat-finish-stream workspace elapsed rate-limit)
+          (when (and ok popup-buffer rate-limit)
+            (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit)))
+          (when on-done (funcall on-done (and ok (not cancelled))))
+          (when (and ok (not cancelled)) (ding)))))
+     faltoo-request-processes)))
 
 
 (defun faltoo-request--group-review-comments (comments)
