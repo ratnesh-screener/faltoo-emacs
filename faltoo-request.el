@@ -116,7 +116,10 @@
           (faltoo-reload-workspace-buffers workspace)
           (faltoo-chat-finish-stream workspace elapsed rate-limit)
           (when (and ok popup-buffer rate-limit)
-            (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit)))
+            (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit) t))
+          (when (and popup-buffer (buffer-live-p popup-buffer))
+            (with-current-buffer popup-buffer
+              (goto-char (point-max))))
           (when on-done (funcall on-done (and ok (not cancelled))))
           (when (and ok (not cancelled)) (ding)))))
      faltoo-request-processes)))

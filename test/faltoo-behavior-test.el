@@ -1278,6 +1278,28 @@
     ;; Then the body is separated from the heading by one Markdown boundary line.
     (should (string-match-p "## Follow-up\n\ntyped prompt" (buffer-string)))))
 
+(ert-deftest faltoo-popup-stream-preserves-reader-position ()
+  "Scenario: Streaming popup text does not drag the reader to the bottom."
+  (let ((buf (faltoo-popup-buffer "*Faltoo Popup Scroll Test*" #'faltoo-popup-mode)))
+    (unwind-protect
+        (progn
+          ;; Given the reader is looking at the top of a visible popup.
+          (with-current-buffer buf
+            (insert "# Ask Faltoo\n\nold answer\nline 2\nline 3\nline 4")
+            (goto-char (point-min)))
+          (let ((window (display-buffer buf)))
+            (set-window-point window (point-min))
+            (set-window-start window (point-min))
+
+            ;; When answer stream text is appended to the popup.
+            (faltoo-popup-append-stream buf "new streamed text")
+
+            ;; Then the reader's point and scroll position stay where they were.
+            (should (= (window-point window) (point-min)))
+            (should (= (window-start window) (point-min)))))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))))
+
 (ert-deftest faltoo-last-response-popup-renders-markdown-content ()
   "Scenario: Last response popup uses Markdown headings and an editable follow-up."
   (let ((workspace (faltoo-workspace)))

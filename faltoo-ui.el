@@ -134,14 +134,14 @@ When PRESERVE-READER-POSITION is non-nil, keep existing window scroll and point.
                      ""))
       (setq faltoo-popup-stream-answer-started t
             faltoo-popup-stream-needs-answer-separator nil))
-    (faltoo-popup-append buffer (concat prefix text))))
+    (faltoo-popup-append buffer (concat prefix text) t)))
 
 (defun faltoo-popup-append-stream-block (buffer text &optional face)
   "Append compact quoted stream block TEXT to popup BUFFER."
   (let ((quoted (concat "> " (mapconcat #'identity (split-string text "\n") "\n> ") "\n")))
     (with-current-buffer buffer
       (setq faltoo-popup-stream-needs-answer-separator t))
-    (faltoo-popup-append buffer (if face (propertize quoted 'face face) quoted))))
+    (faltoo-popup-append buffer (if face (propertize quoted 'face face) quoted) t)))
 
 (provide 'faltoo-ui)
 ;;; faltoo-ui.el ends here
