@@ -31,9 +31,9 @@
     (insert "---\n## " title "\n\n")
     (add-text-properties start (point) '(rear-nonsticky t))))
 
-(defun faltoo-compose-insert-code (code)
-  "Insert CODE as a Markdown code block."
-  (insert "```text\n")
+(defun faltoo-compose-insert-code (code &optional language)
+  "Insert CODE as a Markdown code block for LANGUAGE."
+  (insert "```" (or language "text") "\n")
   (let ((start (point)))
     (insert code)
     (add-text-properties start (point) '(face faltoo-popup-code-face)))

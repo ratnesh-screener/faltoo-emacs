@@ -29,19 +29,21 @@
     (list :file (faltoo-relative-file (faltoo-current-file))
           :start (nth 2 range)
           :end (nth 3 range)
-          :code (nth 4 range))))
+          :code (nth 4 range)
+          :language (faltoo-current-language))))
 
 (defun faltoo-ask--insert-prompt (context)
   "Insert Ask popup content for CONTEXT."
   (let ((file (plist-get context :file))
         (start (plist-get context :start))
         (end (plist-get context :end))
-        (code (plist-get context :code)))
+        (code (plist-get context :code))
+        (language (plist-get context :language)))
     (faltoo-compose-insert-title "Ask Faltoo")
     (faltoo-compose-insert-meta "File" file)
     (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
     (faltoo-compose-insert-section "Code")
-    (faltoo-compose-insert-code code)
+    (faltoo-compose-insert-code code language)
     (faltoo-compose-insert-help "C-c C-c send · C-c C-k/C-g close · C-c C-f file · C-c / command · C-c p prompt")
     (faltoo-compose-insert-section "Question")
     (setq faltoo-ask-question-marker (point-marker))
@@ -74,10 +76,11 @@
 
 (defun faltoo-ask--message (context question)
   (if context
-      (format "About `%s` lines %d-%d:\n\n```\n%s\n```\n\n%s"
+      (format "About `%s` lines %d-%d:\n\n```%s\n%s\n```\n\n%s"
               (plist-get context :file)
               (plist-get context :start)
               (plist-get context :end)
+              (plist-get context :language)
               (plist-get context :code)
               question)
     question))

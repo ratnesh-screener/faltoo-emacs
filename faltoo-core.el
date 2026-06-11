@@ -84,6 +84,13 @@ The result is (BEG END START-LINE END-LINE CODE)."
     (user-error "Current buffer is not visiting a file"))
   (file-truename buffer-file-name))
 
+(defun faltoo-current-language ()
+  "Return the Markdown fence language for the current buffer."
+  (let ((name (symbol-name major-mode)))
+    (if (string-match "\\`\\(.+?\\)\\(?:-ts\\)?-mode\\'" name)
+        (match-string 1 name)
+      "text")))
+
 (defun faltoo-set-status (status)
   "Set Faltoo STATUS and refresh UI."
   (setq faltoo-status status)

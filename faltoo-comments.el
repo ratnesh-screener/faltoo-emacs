@@ -93,6 +93,7 @@
          (start (nth 2 range))
          (end (nth 3 range))
          (code (nth 4 range))
+         (language (faltoo-current-language))
          (existing (faltoo-comments--existing path start end))
          (target (or existing (make-faltoo-comment :file file :path path :start start :end end :code code)))
          (buf (faltoo-popup-buffer "*Faltoo Comment*" #'faltoo-comment-mode)))
@@ -106,7 +107,7 @@
         (unless file-level
           (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
           (faltoo-compose-insert-section "Code")
-          (faltoo-compose-insert-code code))
+          (faltoo-compose-insert-code code language))
         (faltoo-compose-insert-help "C-c C-c save · C-c C-k/C-g close · C-c C-f file")
         (faltoo-compose-insert-section "Comment")
         (setq faltoo-comment-text-marker (point-marker))

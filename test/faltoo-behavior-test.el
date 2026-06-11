@@ -822,7 +822,7 @@
        (goto-char (point-min))
        (faltoo-ask)
        (with-current-buffer "*Faltoo Popup*"
-         (should (string-match-p "```text\none\n```" (buffer-string))))
+         (should (string-match-p "```python\none\n```" (buffer-string))))
 
        ;; When Ask is opened again on another line.
        (goto-char (point-min))
@@ -831,8 +831,8 @@
 
        ;; Then the popup is rebuilt from the new source context.
        (with-current-buffer "*Faltoo Popup*"
-         (should (string-match-p "```text\ntwo\n```" (buffer-string)))
-         (should-not (string-match-p "```text\none\n```" (buffer-string))))))))
+         (should (string-match-p "```python\ntwo\n```" (buffer-string)))
+         (should-not (string-match-p "```python\none\n```" (buffer-string))))))))
 
 (ert-deftest faltoo-ask-empty-question-does-not-capture-help-text ()
   "Scenario: Ask help text is not submitted as the question."
@@ -896,7 +896,7 @@
 
        ;; Then the second request still includes the same code context.
        (should (string-match-p "lines 1-1" captured-message))
-       (should (string-match-p "```\none\n```" captured-message))
+       (should (string-match-p "```python\none\n```" captured-message))
        (should (string-match-p "second question" captured-message))))))
 
 (ert-deftest faltoo-ask-stream-routes-answer-to-popup-and-transcript ()
@@ -1615,6 +1615,19 @@
      (with-current-buffer "*Faltoo Comment*"
        (should (string-match-p "---\n## Code\n\n" (buffer-string)))
        (should (string-match-p "---\n## Comment\n\n" (buffer-string)))))))
+
+(ert-deftest faltoo-comment-popup-uses-source-language-in-code-fence ()
+  "Scenario: Comment popup code fences use the source buffer language."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     ;; Given a Python source buffer.
+     (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+       (faltoo-comment))
+
+     ;; Then the selected code is shown in a Python Markdown fence.
+     (with-current-buffer "*Faltoo Comment*"
+       (should (string-match-p "```python\none\n```" (buffer-string)))))))
 
 (ert-deftest faltoo-comment-empty-comment-does-not-capture-help-text ()
   "Scenario: Comment help text is not saved as a review comment."
