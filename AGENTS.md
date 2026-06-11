@@ -77,11 +77,12 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - In normal source buffers, `C-c f s` submits pending review comments.
 - In normal source buffers, `C-c f l` shows latest assistant response in posframe.
 - `C-c f h` opens the current Git repo's transcript/history.
+- `C-c f i` opens generic `*Faltoo Chat*`, anchored at `faltoo-generic-chat-directory`, for quick questions outside the current repo/session.
 - In normal source buffers, `C-c f x` stops current review session.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
 - Ask/comment snippets always expand to full source lines: current line when no region, or all lines touched by the active region.
 - Ask always rebuilds from the active region/current line when invoked; responses stream in the posframe and current repo transcript. Last-response popups preserve follow-up drafts across close/reopen.
-- Faltoo workspace/session follows the current buffer's Git root. Popup and transcript buffers set `default-directory` to that root so sends continue in the correct repo session.
+- Faltoo workspace/session follows the current buffer's Git root. Popup and repo transcript buffers set `default-directory` to that root so sends continue in the correct repo session. Generic chat intentionally uses `faltoo-generic-chat-directory` instead of a Git root.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
 - Request cancellation is per workspace: `C-c f q` from source/review buffers through the main Faltoo prefix.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.

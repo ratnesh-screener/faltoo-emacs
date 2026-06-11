@@ -164,9 +164,9 @@
         (setq lines (append lines '("---" "")))))
     (string-trim (string-join lines "\n"))))
 
-(defun faltoo-request-message (text &optional popup-buffer on-done skip-transcript-user)
+(defun faltoo-request-message (text &optional popup-buffer on-done skip-transcript-user workspace)
   "Send TEXT as a chat message."
-  (let ((workspace (faltoo-workspace)))
+  (let ((workspace (or workspace (faltoo-workspace))))
     (faltoo-request-ensure-idle workspace)
     (unless skip-transcript-user
       (faltoo-chat-append-user-message text workspace))

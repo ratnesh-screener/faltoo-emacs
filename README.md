@@ -38,6 +38,8 @@ Normal source buffers use main prefix: `C-c f`
 C-c f u   review unstaged files
 C-c f x   stop review session
 C-c f q   cancel running Faltoo answer stream for this repo
+C-c f h   open current repo transcript
+C-c f i   open generic repo-independent chat
 ```
 
 Review buffers are read-only, so review actions use direct keys:
@@ -78,7 +80,7 @@ C-c /     run session command
 C-c p     paste saved prompt template
 ```
 
-In workspace transcript buffers, named like `*Faltoo: repo-name*`:
+In workspace transcript buffers, named like `*Faltoo: repo-name*`, and generic chat `*Faltoo Chat*`:
 
 ```text
 C-c C-c   send current prompt
@@ -135,7 +137,7 @@ Manually typed slash text is sent to the LLM as normal prompt text. Use `C-c /` 
 ## Notes
 
 - Source buffers are the primary UI.
-- Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo.
+- Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo. `C-c f i` opens a generic `*Faltoo Chat*` session anchored at `faltoo-generic-chat-directory` for quick questions that should not use the current repo context.
 - Ask always rebuilds from the active region/current line and streams responses in the centered posframe and transcript. The last-response popup preserves follow-up drafts after close/reopen.
 - Completed assistant transcript footers include elapsed time and the latest streamed Codex limit when available, e.g. `> Assistant took: 20.0s` / `> Remaining limit: 5h = 98%`.
 - Review-comment submission streams to the current repo transcript and status/mode-line.

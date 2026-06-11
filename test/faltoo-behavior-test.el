@@ -117,6 +117,64 @@
        (with-current-buffer buf-b
          (should (equal (faltoo-workspace) (file-truename root-b))))))))
 
+(ert-deftest faltoo-generic-chat-opens-repo-independent-transcript ()
+  "Scenario: Generic chat uses a fixed non-Git workspace instead of the current repo."
+  (let* ((root (file-name-as-directory (make-temp-file "faltoo-generic" t)))
+         (workspace (expand-file-name "quick-chat/" root))
+         (faltoo-generic-chat-directory workspace)
+         captured-workspace)
+    (unwind-protect
+        (progn
+          ;; Given the generic workspace has no Git metadata.
+          (cl-letf (((symbol-function 'faltoo-bridge-messages)
+                     (lambda (_turns workspace)
+                       (setq captured-workspace workspace)
+                       nil))
+                    ((symbol-function 'pop-to-buffer) (lambda (buf &rest _args) buf)))
+
+            ;; When generic chat opens.
+            (faltoo-generic-chat))
+
+          ;; Then it creates and renders the repo-independent transcript.
+          (should (file-directory-p workspace))
+          (should (equal captured-workspace (file-name-as-directory (file-truename workspace))))
+          (should (get-buffer "*Faltoo Chat*"))
+          (with-current-buffer "*Faltoo Chat*"
+            (should (equal default-directory (file-name-as-directory (file-truename workspace))))
+            (should (equal faltoo-chat-workspace (file-name-as-directory (file-truename workspace))))))
+      (when (get-buffer "*Faltoo Chat*")
+        (kill-buffer "*Faltoo Chat*"))
+      (delete-directory root t))))
+
+(ert-deftest faltoo-generic-chat-send-targets-generic-workspace ()
+  "Scenario: Sending from generic chat routes the request to the generic workspace."
+  (let* ((root (file-name-as-directory (make-temp-file "faltoo-generic" t)))
+         (workspace (expand-file-name "quick-chat/" root))
+         (faltoo-generic-chat-directory workspace)
+         captured)
+    (unwind-protect
+        (progn
+          ;; Given the generic chat prompt has a quick question.
+          (cl-letf (((symbol-function 'faltoo-bridge-messages) (lambda (&rest _args) nil))
+                    ((symbol-function 'pop-to-buffer) (lambda (buf &rest _args) buf)))
+            (faltoo-generic-chat))
+          (with-current-buffer "*Faltoo Chat*"
+            (insert "quick question")
+
+            ;; When the prompt is submitted.
+            (cl-letf (((symbol-function 'faltoo-request-message)
+                       (lambda (text popup on-done skip-transcript-user workspace)
+                         (setq captured (list text popup on-done skip-transcript-user workspace)))))
+              (faltoo-chat-send)))
+
+          ;; Then the request bypasses Git-root lookup and uses the generic workspace.
+          (should (equal (nth 0 captured) "quick question"))
+          (should (eq (nth 3 captured) t))
+          (should (equal (nth 4 captured) (file-name-as-directory (file-truename workspace)))))
+      (when (get-buffer "*Faltoo Chat*")
+        (kill-buffer "*Faltoo Chat*"))
+      (delete-directory root t))))
+
 (ert-deftest faltoo-chat-uses-separate-transcripts-per-workspace ()
   "Scenario: Each Git repo gets its own transcript buffer and default directory."
   (faltoo-test--with-two-temp-git-files
@@ -235,12 +293,12 @@
 
          ;; When sending from inside that transcript.
          (cl-letf (((symbol-function 'faltoo-request-message)
-                    (lambda (_text &optional _popup _on-done _skip-transcript-user)
-                      (setq captured-workspace (faltoo-workspace)))))
+                    (lambda (_text &optional _popup _on-done _skip-transcript-user workspace)
+                      (setq captured-workspace workspace))))
            (faltoo-chat-send)))
 
        ;; Then the transcript's workspace is used, not some other current buffer.
-       (should (equal captured-workspace (file-truename root-b)))))))
+       (should (equal captured-workspace (file-name-as-directory (file-truename root-b))))))))
 
 ;;; Bridge specs
 
@@ -367,6 +425,11 @@
   "Scenario: The main Faltoo prefix exposes request cancellation."
   ;; Then C-c f q cancels the current workspace request.
   (should (eq (lookup-key faltoo-command-map (kbd "q")) #'faltoo-request-cancel)))
+
+(ert-deftest faltoo-main-prefix-i-opens-generic-chat ()
+  "Scenario: The main Faltoo prefix opens the repo-independent chat."
+  ;; Then C-c f i opens generic chat.
+  (should (eq (lookup-key faltoo-command-map (kbd "i")) #'faltoo-generic-chat)))
 
 (ert-deftest faltoo-command-and-prompt-template-bindings-are-separate ()
   "Scenario: Commands and saved prompt templates use separate keybindings."
@@ -640,7 +703,7 @@
       (cl-letf (((symbol-function 'faltoo-session-reset)
                  (lambda () (setq reset-called t)))
                 ((symbol-function 'faltoo-request-ensure-idle)
-                 (lambda ()))
+                 (lambda (&optional _workspace)))
                 ((symbol-function 'faltoo-request-message)
                  (lambda (text &rest _args) (setq captured-text text))))
         (faltoo-chat-send)))
@@ -658,7 +721,7 @@
 
       ;; When sending the prompt.
       (cl-letf (((symbol-function 'faltoo-request-message)
-                 (lambda (text &optional _popup _on-done _skip-transcript-user)
+                 (lambda (text &rest _args)
                    (setq captured-text text))))
         (faltoo-chat-send)))
 

@@ -56,6 +56,12 @@
       (when read-only
         (setq buffer-read-only t)))))
 
+
+(defun faltoo-session-workspace ()
+  "Return the workspace for commands run from source, popup, or transcript buffers."
+  (or (and (boundp 'faltoo-chat-workspace) faltoo-chat-workspace)
+      (faltoo-workspace)))
+
 (defconst faltoo-session-commands
   '(((command . "/name") (preview . "name the current session"))
     ((command . "/reset") (preview . "start a fresh session"))
@@ -67,7 +73,7 @@
 (defun faltoo-session-reset ()
   "Start a fresh Faltoo session for the current workspace."
   (interactive)
-  (let ((info (faltoo-bridge-reset-session (faltoo-workspace))))
+  (let ((info (faltoo-bridge-reset-session (faltoo-session-workspace))))
     (when (fboundp 'faltoo-chat-refresh)
       (faltoo-chat-refresh))
     (message "Faltoo session reset: %s" (alist-get 'session_id info))))
@@ -75,7 +81,7 @@
 (defun faltoo-session-name (name)
   "Rename the current Faltoo session to NAME. Empty NAME clears it."
   (interactive (list (read-string "Session name (empty clears): ")))
-  (let ((info (faltoo-bridge-name-session name (faltoo-workspace))))
+  (let ((info (faltoo-bridge-name-session name (faltoo-session-workspace))))
     (when (fboundp 'faltoo-chat-refresh)
       (faltoo-chat-refresh))
     (message "Faltoo session named: %s" (alist-get 'session_id info))))
@@ -84,7 +90,7 @@
 (defun faltoo-session-tree ()
   "Open the current Faltoo session messages JSON file."
   (interactive)
-  (find-file (faltoo-bridge-messages-path (faltoo-workspace))))
+  (find-file (faltoo-bridge-messages-path (faltoo-session-workspace))))
 
 (defun faltoo-session-status--pretty-json (text)
   "Return pretty JSON for TEXT, or TEXT when parsing fails."
@@ -118,7 +124,7 @@
 (defun faltoo-session-status ()
   "Show current Faltoo status in a temporary popup."
   (interactive)
-  (let* ((status (faltoo-bridge-status (faltoo-workspace)))
+  (let* ((status (faltoo-bridge-status (faltoo-session-workspace)))
          (buf (faltoo-popup-buffer "*Faltoo Status*" #'faltoo-popup-mode)))
     (with-current-buffer buf
       (setq default-directory (file-name-as-directory (alist-get 'workspace status)))
@@ -134,7 +140,7 @@
 (defun faltoo-session-resume (&optional session-id)
   "Resume Faltoo SESSION-ID for the current workspace."
   (interactive)
-  (let* ((sessions (faltoo-bridge-list-sessions (faltoo-workspace)))
+  (let* ((sessions (faltoo-bridge-list-sessions (faltoo-session-workspace)))
          (labels (mapcar (lambda (session)
                            (or (alist-get 'name session) (alist-get 'id session)))
                          sessions))
@@ -147,7 +153,7 @@
                                 :key (lambda (session) (alist-get 'id session))
                                 :test #'string=)))
          (info (faltoo-bridge-resume-session (or (alist-get 'id selected) choice)
-                                             (faltoo-workspace))))
+                                             (faltoo-session-workspace))))
     (when (fboundp 'faltoo-chat-refresh)
       (faltoo-chat-refresh))
     (message "Faltoo session resumed: %s" (alist-get 'session_id info))))

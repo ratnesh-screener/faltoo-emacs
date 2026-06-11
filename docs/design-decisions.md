@@ -159,7 +159,15 @@ Each Git repo should have a persistent transcript buffer:
 
 It is used for viewing full conversation history, jumping between user turns, searching/copying responses, refreshing persisted messages, and continuing a longer chat when desired. During normal code review, users should be able to ask questions and submit comments from source buffers without switching to the transcript.
 
-The transcript buffer `default-directory` is the repo root, so chat sends, file references, slash commands, and refreshes use the same FaltooBot workspace/session as source-buffer commands from that repo. Running-request state is scoped by Git repo: one workspace can be answering while another workspace accepts a new prompt.
+Faltoo also has one generic repo-independent transcript:
+
+```text
+*Faltoo Chat*
+```
+
+This is opened with `C-c f i` and anchored at `faltoo-generic-chat-directory`. It is for quick questions that should not use the current repo/session. It still uses the same transcript UI, streaming path, session commands, and prompt sending flow; only the workspace/session anchor differs.
+
+Repo transcript buffers set `default-directory` to the repo root, so chat sends, file references, slash commands, and refreshes use the same FaltooBot workspace/session as source-buffer commands from that repo. Running-request state is scoped by workspace: one repo or generic chat can be answering while another workspace accepts a new prompt.
 
 When a streamed assistant response completes, the finalized assistant heading stays clean and a quoted footer records elapsed wall-clock time, e.g. `> Assistant took: 20.0s`. If the Codex stream includes a `codex.rate_limits` event, store the latest formatted `Remaining limit: ...` text per workspace and append it to the same assistant footer. This is not a separate LLM call or standalone quota endpoint in the current FaltooBot path; it is metadata delivered by the Codex response stream.
 

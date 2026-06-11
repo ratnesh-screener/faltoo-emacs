@@ -98,9 +98,11 @@ The result is (BEG END START-LINE END-LINE CODE)."
 
 (defun faltoo-status-string ()
   "Return a compact status string for mode-line use."
-  (let ((parts nil)
-        (workspace (locate-dominating-file default-directory ".git")))
-    (when (and workspace (faltoo-workspace-submitting-p (file-truename workspace)))
+  (let* ((parts nil)
+         (workspace (or (and (boundp 'faltoo-chat-workspace) faltoo-chat-workspace)
+                        (when-let ((root (locate-dominating-file default-directory ".git")))
+                          (file-truename root)))))
+    (when (and workspace (faltoo-workspace-submitting-p workspace))
       (push "answering" parts))
     (when (and (boundp 'faltoo-comments) faltoo-comments)
       (push (format "%d comment%s" (length faltoo-comments)

@@ -20,6 +20,14 @@
 (defvar-local faltoo-chat-stream-answer-started nil)
 (defvar-local faltoo-chat-workspace nil)
 
+(defcustom faltoo-generic-chat-directory
+  (expand-file-name "faltoo-generic-chat/" user-emacs-directory)
+  "Directory used for the repo-independent Faltoo chat session."
+  :type 'directory
+  :group 'faltoo)
+
+(defvar faltoo-generic-chat-workspace-cache nil)
+
 (defcustom faltoo-chat-turns 20
   "Number of recent user turns shown in the Faltoo transcript."
   :type 'integer
@@ -42,20 +50,38 @@
   (faltoo-ui-enable-pretty-markdown)
   (setq-local truncate-lines nil))
 
+(defun faltoo-generic-chat-workspace ()
+  "Return the repo-independent Faltoo chat workspace directory."
+  (let ((directory (file-name-as-directory (expand-file-name faltoo-generic-chat-directory))))
+    (unless (and faltoo-generic-chat-workspace-cache
+                 (equal (car faltoo-generic-chat-workspace-cache) directory))
+      (make-directory directory t)
+      (setq faltoo-generic-chat-workspace-cache
+            (cons directory (file-name-as-directory (file-truename directory)))))
+    (cdr faltoo-generic-chat-workspace-cache)))
+
+(defun faltoo-generic-chat-workspace-p (workspace)
+  "Return non-nil when WORKSPACE is the generic chat workspace."
+  (and faltoo-generic-chat-workspace-cache
+       (equal (file-name-as-directory (expand-file-name workspace))
+              (cdr faltoo-generic-chat-workspace-cache))))
+
 (defun faltoo-chat-buffer-name-for (workspace)
   "Return the transcript buffer name for WORKSPACE."
   (let ((workspace (file-name-as-directory (file-truename workspace))))
-    (format "*Faltoo: %s*" (file-name-nondirectory (directory-file-name workspace)))))
+    (if (faltoo-generic-chat-workspace-p workspace)
+        "*Faltoo Chat*"
+      (format "*Faltoo: %s*" (file-name-nondirectory (directory-file-name workspace))))))
 
 (defun faltoo-chat-buffer (&optional workspace)
   "Return the Faltoo chat buffer for WORKSPACE."
   (let* ((workspace (file-name-as-directory (file-truename (or workspace (faltoo-workspace)))))
          (buf (get-buffer-create (faltoo-chat-buffer-name-for workspace))))
     (with-current-buffer buf
-      (setq default-directory workspace
-            faltoo-chat-workspace workspace)
       (unless (derived-mode-p 'faltoo-chat-mode)
-        (faltoo-chat-mode)))
+        (faltoo-chat-mode))
+      (setq default-directory workspace
+            faltoo-chat-workspace workspace))
     buf))
 
 (defun faltoo-chat--highlight-block (start end face overlays-var)
@@ -134,17 +160,25 @@
       (goto-char faltoo-chat-prompt-marker))
     buf))
 
-(defun faltoo-chat-refresh ()
+(defun faltoo-chat-current-workspace ()
+  "Return the workspace attached to this chat buffer or the current Git repo."
+  (or faltoo-chat-workspace (faltoo-workspace)))
+
+(defun faltoo-chat-refresh (&optional workspace)
   "Refresh transcript from FaltooBot session."
   (interactive)
-  (let ((workspace (faltoo-workspace)))
+  (let ((workspace (or workspace (faltoo-chat-current-workspace))))
     (pop-to-buffer (faltoo-chat-render (faltoo-bridge-messages faltoo-chat-turns workspace) workspace))))
 
 (defun faltoo-chat ()
-  "Open Faltoo transcript."
+  "Open Faltoo transcript for the current Git repo."
   (interactive)
-  (faltoo-chat-refresh))
+  (faltoo-chat-refresh (faltoo-workspace)))
 
+(defun faltoo-generic-chat ()
+  "Open the repo-independent Faltoo chat transcript."
+  (interactive)
+  (faltoo-chat-refresh (faltoo-generic-chat-workspace)))
 
 (defun faltoo-chat-prev-user-message ()
   "Jump to the previous persisted user message heading in the transcript."
@@ -185,7 +219,7 @@
         (if arg
             (prefix-numeric-value arg)
           (* 2 faltoo-chat-turns)))
-  (faltoo-chat-refresh)
+  (faltoo-chat-refresh (faltoo-chat-current-workspace))
   (message "Faltoo transcript showing last %s user turn(s)" faltoo-chat-turns))
 
 (defun faltoo-chat--prompt-text ()
@@ -218,10 +252,10 @@
   (let ((text (faltoo-chat--prompt-text)))
     (when (string-empty-p text)
       (user-error "Prompt is empty"))
-    (faltoo-request-ensure-idle)
+    (faltoo-request-ensure-idle faltoo-chat-workspace)
     (goto-char (point-max))
     (insert "\n\n")
-    (faltoo-request-message text nil nil t)))
+    (faltoo-request-message text nil nil t faltoo-chat-workspace)))
 
 (defun faltoo-chat-start-stream (title &optional workspace)
   "Prepare the workspace transcript for a streaming message titled TITLE."
