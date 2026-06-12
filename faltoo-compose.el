@@ -136,6 +136,15 @@
         (setq buffer-read-only t)))
     (faltoo-popup-show buf 100 30)))
 
+(defun faltoo-session-completion-table (labels)
+  "Return a completion table that preserves FaltooBot's LABELS order."
+  (lambda (string pred action)
+    (if (eq action 'metadata)
+        '(metadata
+          (display-sort-function . identity)
+          (cycle-sort-function . identity))
+      (complete-with-action action labels string pred))))
+
 (defun faltoo-session-resume (&optional session-id)
   "Resume Faltoo SESSION-ID for the current workspace."
   (interactive)
@@ -143,7 +152,10 @@
          (labels (mapcar (lambda (session)
                            (or (alist-get 'name session) (alist-get 'id session)))
                          sessions))
-         (choice (or session-id (completing-read "Resume session: " labels nil t)))
+         (choice (or session-id
+                     (completing-read
+                      "Resume session: "
+                      (faltoo-session-completion-table labels) nil t)))
          (selected (or (cl-find choice sessions
                                 :key (lambda (session)
                                        (or (alist-get 'name session) (alist-get 'id session)))

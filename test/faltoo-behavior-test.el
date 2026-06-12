@@ -522,6 +522,37 @@
       (should reset-called)
       (should (string-empty-p (buffer-string))))))
 
+(ert-deftest faltoo-session-resume-preserves-faltoobot-session-order ()
+  "Scenario: Resume picker preserves the session order returned by FaltooBot."
+  (let (completion-labels resumed-session)
+    ;; Given FaltooBot already returns sessions in the right recency order.
+    (cl-letf (((symbol-function 'faltoo-session-workspace) (lambda () "/repo/"))
+              ((symbol-function 'faltoo-bridge-list-sessions)
+               (lambda (_workspace)
+                 '(((id . "latest") (name . "latest - 12 Jun"))
+                   ((id . "middle") (name . "middle - 8 Jun"))
+                   ((id . "older") (name . "older - 1 Jun")))))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _args)
+                 (let* ((metadata (completion-metadata "" collection nil))
+                        (sorter (completion-metadata-get metadata 'display-sort-function)))
+                   (should (eq sorter #'identity))
+                   (setq completion-labels (funcall sorter (all-completions "" collection)))
+                   (car completion-labels))))
+              ((symbol-function 'faltoo-bridge-resume-session)
+               (lambda (session-id _workspace)
+                 (setq resumed-session session-id)
+                 '((session_id . "latest"))))
+              ((symbol-function 'faltoo-chat-refresh) (lambda (&optional _workspace) nil)))
+
+      ;; When opening the resume picker.
+      (faltoo-session-resume))
+
+    ;; Then Emacs completion preserves FaltooBot's order instead of sorting labels itself.
+    (should (equal completion-labels
+                   '("latest - 12 Jun" "middle - 8 Jun" "older - 1 Jun")))
+    (should (equal resumed-session "latest"))))
+
 (ert-deftest faltoo-session-tree-opens-current-messages-json ()
   "Scenario: The /tree command opens the current session messages JSON file."
   (let (opened-file)
