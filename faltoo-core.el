@@ -52,6 +52,11 @@ The active workspace is always recomputed from `default-directory'.")
   (interactive)
   (setq faltoo-workspace (faltoo-git-root)))
 
+(defun faltoo-active-workspace ()
+  "Return the workspace attached to the current Faltoo buffer or source buffer."
+  (or (and (boundp 'faltoo-chat-workspace) faltoo-chat-workspace)
+      (faltoo-workspace)))
+
 (defun faltoo-relative-file (file)
   "Return FILE relative to the active workspace."
   (file-relative-name (file-truename file) (faltoo-workspace)))
@@ -96,6 +101,19 @@ The result is (BEG END START-LINE END-LINE CODE)."
   (setq faltoo-status status)
   (force-mode-line-update t))
 
+(defun faltoo-status--label (workspace)
+  "Return the mode-line label for WORKSPACE."
+  (let ((command (and (boundp 'faltoo-faltoobot-command) faltoo-faltoobot-command)))
+    (when (and workspace
+               (boundp 'faltoo-faltoobot-workspace-commands)
+               (hash-table-p faltoo-faltoobot-workspace-commands))
+      (setq command (or (gethash workspace faltoo-faltoobot-workspace-commands) command)))
+    (if (and command
+             (boundp 'faltoo-local-faltoobot-command)
+             (equal command faltoo-local-faltoobot-command))
+        "Faltoo-beta"
+      "Faltoo")))
+
 (defun faltoo-status-string ()
   "Return a compact status string for mode-line use."
   (let* ((parts nil)
@@ -109,7 +127,8 @@ The result is (BEG END START-LINE END-LINE CODE)."
                     (if (= (length faltoo-comments) 1) "" "s"))
             parts))
     (if parts
-        (concat " Faltoo:" (string-join (nreverse parts) " · "))
+        (concat " " (faltoo-status--label workspace) ":"
+                (string-join (nreverse parts) " · "))
       "")))
 
 (unless (member '(:eval (faltoo-status-string)) global-mode-string)

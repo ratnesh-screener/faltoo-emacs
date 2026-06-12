@@ -207,6 +207,29 @@
        (with-current-buffer (find-file-noselect file-b)
          (should-not (string-match-p "answering" (faltoo-status-string))))))))
 
+(ert-deftest faltoo-status-label-shows-beta-for-local-core ()
+  "Scenario: Mode-line label changes when the current chat uses local Faltoo core."
+  (faltoo-test--with-two-temp-git-files
+   (lambda (file-a root-a file-b root-b)
+     (let ((faltoo-submitting nil)
+           (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+           (faltoo-faltoobot-command "faltoobot")
+           (faltoo-local-faltoobot-command "/tmp/local-faltoochat")
+           (faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal)))
+       ;; Given repo A is answering with the local core and repo B uses release.
+       (puthash (file-name-as-directory (file-truename root-a))
+                "/tmp/local-faltoochat"
+                faltoo-faltoobot-workspace-commands)
+       (faltoo-set-workspace-submitting (file-truename root-a) t)
+       (faltoo-set-workspace-submitting (file-truename root-b) t)
+
+       ;; Then only the local-core workspace advertises Faltoo-beta.
+       (with-current-buffer (find-file-noselect file-a)
+         (should (string-match-p "Faltoo-beta:answering" (faltoo-status-string))))
+       (with-current-buffer (find-file-noselect file-b)
+         (should (string-match-p "Faltoo:answering" (faltoo-status-string)))
+         (should-not (string-match-p "Faltoo-beta" (faltoo-status-string))))))))
+
 (ert-deftest faltoo-request-message-targets-current-buffer-workspace ()
   "Scenario: Sending from a source buffer targets that file's Git repo session."
   (faltoo-test--with-two-temp-git-files
@@ -302,6 +325,45 @@
 
 ;;; Bridge specs
 
+(ert-deftest faltoo-bridge-python-uses-workspace-faltoobot-command ()
+  "Scenario: Bridge Python is resolved from the selected workspace command."
+  (let ((shim (make-temp-file "faltoo-command"))
+        (faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal)))
+    (unwind-protect
+        (progn
+          ;; Given one workspace uses a custom Faltoo command shim.
+          (write-region "#!/custom/python\n" nil shim nil 'silent)
+          (set-file-modes shim #o755)
+          (puthash "/repo-a/" shim faltoo-faltoobot-workspace-commands)
+
+          ;; When resolving the bridge Python for that workspace.
+          ;; Then the shim's shebang Python is used.
+          (should (equal (faltoo-bridge-python "/repo-a/") "/custom/python")))
+      (delete-file shim))))
+
+(ert-deftest faltoo-select-faltoobot-command-switches-current-chat-only ()
+  "Scenario: Switching Faltoo core is scoped to the current chat workspace."
+  (let ((faltoo-release-faltoobot-command "faltoobot")
+        (faltoo-local-faltoobot-command "/tmp/local-faltoochat")
+        (faltoo-faltoobot-command "faltoobot")
+        (faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal))
+        validated-command)
+    ;; Given local core is selected in one workspace.
+    (cl-letf (((symbol-function 'faltoo-active-workspace) (lambda () "/repo-a/"))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt choices &rest _args) (cadr choices)))
+              ((symbol-function 'faltoo-bridge--command-executable)
+               (lambda (command) (setq validated-command command))))
+
+      ;; When switching Faltoo core.
+      (faltoo-select-faltoobot-command))
+
+    ;; Then only that workspace uses the local command.
+    (should (equal (gethash "/repo-a/" faltoo-faltoobot-workspace-commands)
+                   "/tmp/local-faltoochat"))
+    (should (equal (faltoo-bridge-command-for-workspace "/repo-b/") "faltoobot"))
+    (should (equal validated-command "/tmp/local-faltoochat"))))
+
 (ert-deftest faltoo-bridge-messages-passes-turn-limit-to-bridge ()
   "Scenario: Transcript history loading asks the bridge for recent user turns."
   (let ((faltoo-workspace "/tmp/faltoo-test") captured-args)
@@ -309,7 +371,7 @@
 
     ;; When fetching the last 25 turns.
     (cl-letf (((symbol-function 'faltoo-bridge-call-json)
-               (lambda (args &optional _input)
+               (lambda (args &optional _input _workspace)
                  (setq captured-args args)
                  '((messages . nil)))))
       (faltoo-bridge-messages 25))
@@ -430,6 +492,11 @@
   "Scenario: The main Faltoo prefix opens the repo-independent chat."
   ;; Then C-c f i opens generic chat.
   (should (eq (lookup-key faltoo-command-map (kbd "i")) #'faltoo-generic-chat)))
+
+(ert-deftest faltoo-main-prefix-b-selects-faltoobot-command ()
+  "Scenario: The main Faltoo prefix switches between released and local core."
+  ;; Then C-c f b opens Faltoo core command selection.
+  (should (eq (lookup-key faltoo-command-map (kbd "b")) #'faltoo-select-faltoobot-command)))
 
 (ert-deftest faltoo-command-and-prompt-template-bindings-are-separate ()
   "Scenario: Commands and saved prompt templates use separate keybindings."

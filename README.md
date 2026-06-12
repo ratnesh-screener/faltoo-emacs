@@ -40,6 +40,7 @@ C-c f x   stop review session
 C-c f q   cancel running Faltoo answer stream for this repo
 C-c f h   open current repo transcript
 C-c f i   open generic repo-independent chat
+C-c f b   switch this chat's Faltoo core: release/local/custom
 ```
 
 Review buffers are read-only, so review actions use direct keys:
@@ -101,6 +102,25 @@ RET       jump to source
  d        delete comment
  g        refresh summary
 ```
+
+
+## Switching FaltooBot core
+
+Faltoo resolves the Python environment per chat/workspace. By default each chat uses `faltoo-faltoobot-command`, which points at the released `faltoobot` command on `PATH`. To test local FaltooBot/FaltooChat changes from Emacs for only the current repo/generic chat, use:
+
+```text
+C-c f b   choose release, local, or custom Faltoo command for this chat
+```
+
+The local option defaults to:
+
+```text
+/Users/ratneshrastogi/screener_dev/FaltooBot/.venv/bin/faltoochat
+```
+
+This choice is stored per workspace, so switching one repo/generic chat does not change other chats. It affects new bridge calls for that chat; already-running processes keep the command they started with. While a local-core chat is answering, the mode-line label changes from `Faltoo:answering` to `Faltoo-beta:answering`.
+
+This is intentionally a command path, not a shell alias; Emacs will not see shell aliases such as `faltoo_codex`.
 
 ## Reload while developing
 

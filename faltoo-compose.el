@@ -59,8 +59,7 @@
 
 (defun faltoo-session-workspace ()
   "Return the workspace for commands run from source, popup, or transcript buffers."
-  (or (and (boundp 'faltoo-chat-workspace) faltoo-chat-workspace)
-      (faltoo-workspace)))
+  (faltoo-active-workspace))
 
 (defconst faltoo-session-commands
   '(((command . "/name") (preview . "name the current session"))

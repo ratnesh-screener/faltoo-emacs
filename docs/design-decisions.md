@@ -630,14 +630,20 @@ Emacs side should provide:
 
 Preferred approach:
 
-- Find `faltoobot` using `executable-find`.
-- Read its shebang.
+- Resolve the active command from the current workspace/chat override.
+- Fall back to `faltoo-faltoobot-command`, which defaults to `faltoobot` on `PATH`.
+- Keep a local-development command (`faltoo-local-faltoobot-command`) pointing at the local FaltooBot venv.
+- Store release/local/custom choices per workspace, so switching one repo or generic chat does not affect other chats.
+- Read the selected command's shebang.
 - Use that Python executable to run `python/faltoo_bridge.py`.
 
 Rationale:
 
 - This matches the Python environment where FaltooBot is installed.
 - This mirrors the Neovim plugin's behavior.
+- It allows testing local FaltooBot core changes from Emacs without launching FaltooChat in a terminal or relying on shell aliases that Emacs cannot see.
+- Already-running bridge processes keep the command they started with; the selected command affects new bridge calls for that workspace.
+- When a workspace using the local core is answering, the mode-line label changes from `Faltoo:...` to `Faltoo-beta:...` so the active core is visible without opening a status command.
 
 ## Status / Mode Line
 
