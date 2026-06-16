@@ -52,6 +52,7 @@ faltoo-ask.el          Source-buffer Ask UI and last-response popup.
 faltoo-comments.el     Pending review-comment model, posframe input, overlays, navigation, submit payload.
 faltoo-review.el       Review mode, review set, diff-hl integration, Magit wrappers, review file nav.
 faltoo-chat.el         Per-workspace transcript/history rendering.
+faltoo-tree.el         Tabulated transcript inspector for messages.json, row details, token summary, pruning.
 faltoo-quit.el         Quit guard for running requests / pending comments.
 python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 ```

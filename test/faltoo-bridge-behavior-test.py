@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 from pathlib import Path
 from contextlib import redirect_stdout
 import sys
 import types
+import tempfile
 import unittest
 
 
@@ -122,6 +124,57 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reset_result, 0)
         self.assertEqual(resume_result, 0)
         self.assertEqual(status_result, 0)
+
+
+    def test_tree_rows_streams_compact_rows_without_expanding_large_payloads(self):
+        """Scenario: Tree rows stream as compact JSONL batches for large transcripts."""
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+            messages_dir = workspace / "current"
+            messages_dir.mkdir()
+            image = "data:image/png;base64," + "A" * 1000
+            (messages_dir / "messages.json").write_text(
+                json.dumps(
+                    {
+                        "messages": [
+                            {"type": "message", "role": "user", "content": "hello"},
+                            {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {"type": "input_text", "text": "see image"},
+                                    {"type": "input_image", "image_url": image},
+                                ],
+                                "usage": {
+                                    "input_tokens": 10,
+                                    "output_tokens": 2,
+                                    "total_tokens": 12,
+                                    "input_tokens_details": {"cached_tokens": 8},
+                                },
+                            },
+                        ]
+                    }
+                )
+            )
+
+            # When compact tree rows are streamed.
+            out = io.StringIO()
+            with redirect_stdout(out):
+                result = bridge.tree_rows(workspace)
+
+        # Then Emacs receives lightweight row events instead of raw image payloads.
+        events = [json.loads(line) for line in out.getvalue().splitlines()]
+        self.assertEqual(result, 0)
+        self.assertEqual(events[0]["type"], "start")
+        self.assertEqual(events[-1], {"type": "done", "count": 2})
+        self.assertEqual(events[1]["rows"][0]["preview"], "hello")
+        self.assertIn("[image: input_image]", events[1]["rows"][1]["preview"])
+        self.assertNotIn("base64", events[1]["rows"][1]["preview"])
+        self.assertEqual(events[1]["rows"][1]["input_tokens"], 10)
+        self.assertEqual(events[1]["rows"][1]["output_tokens"], 2)
+        self.assertEqual(events[1]["rows"][1]["cached_tokens"], 8)
+        self.assertEqual(events[1]["rows"][1]["total_tokens"], 12)
 
     async def test_manual_slash_command_is_submitted_as_plain_text(self):
         """Scenario: Manually typed slash commands are not expanded by the bridge."""

@@ -6,6 +6,7 @@
 (require 'faltoo-bridge)
 (require 'faltoo-faces)
 (require 'faltoo-ui)
+(require 'faltoo-tree)
 (require 'faltoo-compose)
 (require 'faltoo-chat)
 (require 'faltoo-request)
@@ -20,6 +21,7 @@
   '("faltoo-core.el"
     "faltoo-faces.el"
     "faltoo-ui.el"
+    "faltoo-tree.el"
     "faltoo-compose.el"
     "faltoo-bridge.el"
     "faltoo-chat.el"

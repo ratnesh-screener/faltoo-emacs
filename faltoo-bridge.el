@@ -162,6 +162,41 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
     (process-send-eof proc)
     proc))
 
+
+(defun faltoo-bridge-tree-rows-stream (workspace on-event on-done)
+  "Stream compact transcript tree rows for WORKSPACE as JSONL events."
+  (let* ((cmd (faltoo-bridge--command (list "tree-rows" "--workspace" workspace) workspace))
+         (buffer (generate-new-buffer " *faltoo-tree-rows*"))
+         (stderr-buffer (generate-new-buffer " *faltoo-tree-rows-stderr*"))
+         (pending ""))
+    (make-process
+     :name "faltoo-tree-rows"
+     :buffer buffer
+     :command cmd
+     :connection-type 'pipe
+     :noquery t
+     :stderr stderr-buffer
+     :filter (lambda (_proc chunk)
+               (setq pending (concat pending chunk))
+               (let ((lines (split-string pending "\n")))
+                 (setq pending (car (last lines)))
+                 (dolist (line (butlast lines))
+                   (unless (string-empty-p line)
+                     (funcall on-event
+                              (json-parse-string line :object-type 'alist :array-type 'list))))))
+     :sentinel (lambda (proc _event)
+                 (when (memq (process-status proc) '(exit signal))
+                   (when (not (string-empty-p pending))
+                     (funcall on-event
+                              (json-parse-string pending :object-type 'alist :array-type 'list)))
+                   (unless (zerop (process-exit-status proc))
+                     (let ((stderr (string-trim (with-current-buffer stderr-buffer (buffer-string)))))
+                       (funcall on-event `((type . "error") (preview . ,stderr)))
+                       (message "%s" stderr)))
+                   (kill-buffer buffer)
+                   (kill-buffer stderr-buffer)
+                   (funcall on-done (zerop (process-exit-status proc))))))))
+
 (defun faltoo-bridge-cancel-stream (process)
   "Cancel a running Faltoo bridge PROCESS."
   (process-put process 'faltoo-cancelled t)

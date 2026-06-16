@@ -116,6 +116,37 @@
        (faltoo-chat-render (nreverse messages))))
     (kill-buffer (faltoo-chat-buffer-name-for (faltoo-workspace)))))
 
+
+(ert-deftest faltoo-performance-tree-refresh-large-inline-image-payloads-stays-interactive ()
+  "Scenario: Tree view loads transcripts with large inline images without previewing base64."
+  (let ((messages-file (make-temp-file "faltoo-tree-perf" nil ".json"))
+        (image-url (concat "data:image/png;base64," (make-string 10000 ?A))))
+    (unwind-protect
+        (progn
+          ;; Given a transcript has many image blocks with large inline payloads.
+          (write-region
+           (json-serialize
+            `((messages . ,(vconcat
+                             (cl-loop for index below 100
+                                      collect `((type . "message")
+                                                (role . "user")
+                                                (content . [((type . "input_text")
+                                                             (text . ,(format "image %s" index)))
+                                                            ((type . "input_image")
+                                                             (image_url . ,image-url))])))))))
+           nil messages-file nil 'silent)
+
+          ;; When the tree buffer parses and renders preview rows.
+          ;; Then loading stays interactive because previews summarize images.
+          (faltoo-perf--should-finish-under
+           0.75
+           (lambda ()
+             (with-temp-buffer
+               (faltoo-tree-mode)
+               (setq faltoo-tree-path messages-file)
+               (faltoo-tree-refresh)))))
+      (delete-file messages-file))))
+
 (ert-deftest faltoo-performance-routing-many-stream-chunks-stays-interactive ()
   "Scenario: Routing many stream chunks to popup and transcript stays interactive."
   (let ((popup (get-buffer-create "*Faltoo Perf Popup*")))

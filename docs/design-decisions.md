@@ -93,6 +93,7 @@ faltoo.el              ; public commands, setup, command map
 faltoo-core.el         ; workspace/session state
 faltoo-bridge.el       ; Python bridge calls and streaming JSONL parser
 faltoo-chat.el         ; per-workspace transcript/chat buffers
+faltoo-tree.el         ; tabulated messages.json transcript inspector
 faltoo-review.el       ; review source-buffer minor mode and unstaged files
 faltoo-comments.el     ; pending comment data, overlays, navigation
 faltoo-compose.el      ; compose helpers for comments and posframe Ask
@@ -336,7 +337,7 @@ Behavior:
 Commands and prompt templates are separate so prompt submission stays honest:
 
 - `C-c /` opens command completion for built-in session commands: `/reset`, `/resume`, `/name`, `/tree`, `/status`.
-- `/tree` opens the current session `messages.json`; `/status` renders FaltooBot config/session/usage status in a temporary popup.
+- `/tree` opens a `tabulated-list-mode` transcript inspector for the current session; `/status` renders FaltooBot config/session/usage status in a temporary popup.
 - `C-c p` opens saved prompt completion and pastes the full template text into the active prompt buffer for editing.
 - Manually typed slash text is submitted to the model as plain prompt text.
 
@@ -682,22 +683,31 @@ Implemented with `kill-emacs-query-functions`.
 
 Since default Ask messages send immediately, there is no pending Ask question in the MVP unless a draft feature is later added.
 
-## Raw Session / Tree Command
+## Session Transcript Inspector
 
 Neovim has `:Faltoo tree`, which opens `messages.json` via macOS `open`.
 
-In Emacs, prefer a clearer command:
-
-```elisp
-faltoo-open-messages-json
-```
+In Emacs, `/tree` opens a `faltoo-tree-mode` buffer backed by
+`tabulated-list-mode` so large raw transcript files can be scanned without
+reading encrypted reasoning blocks, long tool payloads, or base64 inline.
 
 Behavior:
 
 - Ask bridge for `messages-path`.
-- Open it with `find-file`.
+- Open the tree buffer immediately, then stream compact row batches from the bridge so large transcripts do not block Emacs UI startup.
+- Lazily parse the full `messages.json` only for detail/search/prune operations.
+- Show compact no-wrap index/short-role/type/preview columns by default.
+- Only the type text is colored; the row number carries the same kind color.
+- Enable `hl-line-mode` locally so the current row is easy to track.
+- Include reasoning and tool-output rows so row numbers remain continuous and match the backing messages array.
+- Open at the newest rows because recent transcript inspection is the common path.
+- `u`/`U` jump previous/next user message; `a`/`A` jump previous/next assistant answer; `T` toggles preview scanning vs token bookkeeping columns. Row detail buffers only bind `p`/`n` for previous/next tree row.
+- `/` or `C-c s` searches full parsed transcript blocks, not just visible preview text.
+- Rows are colored by message kind: user, assistant answer, reasoning, tool,
+  web search, image generation, and compaction.
+- `TAB`/`RET` opens a readable detail buffer; `o` opens raw `messages.json` centered at the selected/current detail item; `D` backs up the file and prunes from the selected row to the end.
 
-This is portable and more Emacs-native.
+`faltoo-open-messages-json` remains available for opening the raw file directly.
 
 
 ## Keybinding Philosophy

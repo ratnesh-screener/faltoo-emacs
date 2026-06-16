@@ -215,6 +215,162 @@ def slash_commands() -> int:
     print(json.dumps({"commands": payload}, ensure_ascii=False))
     return 0
 
+TREE_PREVIEW_SOURCE_LIMIT = 2000
+
+
+def _tree_one_line(value: Any) -> str:
+    if isinstance(value, str):
+        text = value[:TREE_PREVIEW_SOURCE_LIMIT].replace("\n", " ").strip()
+        if "data:image/" in text:
+            text = text.split("data:image/", maxsplit=1)[0] + "[inline image omitted]"
+        return " ".join(text.split())
+    if isinstance(value, (dict, list)):
+        return "[structured output]"
+    return str(value)
+
+
+def _tree_content_part_summary(part: Any) -> str | None:
+    if not isinstance(part, dict):
+        return None
+    if isinstance(part.get("text"), str):
+        return _tree_one_line(part["text"])
+    if isinstance(part.get("content"), str):
+        return _tree_one_line(part["content"])
+    if part.get("image_url"):
+        return f"[image: {part.get('type') or 'image'}]"
+    if part.get("type"):
+        return f"[{part['type']}]"
+    return None
+
+
+def _tree_content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return _tree_one_line(content)
+    if isinstance(content, list):
+        parts = (_tree_content_part_summary(part) for part in content)
+        return _tree_one_line(" ".join(filter(None, parts)))
+    return ""
+
+
+def _tree_tool_arguments(text: Any) -> str:
+    if not isinstance(text, str):
+        return ""
+    try:
+        args = json.loads(text) if len(text) <= TREE_PREVIEW_SOURCE_LIMIT else {}
+    except json.JSONDecodeError:
+        args = {}
+    summary = None
+    if isinstance(args, dict):
+        summary = args.get("command_summary") or args.get("command")
+    return _tree_one_line(summary or text)
+
+
+def _tree_role(item: dict[str, Any]) -> str:
+    role = item.get("role")
+    if not role:
+        item_type = item.get("type")
+        if item_type == "function_call_output":
+            role = "tool"
+        elif item_type in {
+            "reasoning",
+            "function_call",
+            "web_search_call",
+            "compaction",
+        }:
+            role = "assistant"
+        else:
+            role = "-"
+    return str(role)
+
+
+def _tree_display_role(role: str) -> str:
+    return {"user": "usr", "assistant": "ast", "tool": "tol"}.get(role, role[:3])
+
+
+def _tree_kind(item: dict[str, Any]) -> str:
+    item_type = item.get("type")
+    if item_type == "message":
+        return "answer" if item.get("role") == "assistant" else "message"
+    if item_type == "function_call":
+        return "image gen" if "image" in str(item.get("name") or "") else "tool call"
+    if item_type == "function_call_output":
+        return "tool output"
+    if item_type == "web_search_call":
+        return "web search"
+    return str(item_type or "-")
+
+
+def _tree_preview(item: dict[str, Any]) -> str:
+    item_type = item.get("type")
+    if item_type == "reasoning":
+        return "[reasoning] " + _tree_content_text(item.get("summary"))
+    if item_type == "function_call":
+        name = item.get("name") or "function_call"
+        return f"{name}: {_tree_tool_arguments(item.get('arguments'))}"
+    if item_type == "function_call_output":
+        output = item.get("output")
+        if isinstance(output, str):
+            return "output: " + _tree_one_line(output)
+        return "output: [structured output]"
+    if item_type == "web_search_call":
+        return f"web search: {item.get('status') or ''}"
+    if item_type == "compaction":
+        return "[compaction]"
+    return _tree_content_text(item.get("content"))
+
+
+def _tree_usage(item: dict[str, Any]) -> dict[str, int]:
+    usage = item.get("usage") if isinstance(item.get("usage"), dict) else {}
+    raw_details = usage.get("input_tokens_details")
+    details = raw_details if isinstance(raw_details, dict) else {}
+    values = {
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "cached_tokens": details.get("cached_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+    }
+    return {key: value for key, value in values.items() if isinstance(value, int)}
+
+
+def tree_rows(workspace: Path) -> int:
+    session = _session(workspace)
+    path = session.messages_path
+    print(json.dumps({"type": "start", "path": str(path)}, ensure_ascii=False), flush=True)
+    with path.open(encoding="utf-8") as handle:
+        items = json.load(handle).get("messages", [])
+
+    batch: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        role = _tree_role(item)
+        row = {
+            "index": index,
+            "role": role,
+            "display_role": _tree_display_role(role),
+            "message_type": item.get("type"),
+            "kind": _tree_kind(item),
+            "preview": _tree_preview(item)[:200],
+        }
+        row.update(_tree_usage(item))
+        batch.append(row)
+        if len(batch) >= 100:
+            print(
+                json.dumps({"type": "rows", "rows": batch}, ensure_ascii=False),
+                flush=True,
+            )
+            batch = []
+    if batch:
+        print(
+            json.dumps({"type": "rows", "rows": batch}, ensure_ascii=False),
+            flush=True,
+        )
+    print(
+        json.dumps({"type": "done", "count": len(items)}, ensure_ascii=False),
+        flush=True,
+    )
+    return 0
+
 
 def _emit(is_new: bool, classes: str, text: str) -> None:
     print(
@@ -238,7 +394,6 @@ async def _stream_answer(session: Session) -> None:
         _emit(is_new, classes, text)
 
     _emit(True, "done", "Assistant response saved.")
-
 
 async def append_review(workspace: Path, items: list[dict[str, Any]]) -> int:
     comments = _normalize_comments(items)
@@ -305,6 +460,9 @@ def main() -> int:
     status_parser = sub.add_parser("status")
     status_parser.add_argument("--workspace", default=str(Path.cwd()))
 
+    tree_rows_parser = sub.add_parser("tree-rows")
+    tree_rows_parser.add_argument("--workspace", default=str(Path.cwd()))
+
     sub.add_parser("append-review")
     sub.add_parser("append-message")
     sub.add_parser("slash-commands")
@@ -330,6 +488,8 @@ def main() -> int:
         return resume_session(Path(args.workspace), str(payload.get("session_id") or ""))
     if args.command == "status":
         return session_status(Path(args.workspace))
+    if args.command == "tree-rows":
+        return tree_rows(Path(args.workspace))
     if args.command == "append-review":
         payload = _stdin_payload()
         workspace = Path(str(payload.get("workspace") or Path.cwd()))

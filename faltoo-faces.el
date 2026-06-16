@@ -32,6 +32,46 @@
   '((t :inherit error))
   "Theme-aware face for Faltoo stream errors in the transcript.")
 
+(defface faltoo-tree-user-face
+  '((t :inherit font-lock-keyword-face :weight bold))
+  "Face for user rows in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-assistant-face
+  '((t :inherit font-lock-string-face))
+  "Face for assistant answer rows in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-tool-face
+  '((t :inherit font-lock-comment-face))
+  "Face for tool rows in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-reasoning-face
+  '((t :inherit shadow :slant italic))
+  "Face for reasoning rows in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-web-face
+  '((t :inherit font-lock-builtin-face))
+  "Face for web/search rows in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-compaction-face
+  '((t :inherit shadow))
+  "Face for compaction rows in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-input-token-face
+  '((t :inherit font-lock-variable-name-face))
+  "Face for input token counts in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-output-token-face
+  '((t :inherit font-lock-function-name-face))
+  "Face for output token counts in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-cached-token-face
+  '((t :inherit font-lock-constant-face))
+  "Face for cached token counts in the Faltoo transcript inspector.")
+
+(defface faltoo-tree-total-token-face
+  '((t :inherit font-lock-warning-face :weight bold))
+  "Face for total token counts in the Faltoo transcript inspector.")
+
 (defface faltoo-diff-insert-line-face
   '((t :extend t :background "#12381f"))
   "Face for inserted Git lines in Faltoo review buffers.")

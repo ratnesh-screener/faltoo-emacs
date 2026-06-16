@@ -7,6 +7,7 @@
 (require 'faltoo-bridge)
 (require 'faltoo-faces)
 (require 'faltoo-ui)
+(require 'faltoo-tree)
 
 (declare-function faltoo-chat-refresh "faltoo-chat")
 
@@ -66,7 +67,7 @@
     ((command . "/reset") (preview . "start a fresh session"))
     ((command . "/resume") (preview . "resume another session"))
     ((command . "/status") (preview . "show Faltoo status"))
-    ((command . "/tree") (preview . "open current session messages.json")))
+    ((command . "/tree") (preview . "inspect current session messages")))
   "Built-in Faltoo session commands handled by Emacs.")
 
 (defun faltoo-session-reset ()
@@ -87,9 +88,9 @@
 
 
 (defun faltoo-session-tree ()
-  "Open the current Faltoo session messages JSON file."
+  "Open the current Faltoo session transcript inspector."
   (interactive)
-  (find-file (faltoo-bridge-messages-path (faltoo-session-workspace))))
+  (faltoo-tree-open (faltoo-session-workspace)))
 
 (defun faltoo-session-status--pretty-json (text)
   "Return pretty JSON for TEXT, or TEXT when parsing fails."
