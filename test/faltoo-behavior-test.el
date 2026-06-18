@@ -71,6 +71,17 @@
     (when (get-buffer name)
       (kill-buffer name))))
 
+
+(defun faltoo-test--tree-row-cells (index item)
+  "Return rendered tree row cells for INDEX and ITEM."
+  (let ((row (faltoo-tree--row-text index item)))
+    (vconcat
+     (mapcar (lambda (range)
+               (string-trim-right (substring row (car range) (min (cdr range) (length row)))))
+             (if faltoo-tree-token-view
+                 '((0 . 9) (11 . 24) (26 . 36) (38 . 47) (49 . 59) (61 . 71) (73 . 1000))
+               '((0 . 9) (11 . 24) (26 . 1000)))))))
+
 (defun faltoo-test--kill-last-response-buffer (&optional workspace)
   "Kill the last-response popup buffer for WORKSPACE when it exists."
   (let ((buf (get-buffer (faltoo-last-response-buffer-name (or workspace (faltoo-workspace))))))
@@ -590,23 +601,22 @@
             ;; Then the buffer is already visible and in loading state before rows arrive.
             (with-current-buffer opened-buffer
               (should (derived-mode-p 'faltoo-tree-mode))
-              (should (null tabulated-list-entries)))
+              (should (derived-mode-p 'special-mode))
+              (should (null faltoo-tree-row-entries)))
 
             ;; When a streamed batch arrives.
             (funcall stream-callback
                      '((type . "rows")
                        (rows . [((index . 0)
                                  (role . "user")
-                                 (display_role . "usr")
                                  (message_type . "message")
                                  (kind . "message")
                                  (preview . "hello"))])))
 
-            ;; Then the row is queued for the throttled renderer without reparsing the whole transcript.
+            ;; Then the row is inserted without reparsing the whole transcript.
             (with-current-buffer opened-buffer
-              (should faltoo-tree-render-timer)
-              (faltoo-tree--flush-pending-rows)
-              (should (equal (mapcar #'car tabulated-list-entries) '(0))))))
+              (should (equal (mapcar #'car faltoo-tree-row-entries) '(0)))
+              (should (string-match-p "hello" (buffer-string))))))
       (when (buffer-live-p opened-buffer) (kill-buffer opened-buffer))
       (delete-file messages-file))))
 
@@ -628,13 +638,11 @@
                                 '((type . "rows")
                                   (rows . [((index . 0)
                                             (role . "user")
-                                            (display_role . "usr")
                                             (message_type . "message")
                                             (kind . "message")
                                             (preview . "first"))
                                            ((index . 1)
                                             (role . "assistant")
-                                            (display_role . "ast")
                                             (message_type . "message")
                                             (kind . "answer")
                                             (preview . "last"))])))
@@ -648,6 +656,30 @@
           ;; Then point starts near the newest row instead of the oldest row.
           (with-current-buffer opened-buffer
             (should (> (point) (point-min)))))
+      (delete-file messages-file))))
+
+
+(ert-deftest faltoo-tree-open-forces-truncation-after-display ()
+  "Scenario: Tree rows stay single-line even after opening in a split window."
+  (let ((messages-file (make-temp-file "faltoo-tree" nil ".json")) truncated-buffer truncated-arg)
+    (unwind-protect
+        (progn
+          ;; Given the tree opens through Emacs display rules.
+          (write-region (json-serialize '((messages . []))) nil messages-file nil 'silent)
+          (cl-letf (((symbol-function 'faltoo-bridge-messages-path) (lambda (_workspace) messages-file))
+                    ((symbol-function 'faltoo-bridge-tree-rows-stream) (lambda (&rest _args) 'fake-process))
+                    ((symbol-function 'pop-to-buffer) (lambda (buffer &rest _args) buffer))
+                    ((symbol-function 'toggle-truncate-lines)
+                     (lambda (arg)
+                       (setq truncated-buffer (current-buffer)
+                             truncated-arg arg))))
+            ;; When opening the tree.
+            (faltoo-tree-open "/repo"))
+
+          ;; Then truncation is forced after display, the same as manual `toggle-truncate-lines'.
+          (should (equal (buffer-name truncated-buffer) "*Faltoo Tree: repo*"))
+          (should (= truncated-arg 1)))
+      (when (get-buffer "*Faltoo Tree: repo*") (kill-buffer "*Faltoo Tree: repo*"))
       (delete-file messages-file))))
 
 (ert-deftest faltoo-tree-open-displays-in-another-window ()
@@ -684,8 +716,10 @@
           (faltoo-tree-refresh)
 
           ;; Then the path survives internal temp-buffer parsing and rows are rendered.
-          (should (= (length tabulated-list-entries) 1))
-          (should (equal (substring-no-properties (aref (cadr (car tabulated-list-entries)) 3)) "hello")))
+          (should (= (length faltoo-tree-row-entries) 1))
+          (let ((row (faltoo-test--tree-row-cells (caar faltoo-tree-row-entries)
+                                      (cdar faltoo-tree-row-entries))))
+            (should (equal (substring-no-properties (aref row 2)) "hello"))))
       (delete-file messages-file))))
 
 (ert-deftest faltoo-tree-prune-from-row-writes-valid-messages-json ()
@@ -806,11 +840,12 @@
   "Scenario: Transcript tree previews collapse embedded newlines."
   (with-temp-buffer
     (faltoo-tree-mode)
-    (let* ((row (cadr (faltoo-tree--entry 1 '((type . "message")
-                                              (role . "assistant")
-                                              (content . [((text . "first\n\nsecond"))]))))))
+    (let* ((item '((type . "message")
+                   (role . "assistant")
+                   (content . [((text . "first\n\nsecond"))])))
+           (row (faltoo-test--tree-row-cells 1 item)))
       ;; Then multiline assistant output does not split the table row.
-      (should-not (string-match-p "\n" (aref row 3))))))
+      (should-not (string-match-p "\n" (aref row 2))))))
 
 (ert-deftest faltoo-tree-mode-summarizes-inline-images-without-reading-base64 ()
   "Scenario: Transcript tree previews image payloads without expanding inline base64."
@@ -824,11 +859,11 @@
                                ((type . "input_image")
                                 (detail . "auto")
                                 (image_url . ,image-url))])))
-           (row (cadr (faltoo-tree--entry 1 item))))
+           (row (faltoo-test--tree-row-cells 1 item)))
       ;; Then tree rendering is cheap and only shows a small image marker.
-      (should (string-match-p "look at this" (aref row 3)))
-      (should (string-match-p "\[image: input_image\]" (aref row 3)))
-      (should-not (string-match-p "base64" (aref row 3))))))
+      (should (string-match-p "look at this" (aref row 2)))
+      (should (string-match-p "\[image: input_image\]" (aref row 2)))
+      (should-not (string-match-p "base64" (aref row 2))))))
 
 (ert-deftest faltoo-tree-mode-summarizes-structured-tool-output-without-errors ()
   "Scenario: Transcript tree previews structured tool output as a short marker."
@@ -837,22 +872,20 @@
     (let* ((item '((type . "function_call_output")
                    (output . (((type . "input_image")
                                (image_url . "data:image/png;base64,abc"))))))
-           (row (cadr (faltoo-tree--entry 2 item))))
+           (row (faltoo-test--tree-row-cells 2 item)))
       ;; Then non-string output does not reach string-trim directly.
-      (should (equal (substring-no-properties (aref row 3)) "output: [structured output]")))))
+      (should (equal (substring-no-properties (aref row 2)) "output: [structured output]")))))
 
-(ert-deftest faltoo-tree-mode-highlights-only-index-and-type-cell ()
+(ert-deftest faltoo-tree-mode-highlights-type-and-mutes-preview ()
   "Scenario: Transcript tree uses compact highlighting instead of painting whole rows."
   (with-temp-buffer
     (faltoo-tree-mode)
-    (let* ((row (cadr (faltoo-tree--entry 12 '((type . "message")
-                                                (role . "user")
-                                                (content . "hello"))))))
-      ;; Then the kind color appears on the row number and type only.
-      (should (get-text-property 0 'face (aref row 0)))
-      (should-not (get-text-property 0 'face (aref row 1)))
-      (should (get-text-property 0 'face (aref row 2)))
-      (should-not (get-text-property 0 'face (aref row 3))))))
+    (let* ((item '((type . "message") (role . "user") (content . "hello")))
+           (row (faltoo-test--tree-row-cells 12 item)))
+      ;; Then role is plain, type is colored, and preview is muted.
+      (should-not (get-text-property 0 'face (aref row 0)))
+      (should (eq (get-text-property 0 'face (aref row 1)) 'faltoo-tree-user-face))
+      (should (eq (get-text-property 0 'face (aref row 2)) 'faltoo-tree-preview-face)))))
 
 (ert-deftest faltoo-tree-mode-uses-short-role-labels-and-focused-view-options ()
   "Scenario: Transcript tree is a focused table, not a wrapped source buffer."
@@ -864,18 +897,20 @@
 
     ;; Then visual noise is disabled and the current row is highlighted.
     (should truncate-lines)
+    (should truncate-partial-width-windows)
     (should-not word-wrap)
     (should-not visual-line-mode)
-    (should-not display-line-numbers-mode)
+    (should display-line-numbers-mode)
     (should hl-line-mode)
 
     ;; And roles use short labels.
     (should (equal (substring-no-properties
-                    (aref (cadr (faltoo-tree--entry 1 '((type . "message") (role . "user")))) 1))
-                   "usr"))
+                    (aref (faltoo-test--tree-row-cells 1 '((type . "message") (role . "user"))) 0))
+                   "USR"))
     (should (equal (substring-no-properties
-                    (aref (cadr (faltoo-tree--entry 2 '((type . "message") (role . "assistant")))) 1))
-                   "ast"))))
+                    (aref (faltoo-test--tree-row-cells 2 '((type . "message") (role . "assistant"))) 0))
+                   "AST"))))
+
 
 (ert-deftest faltoo-tree-mode-renders-compact-message-rows-by-default ()
   "Scenario: Transcript tree defaults to the small useful column set."
@@ -885,13 +920,12 @@
                    (role . "assistant")
                    (phase . "final_answer")
                    (content . [((text . "Done with the fix") (type . "output_text"))])))
-           (row (cadr (faltoo-tree--entry 7 item))))
-      ;; Then only sr. no, role, type, and preview are shown.
-      (should (= (length row) 4))
-      (should (equal (substring-no-properties (aref row 0)) "7"))
-      (should (equal (substring-no-properties (aref row 1)) "ast"))
-      (should (equal (substring-no-properties (aref row 2)) "answer"))
-      (should (equal (substring-no-properties (aref row 3)) "Done with the fix")))))
+           (row (faltoo-test--tree-row-cells 7 item)))
+      ;; Then only role, type, and preview are shown; line numbers provide row numbers.
+      (should (= (length row) 3))
+      (should (equal (substring-no-properties (aref row 0)) "AST"))
+      (should (equal (substring-no-properties (aref row 1)) "answer"))
+      (should (equal (substring-no-properties (aref row 2)) "Done with the fix")))))
 
 
 
@@ -911,13 +945,13 @@
                    (faltoo-tree-output-tokens . :null)
                    (faltoo-tree-cached-tokens . :null)
                    (faltoo-tree-total-tokens . :null)))
-           (row (cadr (faltoo-tree--entry 1 item))))
+           (row (faltoo-test--tree-row-cells 1 item)))
 
       ;; Then token cells are blank, not passed to `number-to-string'.
+      (should (equal (aref row 2) ""))
       (should (equal (aref row 3) ""))
       (should (equal (aref row 4) ""))
-      (should (equal (aref row 5) ""))
-      (should (equal (aref row 6) "")))))
+      (should (equal (aref row 5) "")))))
 
 (ert-deftest faltoo-tree-mode-toggles-token-bookkeeping-view ()
   "Scenario: Transcript tree can switch from preview scanning to token bookkeeping."
@@ -931,26 +965,27 @@
                              (total_tokens . 120)
                              (input_tokens_details . ((cached_tokens . 80)))))
                    (content . [((text . "Long assistant preview text that is not useful in token view"))])))
-           (preview-row (cadr (faltoo-tree--entry 4 item))))
+           (preview-row (faltoo-test--tree-row-cells 4 item)))
 
       ;; When token view is toggled on.
+      (setq faltoo-tree-row-entries (list (cons 4 item)))
+      (faltoo-tree--render-rows)
+      (faltoo-tree--goto-id 4)
       (faltoo-tree-toggle-token-view)
-      (let ((token-row (cadr (faltoo-tree--entry 4 item))))
+      (let ((token-row (faltoo-test--tree-row-cells 4 item)))
 
         ;; Then preview becomes compact and token columns are shown with distinct faces.
         (should faltoo-tree-token-view)
-        (should (= (length tabulated-list-format) 8))
-        (should (equal (car (aref tabulated-list-format 3)) "In"))
-        (should (equal (car (aref tabulated-list-format 7)) "Preview"))
-        (should (< (length (aref token-row 7)) (length (aref preview-row 3))))
-        (should (equal (substring-no-properties (aref token-row 3)) "100"))
-        (should (equal (substring-no-properties (aref token-row 4)) "20"))
-        (should (equal (substring-no-properties (aref token-row 5)) "80"))
-        (should (equal (substring-no-properties (aref token-row 6)) "120"))
-        (should (eq (get-text-property 0 'face (aref token-row 3)) 'faltoo-tree-input-token-face))
-        (should (eq (get-text-property 0 'face (aref token-row 4)) 'faltoo-tree-output-token-face))
-        (should (eq (get-text-property 0 'face (aref token-row 5)) 'faltoo-tree-cached-token-face))
-        (should (eq (get-text-property 0 'face (aref token-row 6)) 'faltoo-tree-total-token-face))))))
+        (should (= (faltoo-tree--current-index) 4))
+        (should (< (length (aref token-row 6)) (length (aref preview-row 2))))
+        (should (equal (substring-no-properties (aref token-row 2)) "100"))
+        (should (equal (substring-no-properties (aref token-row 3)) "20"))
+        (should (equal (substring-no-properties (aref token-row 4)) "80"))
+        (should (equal (substring-no-properties (aref token-row 5)) "120"))
+        (should (eq (get-text-property 0 'face (aref token-row 2)) 'faltoo-tree-input-token-face))
+        (should (eq (get-text-property 0 'face (aref token-row 3)) 'faltoo-tree-output-token-face))
+        (should (eq (get-text-property 0 'face (aref token-row 4)) 'faltoo-tree-cached-token-face))
+        (should (eq (get-text-property 0 'face (aref token-row 5)) 'faltoo-tree-total-token-face))))))
 
 
 (ert-deftest faltoo-tree-token-view-formats-large-token-counts-with-commas ()
@@ -967,13 +1002,13 @@
                              (output_tokens . 98765)
                              (total_tokens . 1333332)
                              (input_tokens_details . ((cached_tokens . 1200000)))))))
-           (row (cadr (faltoo-tree--entry 1 item))))
+           (row (faltoo-test--tree-row-cells 1 item)))
 
       ;; Then counts are easier to scan in the tree.
-      (should (equal (substring-no-properties (aref row 3)) "1,234,567"))
-      (should (equal (substring-no-properties (aref row 4)) "98,765"))
-      (should (equal (substring-no-properties (aref row 5)) "1,200,000"))
-      (should (equal (substring-no-properties (aref row 6)) "1,333,332")))))
+      (should (equal (substring-no-properties (aref row 2)) "1,234,567"))
+      (should (equal (substring-no-properties (aref row 3)) "98,765"))
+      (should (equal (substring-no-properties (aref row 4)) "1,200,000"))
+      (should (equal (substring-no-properties (aref row 5)) "1,333,332")))))
 
 (ert-deftest faltoo-tree-streamed-rows-carry-token-bookkeeping ()
   "Scenario: Streamed tree rows can render token columns without full JSON parsing."
@@ -981,14 +1016,11 @@
     ;; Given token view is active before a streamed row arrives.
     (faltoo-tree-mode)
     (setq faltoo-tree-token-view t)
-    (faltoo-tree--set-format)
-
     ;; When a compact row includes token usage.
     (faltoo-tree--stream-event
      '((type . "rows")
        (rows . [((index . 9)
                  (role . "assistant")
-                 (display_role . "ast")
                  (message_type . "message")
                  (kind . "answer")
                  (preview . "Done")
@@ -996,14 +1028,14 @@
                  (output_tokens . 22)
                  (cached_tokens . 7)
                  (total_tokens . 33))])))
-    (faltoo-tree--flush-pending-rows)
 
     ;; Then the token values render directly from the stream metadata.
-    (let ((row (cadr (car tabulated-list-entries))))
-      (should (equal (substring-no-properties (aref row 3)) "11"))
-      (should (equal (substring-no-properties (aref row 4)) "22"))
-      (should (equal (substring-no-properties (aref row 5)) "7"))
-      (should (equal (substring-no-properties (aref row 6)) "33")))))
+    (let ((row (faltoo-test--tree-row-cells (caar faltoo-tree-row-entries)
+                                           (cdar faltoo-tree-row-entries))))
+      (should (equal (substring-no-properties (aref row 2)) "11"))
+      (should (equal (substring-no-properties (aref row 3)) "22"))
+      (should (equal (substring-no-properties (aref row 4)) "7"))
+      (should (equal (substring-no-properties (aref row 5)) "33")))))
 
 (ert-deftest faltoo-tree-mode-jumps-between-user-and-answer-rows ()
   "Scenario: Transcript tree has direct jumps to recent user and answer rows."
@@ -1025,24 +1057,24 @@
 
           ;; When jumping through users and answers.
           (faltoo-tree-previous-user)
-          (should (= (tabulated-list-get-id) 2))
+          (should (= (faltoo-tree--current-index) 2))
           (faltoo-tree-previous-user)
-          (should (= (tabulated-list-get-id) 0))
+          (should (= (faltoo-tree--current-index) 0))
           (faltoo-tree-previous-user)
-          (should (= (tabulated-list-get-id) 2))
+          (should (= (faltoo-tree--current-index) 2))
           (faltoo-tree-next-user)
-          (should (= (tabulated-list-get-id) 0))
+          (should (= (faltoo-tree--current-index) 0))
           (faltoo-tree-next-user)
-          (should (= (tabulated-list-get-id) 2))
+          (should (= (faltoo-tree--current-index) 2))
           (goto-char (point-max))
           (faltoo-tree-previous-answer)
-          (should (= (tabulated-list-get-id) 3))
+          (should (= (faltoo-tree--current-index) 3))
           (faltoo-tree-previous-answer)
-          (should (= (tabulated-list-get-id) 1))
+          (should (= (faltoo-tree--current-index) 1))
           (faltoo-tree-previous-answer)
-          (should (= (tabulated-list-get-id) 3))
+          (should (= (faltoo-tree--current-index) 3))
           (faltoo-tree-next-answer)
-          (should (= (tabulated-list-get-id) 1)))
+          (should (= (faltoo-tree--current-index) 1)))
       (delete-file messages-file))))
 
 
@@ -1068,6 +1100,34 @@
       (should (= faltoo-tree-detail-index 2))
       (faltoo-tree-detail-previous-item)
       (should (= faltoo-tree-detail-index 1)))))
+
+
+(ert-deftest faltoo-tree-detail-mode-jumps-between-user-and-answer-rows ()
+  "Scenario: Row detail buffers can jump by user and assistant answer rows."
+  (let ((messages '(((type . "message") (role . "user") (content . "first user"))
+                    ((type . "reasoning") (summary . [((text . "thinking"))]))
+                    ((type . "message") (role . "assistant") (content . [((text . "first answer"))]))
+                    ((type . "message") (role . "user") (content . "last user"))
+                    ((type . "message") (role . "assistant") (content . [((text . "last answer"))])))))
+    (with-temp-buffer
+      ;; Given a detail buffer is showing the last assistant answer.
+      (faltoo-tree-detail-mode)
+      (setq faltoo-tree-messages messages
+            faltoo-tree-detail-indexes '(0 1 2 3 4)
+            faltoo-tree-detail-index 4)
+      (faltoo-tree-detail-render)
+
+      ;; When jumping by user and answer rows from detail.
+      (faltoo-tree-previous-user)
+      (should (= faltoo-tree-detail-index 3))
+      (should (string-match-p "last user" (buffer-string)))
+      (faltoo-tree-previous-user)
+      (should (= faltoo-tree-detail-index 0))
+      (faltoo-tree-next-answer)
+      (should (= faltoo-tree-detail-index 2))
+      (should (string-match-p "first answer" (buffer-string)))
+      (faltoo-tree-next-answer)
+      (should (= faltoo-tree-detail-index 4)))))
 
 (ert-deftest faltoo-tree-detail-open-captures-current-tree-rows-for-navigation ()
   "Scenario: Detail p/n follows the rows visible in the originating tree buffer."
@@ -1122,7 +1182,7 @@
           (faltoo-tree-search "needle-from-backing-json")
 
           ;; Then point lands on the backing message row, not a current-buffer preview match.
-          (should (= (tabulated-list-get-id) 1)))
+          (should (= (faltoo-tree--current-index) 1)))
       (delete-file messages-file))))
 
 (ert-deftest faltoo-tree-mode-search-wraps-through-visible-message-rows ()
@@ -1146,7 +1206,7 @@
           (faltoo-tree-search "needle")
 
           ;; Then search wraps to the first matching row.
-          (should (= (tabulated-list-get-id) 0)))
+          (should (= (faltoo-tree--current-index) 0)))
       (delete-file messages-file))))
 
 (ert-deftest faltoo-tree-modes-use-only-active-navigation-bindings ()
@@ -1167,13 +1227,15 @@
     (dolist (key '("v" "f" "r" "t"))
       (should-not (lookup-key (current-local-map) (kbd key)))))
   (with-temp-buffer
-    ;; And the detail buffer only adds previous/next visible tree row bindings.
+    ;; And the detail buffer keeps row and user/answer jump bindings.
     (faltoo-tree-detail-mode)
     (should (eq (key-binding (kbd "p")) #'faltoo-tree-detail-previous-item))
     (should (eq (key-binding (kbd "n")) #'faltoo-tree-detail-next-item))
     (should (eq (key-binding (kbd "o")) #'faltoo-tree-open-raw))
-    (should-not (lookup-key (current-local-map) (kbd "u")))
-    (should-not (lookup-key (current-local-map) (kbd "a")))))
+    (should (eq (key-binding (kbd "u")) #'faltoo-tree-previous-user))
+    (should (eq (key-binding (kbd "U")) #'faltoo-tree-next-user))
+    (should (eq (key-binding (kbd "a")) #'faltoo-tree-previous-answer))
+    (should (eq (key-binding (kbd "A")) #'faltoo-tree-next-answer))))
 
 (ert-deftest faltoo-tree-keymaps-refresh-when-plugin-is-reloaded ()
   "Scenario: Reloading the plugin replaces stale tree keymaps."
@@ -1186,9 +1248,10 @@
     ;; When tree keymaps are rebuilt during reload.
     (faltoo-tree--setup-keymaps)
 
-    ;; Then stale removed bindings disappear and detail p/n is available.
+    ;; Then stale removed bindings disappear and detail navigation is available.
     (should-not (lookup-key faltoo-tree-mode-map (kbd "v")))
-    (should-not (lookup-key faltoo-tree-detail-mode-map (kbd "u")))
+    (should (eq (lookup-key faltoo-tree-detail-mode-map (kbd "u"))
+                #'faltoo-tree-previous-user))
     (should (eq (lookup-key faltoo-tree-detail-mode-map (kbd "p"))
                 #'faltoo-tree-detail-previous-item))
     (should (eq (lookup-key faltoo-tree-detail-mode-map (kbd "n"))
@@ -1214,22 +1277,54 @@
           (setq faltoo-tree-path messages-file)
           (faltoo-tree-refresh)
 
-          ;; Then line numbers are hidden but no transcript rows are filtered out.
-          (should-not display-line-numbers-mode)
-          (should (equal (mapcar #'car tabulated-list-entries) '(0 1 2 3))))
+          ;; Then line numbers stay visible and no transcript rows are filtered out.
+          (should display-line-numbers-mode)
+          (should (equal (mapcar #'car faltoo-tree-row-entries) '(0 1 2 3))))
       (delete-file messages-file))))
 
-(ert-deftest faltoo-tree-mode-colors-rows-by-message-kind ()
-  "Scenario: Transcript tree uses faces to distinguish item kinds."
+
+(ert-deftest faltoo-tree-type-faces-use-doom-palette-when-available ()
+  "Scenario: Transcript tree type colors follow the active Doom theme palette."
+  (cl-letf (((symbol-function 'doom-color)
+             (lambda (name)
+               (alist-get name '((green . "green")
+                                 (violet . "violet")
+                                 (blue . "blue")
+                                 (dark-blue . "dark-blue")
+                                 (magenta . "magenta")
+                                 (grey . "grey")
+                                 (cyan . "cyan")
+                                 (orange . "orange"))))))
+    ;; When applying theme colors.
+    (faltoo-tree-apply-theme-faces)
+
+    ;; Then tree type faces use distinct theme palette colors.
+    (should (equal (face-attribute 'faltoo-tree-user-face :foreground nil) "green"))
+    (should (equal (face-attribute 'faltoo-tree-assistant-face :foreground nil) "violet"))
+    (should (equal (face-attribute 'faltoo-tree-tool-call-face :foreground nil) "blue"))
+    (should (equal (face-attribute 'faltoo-tree-tool-output-face :foreground nil) "dark-blue"))
+    (should (equal (face-attribute 'faltoo-tree-image-face :foreground nil) "magenta"))
+    (should (equal (face-attribute 'faltoo-tree-reasoning-face :foreground nil) "grey"))
+    (should (equal (face-attribute 'faltoo-tree-web-face :foreground nil) "cyan"))
+    (should (equal (face-attribute 'faltoo-tree-compaction-face :foreground nil) "orange"))))
+
+(ert-deftest faltoo-tree-mode-colors-types-and-mutes-previews ()
+  "Scenario: Transcript tree colors each row type while keeping previews muted."
   (with-temp-buffer
     (faltoo-tree-mode)
-    (let* ((user-row (cadr (faltoo-tree--entry 1 '((type . "message") (role . "user") (content . "hi")))))
-           (tool-row (cadr (faltoo-tree--entry 2 '((type . "function_call") (name . "run_shell_call")))))
-           (reasoning-row (cadr (faltoo-tree--entry 3 '((type . "reasoning"))))))
-      ;; Then the row cells carry the intended theme-aware faces.
-      (should (eq (get-text-property 0 'face (aref user-row 0)) 'faltoo-tree-user-face))
-      (should (eq (get-text-property 0 'face (aref tool-row 0)) 'faltoo-tree-tool-face))
-      (should (eq (get-text-property 0 'face (aref reasoning-row 0)) 'faltoo-tree-reasoning-face)))))
+    (dolist (case '(("message" "user" nil faltoo-tree-user-face)
+                    ("message" "assistant" nil faltoo-tree-assistant-face)
+                    ("function_call" nil nil faltoo-tree-tool-call-face)
+                    ("function_call_output" nil nil faltoo-tree-tool-output-face)
+                    ("function_call" nil "image gen" faltoo-tree-image-face)
+                    ("reasoning" nil nil faltoo-tree-reasoning-face)
+                    ("web_search_call" nil nil faltoo-tree-web-face)
+                    ("compaction" nil nil faltoo-tree-compaction-face)))
+      (let* ((item `((type . ,(nth 0 case)) (role . ,(nth 1 case)) (kind . ,(nth 2 case)) (content . "preview")))
+             (row (faltoo-test--tree-row-cells 1 item)))
+        ;; Then the type has its own face and preview uses muted styling.
+        (should (eq (get-text-property 0 'face (aref row 1)) (nth 3 case)))
+        (should (eq (get-text-property 0 'face (aref row 2)) 'faltoo-tree-preview-face))))))
 
 (ert-deftest faltoo-session-status-shows-pretty-popup ()
   "Scenario: The /status command renders Faltoo status in a popup."
@@ -1288,20 +1383,6 @@
         (should markdown-fontify-code-blocks-natively)
         (should markdown-fontify-whole-heading-line)
         (should markdown-header-scaling)))))
-
-(ert-deftest faltoo-markdown-append-refreshes-fontification ()
-  "Scenario: Newly streamed Markdown gets fontified for inline and fenced code."
-  (let ((buf (faltoo-chat-render nil)) ensured)
-    ;; Given Markdown fontification calls are observed.
-
-    ;; When Markdown containing inline and fenced code is appended.
-    (cl-letf (((symbol-function 'font-lock-ensure)
-               (lambda (&optional start end)
-                 (setq ensured (cons start end)))))
-      (faltoo-popup-append buf "`inline`\n\n```elisp\n(message \"x\")\n```"))
-
-    ;; Then the appended region is explicitly fontified.
-    (should ensured)))
 
 (ert-deftest faltoo-markdown-modes-remap-heading-and-quote-faces-without-resizing-text ()
   "Scenario: Pretty Markdown keeps heading sizes from fighting the user's theme."
@@ -1527,8 +1608,30 @@
   ;; Then the assistant heading is finalized and a fresh user prompt is appended.
   (with-current-buffer (faltoo-test--chat-buffer-name)
     (should (string-match-p "# Assistant\n\nstreamed answer\n\n---\n# User\n\n$" (buffer-string)))
-    (should-not (string-match-p "Assistant · answering" (buffer-string)))
-    (should (= (point) faltoo-chat-prompt-marker))))
+    (should-not (string-match-p "Assistant · answering" (buffer-string)))))
+
+(ert-deftest faltoo-chat-finish-stream-preserves-reader-position ()
+  "Scenario: Finishing a stream appends footer text without dragging the transcript view."
+  (faltoo-test--kill-chat-buffer)
+  ;; Given the reader is looking at the top of a visible transcript while a stream is active.
+  (let ((buf (faltoo-chat-render '(((role . "user") (text . "old prompt"))
+                                   ((role . "assistant")
+                                    (text . "old answer\nline 2\nline 3\nline 4"))))))
+    (with-current-buffer buf
+      (faltoo-chat-start-stream "Assistant · answering")
+      (faltoo-chat-append-stream "new answer"))
+    (delete-other-windows)
+    (switch-to-buffer buf)
+    (goto-char (point-min))
+    (set-window-start (selected-window) (point-min))
+
+    ;; When the stream finishes.
+    (faltoo-chat-finish-stream nil 1.2 nil)
+
+    ;; Then the visible transcript position stays where the reader left it.
+    (should (= (point) (point-min)))
+    (should (= (window-point) (point-min)))
+    (should (= (window-start) (point-min)))))
 
 (ert-deftest faltoo-chat-finish-stream-shows-elapsed-time-in-footer ()
   "Scenario: Completed streams show how long the assistant took in the footer."
@@ -2282,6 +2385,34 @@
     (should-not (plist-member (cdr captured-args) :position))
     (with-current-buffer popup
       (should (eq faltoo-popup-return-window source-window)))))
+
+
+(ert-deftest faltoo-rendering-leaves-markdown-fontification-to-emacs ()
+  "Scenario: Transcript and popup edits do not force synchronous font-lock refreshes."
+  (let ((buf (faltoo-chat-render '(((role . "user") (text . "prompt"))
+                                   ((role . "assistant") (text . "old answer")))))
+        calls)
+    ;; Given font-lock refreshes are observable.
+    (cl-letf (((symbol-function 'font-lock-flush)
+               (lambda (&rest args) (push (cons 'flush args) calls)))
+              ((symbol-function 'font-lock-ensure)
+               (lambda (&rest args) (push (cons 'ensure args) calls))))
+
+      ;; When streaming text, finishing the stream, and adding popup follow-up UI.
+      (with-current-buffer buf
+        (faltoo-chat-start-stream "Assistant · answering")
+        (faltoo-chat-append-stream "```text
+hello
+```")
+        (faltoo-chat-finish-stream nil 1.2 nil))
+      (let ((popup (faltoo-popup-buffer "*Faltoo No Manual Fontify Test*" #'faltoo-popup-mode)))
+        (faltoo-popup-append popup "```text
+hello
+```" t))
+
+      ;; Then rendering leaves Markdown fontification to normal Emacs redisplay.
+      (should-not calls)
+      (should-not (fboundp 'faltoo-ui-fontify-markdown)))))
 
 (ert-deftest faltoo-popup-close-restores-previous-source-window ()
   "Scenario: Closing a popup returns focus to the buffer that opened it."

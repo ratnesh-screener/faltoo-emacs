@@ -157,12 +157,18 @@
           (faltoo-chat-start-stream "Assistant · answering")
 
           ;; When many answer chunks arrive.
-          ;; Then routing remains interactive.
-          (faltoo-perf--should-finish-under
-           0.25
-           (lambda ()
-             (dotimes (_ 1000)
-               (faltoo-request--route-event '((classes . "answer") (text . "x")) (faltoo-workspace) popup nil)))))
+          ;; Then routing remains interactive without forcing font-lock refreshes.
+          (let ((fontify-calls 0))
+            (cl-letf (((symbol-function 'font-lock-flush)
+                       (lambda (&rest _args) (cl-incf fontify-calls)))
+                      ((symbol-function 'font-lock-ensure)
+                       (lambda (&rest _args) (cl-incf fontify-calls))))
+              (faltoo-perf--should-finish-under
+               0.25
+               (lambda ()
+                 (dotimes (_ 1000)
+                   (faltoo-request--route-event '((classes . "answer") (text . "x")) (faltoo-workspace) popup nil)))))
+            (should (= fontify-calls 0))))
       (when (get-buffer popup) (kill-buffer popup))
       (let ((chat-buffer-name (faltoo-chat-buffer-name-for (faltoo-workspace))))
         (when (get-buffer chat-buffer-name) (kill-buffer chat-buffer-name))))))

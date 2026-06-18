@@ -6,6 +6,7 @@
 - This plugin is for the user's personal use only. Be opinionated, direct, and fast.
 - Optimize for the user's desired workflow, not broad compatibility or fallback support.
 - Prefer simple, boring, easy-to-read code that works quickly.
+- Always do the smallest change that solves the current problem; question whether every new line is really needed.
 - Avoid excessive defensive programming; this codebase controls most call paths.
 - Fix root causes with higher-level architecture changes, not localized band-aid handlers.
 - Preserve the code-first workflow: source buffers are primary; transcript is secondary/history.
@@ -52,7 +53,7 @@ faltoo-ask.el          Source-buffer Ask UI and last-response popup.
 faltoo-comments.el     Pending review-comment model, posframe input, overlays, navigation, submit payload.
 faltoo-review.el       Review mode, review set, diff-hl integration, Magit wrappers, review file nav.
 faltoo-chat.el         Per-workspace transcript/history rendering.
-faltoo-tree.el         Tabulated transcript inspector for messages.json, row details, token summary, pruning.
+faltoo-tree.el         Special-mode transcript inspector for messages.json, row details, token summary, pruning.
 faltoo-quit.el         Quit guard for running requests / pending comments.
 python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 ```

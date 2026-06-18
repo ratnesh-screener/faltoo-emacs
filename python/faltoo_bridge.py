@@ -283,10 +283,6 @@ def _tree_role(item: dict[str, Any]) -> str:
     return str(role)
 
 
-def _tree_display_role(role: str) -> str:
-    return {"user": "usr", "assistant": "ast", "tool": "tol"}.get(role, role[:3])
-
-
 def _tree_kind(item: dict[str, Any]) -> str:
     item_type = item.get("type")
     if item_type == "message":
@@ -347,7 +343,6 @@ def tree_rows(workspace: Path) -> int:
         row = {
             "index": index,
             "role": role,
-            "display_role": _tree_display_role(role),
             "message_type": item.get("type"),
             "kind": _tree_kind(item),
             "preview": _tree_preview(item)[:200],

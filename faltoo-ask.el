@@ -91,7 +91,6 @@
     (faltoo-compose-insert-section "Follow-up")
     (setq faltoo-ask-question-marker (point-marker)
           faltoo-ask-sent nil)
-    (faltoo-ui-fontify-markdown)
     (goto-char faltoo-ask-question-marker)))
 
 (defun faltoo-ask-send ()
@@ -110,8 +109,7 @@
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (goto-char (point-max))
-        (faltoo-compose-insert-section "Assistant")
-        (faltoo-ui-fontify-markdown)))
+        (faltoo-compose-insert-section "Assistant")))
     (faltoo-request-message
      message buf
      (lambda (ok)
@@ -142,7 +140,6 @@
       (faltoo-compose-insert-section "Follow-up")
       (setq faltoo-ask-question-marker (point-marker))
       (insert follow-up)
-      (faltoo-ui-fontify-markdown)
       (goto-char faltoo-ask-question-marker))))
 
 (defun faltoo-show-last-response ()

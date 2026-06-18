@@ -152,12 +152,12 @@ Built-in commands:
 /status       show Faltoo status in a temporary popup
 ```
 
-`/tree` opens immediately, then streams compact no-wrap rows with colored row numbers and type cells.
+`/tree` opens immediately, then streams compact no-wrap rows with native line numbers and colored type cells.
 Inside the tree: `TAB`/`RET` inspect row, `/` or `C-c s` search backing messages,
 `u`/`U` previous/next user, `a`/`A` previous/next assistant answer,
 `o` open raw messages.json at row, `T` toggle token bookkeeping view, `D` prune from row to end, `g` refresh.
-Inside row detail: `p`/`n` previous/next visible tree row, `o` open raw messages.json at current detail row, `C-c C-k` close.
-Reasoning/tool-output rows are included, so row numbers match the backing messages array.
+Inside row detail: `p`/`n` previous/next visible tree row, `u`/`U` previous/next user, `a`/`A` previous/next answer, `o` open raw messages.json at current detail row, `C-c C-k` close.
+Reasoning/tool-output rows are included, so visible line numbers stay continuous.
 
 Manually typed slash text is sent to the LLM as normal prompt text. Use `C-c /` for session commands.
 

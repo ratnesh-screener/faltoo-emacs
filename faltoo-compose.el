@@ -52,7 +52,6 @@
       (erase-buffer)
       (faltoo-compose-insert-title title)
       (insert "\n" text)
-      (faltoo-ui-fontify-markdown)
       (goto-char (point-min))
       (when read-only
         (setq buffer-read-only t)))))

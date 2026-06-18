@@ -155,8 +155,7 @@
         (erase-buffer)
         (dolist (message messages)
           (faltoo-chat--insert-message message))
-        (faltoo-chat--insert-user-prompt)
-        (faltoo-ui-fontify-markdown))
+        (faltoo-chat--insert-user-prompt))
       (goto-char faltoo-chat-prompt-marker))
     buf))
 
@@ -243,8 +242,7 @@
 ")
       (faltoo-chat--highlight-user-block start (save-excursion
                                                 (goto-char start)
-                                                (line-end-position)))
-      (faltoo-ui-fontify-markdown start (point)))))
+                                                (line-end-position))))))
 
 (defun faltoo-chat-send ()
   "Send the current workspace transcript prompt."
@@ -306,28 +304,28 @@
   (let ((buf (get-buffer (faltoo-chat-buffer-name-for (or workspace (faltoo-workspace))))))
     (when buf
       (with-current-buffer buf
-        (let ((inhibit-read-only t))
-          (when (markerp faltoo-chat-stream-heading-marker)
-            (save-excursion
-              (goto-char faltoo-chat-stream-heading-marker)
-              (when (looking-at "# Assistant · answering")
-                (delete-region (point) (line-end-position))
-                (insert "# Assistant")))
-            (setq faltoo-chat-stream-heading-marker nil))
-          (goto-char (point-max))
-          (cond
-           ((looking-back "\n\n" nil))
-           ((looking-back "\n" nil) (insert "\n"))
-           (t (insert "\n\n")))
-          (when elapsed-seconds
-            (insert (format "> Assistant took: %s\n"
-                            (faltoo-chat--duration-label elapsed-seconds))))
-          (when rate-limit
-            (insert (format "> %s\n" rate-limit)))
-          (when (or elapsed-seconds rate-limit)
-            (insert "\n"))
-          (faltoo-chat--insert-user-prompt)
-          (faltoo-ui-fontify-markdown))))))
+        (save-excursion
+          (let ((inhibit-read-only t))
+            (when (markerp faltoo-chat-stream-heading-marker)
+              (save-excursion
+                (goto-char faltoo-chat-stream-heading-marker)
+                (when (looking-at "# Assistant · answering")
+                  (delete-region (point) (line-end-position))
+                  (insert "# Assistant")))
+              (setq faltoo-chat-stream-heading-marker nil))
+            (goto-char (point-max))
+            (cond
+             ((looking-back "\n\n" nil))
+             ((looking-back "\n" nil) (insert "\n"))
+             (t (insert "\n\n")))
+            (when elapsed-seconds
+              (insert (format "> Assistant took: %s\n"
+                              (faltoo-chat--duration-label elapsed-seconds))))
+            (when rate-limit
+              (insert (format "> %s\n" rate-limit)))
+            (when (or elapsed-seconds rate-limit)
+              (insert "\n"))
+            (faltoo-chat--insert-user-prompt)))))))
 
 
 (provide 'faltoo-chat)

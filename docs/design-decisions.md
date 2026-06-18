@@ -93,7 +93,7 @@ faltoo.el              ; public commands, setup, command map
 faltoo-core.el         ; workspace/session state
 faltoo-bridge.el       ; Python bridge calls and streaming JSONL parser
 faltoo-chat.el         ; per-workspace transcript/chat buffers
-faltoo-tree.el         ; tabulated messages.json transcript inspector
+faltoo-tree.el         ; messages.json transcript inspector
 faltoo-review.el       ; review source-buffer minor mode and unstaged files
 faltoo-comments.el     ; pending comment data, overlays, navigation
 faltoo-compose.el      ; compose helpers for comments and posframe Ask
@@ -337,7 +337,7 @@ Behavior:
 Commands and prompt templates are separate so prompt submission stays honest:
 
 - `C-c /` opens command completion for built-in session commands: `/reset`, `/resume`, `/name`, `/tree`, `/status`.
-- `/tree` opens a `tabulated-list-mode` transcript inspector for the current session; `/status` renders FaltooBot config/session/usage status in a temporary popup.
+- `/tree` opens a custom `faltoo-tree-mode` transcript inspector for the current session; `/status` renders FaltooBot config/session/usage status in a temporary popup.
 - `C-c p` opens saved prompt completion and pastes the full template text into the active prompt buffer for editing.
 - Manually typed slash text is submitted to the model as plain prompt text.
 
@@ -687,21 +687,22 @@ Since default Ask messages send immediately, there is no pending Ask question in
 
 Neovim has `:Faltoo tree`, which opens `messages.json` via macOS `open`.
 
-In Emacs, `/tree` opens a `faltoo-tree-mode` buffer backed by
-`tabulated-list-mode` so large raw transcript files can be scanned without
-reading encrypted reasoning blocks, long tool payloads, or base64 inline.
+In Emacs, `/tree` opens a `faltoo-tree-mode` buffer derived from
+`special-mode`. It inserts compact rows incrementally so large raw transcript
+files can be scanned without redrawing old rows or reading encrypted reasoning
+blocks, long tool payloads, or base64 inline.
 
 Behavior:
 
 - Ask bridge for `messages-path`.
 - Open the tree buffer immediately, then stream compact row batches from the bridge so large transcripts do not block Emacs UI startup.
 - Lazily parse the full `messages.json` only for detail/search/prune operations.
-- Show compact no-wrap index/short-role/type/preview columns by default.
-- Only the type text is colored; the row number carries the same kind color.
+- Show compact no-wrap short-role/type/preview columns by default; Emacs line numbers provide row position.
+- Only the type text is colored; row numbers stay native Emacs line numbers.
 - Enable `hl-line-mode` locally so the current row is easy to track.
-- Include reasoning and tool-output rows so row numbers remain continuous and match the backing messages array.
+- Include reasoning and tool-output rows so visible line numbers stay continuous.
 - Open at the newest rows because recent transcript inspection is the common path.
-- `u`/`U` jump previous/next user message; `a`/`A` jump previous/next assistant answer; `T` toggles preview scanning vs token bookkeeping columns. Row detail buffers only bind `p`/`n` for previous/next tree row.
+- `u`/`U` jump previous/next user message; `a`/`A` jump previous/next assistant answer; `T` toggles preview scanning vs token bookkeeping columns. Row detail buffers keep the same user/answer jumps and use `p`/`n` for previous/next visible tree row.
 - `/` or `C-c s` searches full parsed transcript blocks, not just visible preview text.
 - Rows are colored by message kind: user, assistant answer, reasoning, tool,
   web search, image generation, and compaction.

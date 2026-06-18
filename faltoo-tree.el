@@ -2,7 +2,6 @@
 
 (require 'cl-lib)
 (require 'json)
-(require 'tabulated-list)
 (require 'subr-x)
 (require 'hl-line)
 (require 'faltoo-core)
@@ -17,10 +16,8 @@
 (defvar-local faltoo-tree-path nil)
 (defvar-local faltoo-tree-payload nil)
 (defvar-local faltoo-tree-messages nil)
-(defvar-local faltoo-tree-row-items nil)
+(defvar-local faltoo-tree-row-entries nil)
 (defvar-local faltoo-tree-stream-process nil)
-(defvar-local faltoo-tree-pending-rows nil)
-(defvar-local faltoo-tree-render-timer nil)
 (defvar-local faltoo-tree-detail-index nil)
 (defvar-local faltoo-tree-detail-indexes nil)
 (defvar-local faltoo-tree-last-search nil)
@@ -34,7 +31,7 @@
   "Build tree keymaps so plugin reloads drop stale bindings."
   (setq faltoo-tree-mode-map
         (let ((map (make-sparse-keymap)))
-          (set-keymap-parent map tabulated-list-mode-map)
+          (set-keymap-parent map special-mode-map)
           (define-key map (kbd "RET") #'faltoo-tree-inspect)
           (define-key map (kbd "TAB") #'faltoo-tree-inspect)
           (define-key map (kbd "g") #'faltoo-tree-refresh)
@@ -53,6 +50,10 @@
           (set-keymap-parent map faltoo-popup-mode-map)
           (define-key map (kbd "p") #'faltoo-tree-detail-previous-item)
           (define-key map (kbd "n") #'faltoo-tree-detail-next-item)
+          (define-key map (kbd "u") #'faltoo-tree-previous-user)
+          (define-key map (kbd "U") #'faltoo-tree-next-user)
+          (define-key map (kbd "a") #'faltoo-tree-previous-answer)
+          (define-key map (kbd "A") #'faltoo-tree-next-answer)
           (define-key map (kbd "o") #'faltoo-tree-open-raw)
           map)))
 
@@ -60,52 +61,26 @@
 
 (define-derived-mode faltoo-tree-detail-mode faltoo-popup-mode "Faltoo-Detail"
   "Mode for inspecting one Faltoo transcript item."
-  (setq-local header-line-format "p/n prev/next tree row · o raw JSON · C-c C-k close"))
+  (setq-local header-line-format "p/n row · u/U user · a/A answer · o raw JSON · C-c C-k close"))
 
-(define-derived-mode faltoo-tree-mode tabulated-list-mode "Faltoo-Tree"
+(define-derived-mode faltoo-tree-mode special-mode "Faltoo-Tree"
   "Inspect Faltoo messages.json as structured transcript rows."
-  (setq tabulated-list-padding 2
-        tabulated-list-sort-key nil
-        header-line-format "TAB/RET inspect · / search · o raw JSON · u/a prev user/answer · U/A next · T tokens · g refresh · D prune")
-  (faltoo-tree--apply-view-options)
-  (hl-line-mode 1)
-  (faltoo-tree--set-format)
-  (tabulated-list-init-header))
-
-(defun faltoo-tree--apply-view-options ()
-  "Apply focused one-row table display options to the current tree buffer."
   (setq-local truncate-lines t)
+  (setq-local truncate-partial-width-windows t)
   (setq-local word-wrap nil)
   (when (bound-and-true-p visual-line-mode)
     (visual-line-mode -1))
-  (when (bound-and-true-p display-line-numbers-mode)
-    (display-line-numbers-mode -1)))
-
-(defun faltoo-tree--set-format ()
-  "Use compact transcript columns."
-  (setq tabulated-list-format
-        (if faltoo-tree-token-view
-            [("#" 6 t) ("Role" 10 t) ("Type" 14 t)
-             ("In" 11 t) ("Out" 10 t) ("Cached" 11 t) ("Total" 11 t)
-             ("Preview" 20 nil)]
-          [("#" 6 t) ("Role" 10 t) ("Type" 14 t) ("Preview" 100 nil)])))
+  (display-line-numbers-mode 1)
+  (hl-line-mode 1))
 
 (defun faltoo-tree-toggle-token-view ()
   "Toggle between preview scanning and token bookkeeping columns."
   (interactive)
-  (when (timerp faltoo-tree-render-timer)
-    (cancel-timer faltoo-tree-render-timer)
-    (setq faltoo-tree-render-timer nil))
-  (faltoo-tree--flush-pending-rows)
-  (setq faltoo-tree-token-view (not faltoo-tree-token-view))
-  (faltoo-tree--set-format)
-  (setq tabulated-list-entries
-        (cl-loop for item in (or faltoo-tree-messages faltoo-tree-row-items)
-                 for index from 0
-                 collect (faltoo-tree--entry index item)))
-  (tabulated-list-init-header)
-  (tabulated-list-print t)
-  (faltoo-tree--apply-view-options))
+  (let ((index (get-text-property (line-beginning-position) 'faltoo-tree-index)))
+    (setq faltoo-tree-token-view (not faltoo-tree-token-view))
+    (faltoo-tree--render-rows)
+    (when index
+      (faltoo-tree--goto-id index))))
 
 (defun faltoo-tree-open (&optional workspace)
   "Open the structured transcript inspector for WORKSPACE."
@@ -119,33 +94,30 @@
       (setq faltoo-tree-workspace workspace
             faltoo-tree-path path)
       (faltoo-tree-refresh-stream))
-    (pop-to-buffer buf #'display-buffer-pop-up-window)))
+    (pop-to-buffer buf #'display-buffer-pop-up-window)
+    (with-current-buffer buf
+      (let ((inhibit-message t))
+        (toggle-truncate-lines 1)))))
 
 (defun faltoo-tree-refresh ()
   "Reload the current transcript tree synchronously."
   (interactive)
   (faltoo-tree--load-messages)
-  (setq faltoo-tree-row-items faltoo-tree-messages
-        tabulated-list-entries (cl-loop for item in faltoo-tree-messages
-                                        for index from 0
-                                        collect (faltoo-tree--entry index item)))
-  (tabulated-list-print t)
-  (faltoo-tree--apply-view-options))
+  (setq faltoo-tree-row-entries (cl-loop for item in faltoo-tree-messages
+                                         for index from 0
+                                         collect (cons index item)))
+  (faltoo-tree--render-rows))
 
 (defun faltoo-tree-refresh-stream ()
   "Reload the current transcript tree by streaming compact rows."
   (interactive)
   (when (process-live-p faltoo-tree-stream-process)
     (delete-process faltoo-tree-stream-process))
-  (when (timerp faltoo-tree-render-timer)
-    (cancel-timer faltoo-tree-render-timer))
   (setq faltoo-tree-payload nil
         faltoo-tree-messages nil
-        faltoo-tree-row-items nil
-        faltoo-tree-pending-rows nil
-        faltoo-tree-render-timer nil
-        tabulated-list-entries nil)
-  (tabulated-list-print t)
+        faltoo-tree-row-entries nil)
+  (let ((inhibit-read-only t))
+    (erase-buffer))
   (let ((buffer (current-buffer)))
     (setq faltoo-tree-stream-process
           (faltoo-bridge-tree-rows-stream
@@ -175,74 +147,64 @@
      (when-let ((path (alist-get 'path event)))
        (setq faltoo-tree-path path)))
     ("rows"
-     (setq faltoo-tree-pending-rows
-           (append faltoo-tree-pending-rows (append (alist-get 'rows event) nil)))
-     (faltoo-tree--schedule-render))))
-
-(defun faltoo-tree--schedule-render ()
-  "Schedule a throttled render for pending streamed rows."
-  (unless (timerp faltoo-tree-render-timer)
-    (let ((buffer (current-buffer)))
-      (setq faltoo-tree-render-timer
-            (run-at-time 0.05 nil
-                         (lambda ()
-                           (when (buffer-live-p buffer)
-                             (with-current-buffer buffer
-                               (setq faltoo-tree-render-timer nil)
-                               (faltoo-tree--flush-pending-rows)))))))))
-
-(defun faltoo-tree--flush-pending-rows ()
-  "Append pending streamed rows and refresh the table once."
-  (when faltoo-tree-pending-rows
-    (let (items entries)
-      (dolist (row faltoo-tree-pending-rows)
-        (let* ((index (alist-get 'index row))
-               (item (faltoo-tree--item-from-row row)))
-          (push item items)
-          (push (faltoo-tree--entry index item) entries)))
-      (setq faltoo-tree-pending-rows nil
-            faltoo-tree-row-items (append faltoo-tree-row-items (nreverse items))
-            tabulated-list-entries (append tabulated-list-entries (nreverse entries))))
-    (tabulated-list-print t)
-    (faltoo-tree--apply-view-options)))
+     (let (entries)
+       (dolist (row (append (alist-get 'rows event) nil))
+         (push (cons (alist-get 'index row) row) entries))
+       (setq entries (nreverse entries)
+             faltoo-tree-row-entries (append faltoo-tree-row-entries entries))
+       (faltoo-tree--append-entries entries)))))
 
 (defun faltoo-tree--stream-done ()
   "Finish a streamed tree refresh."
-  (when (timerp faltoo-tree-render-timer)
-    (cancel-timer faltoo-tree-render-timer)
-    (setq faltoo-tree-render-timer nil))
-  (faltoo-tree--flush-pending-rows)
-  (tabulated-list-print t)
-  (goto-char (point-max))
-  (faltoo-tree--apply-view-options))
+  (when (= (point) (point-min))
+    (goto-char (point-max))))
 
-(defun faltoo-tree--entry (index item)
-  "Return tabulated row for transcript ITEM at INDEX."
+(defun faltoo-tree--row-text (_index item)
+  "Return display row text for transcript ITEM."
   (let* ((face (faltoo-tree--face item))
-         (number (propertize (number-to-string index) 'face face))
          (type (propertize (faltoo-tree--type-label item) 'face face))
-         (preview (truncate-string-to-width (faltoo-tree--preview item)
-                                            (if faltoo-tree-token-view 18 120) nil nil "…")))
-    (list index
-          (if faltoo-tree-token-view
-              (vector number (faltoo-tree--role-label item) type
-                      (faltoo-tree--token-cell item 'input_tokens 'faltoo-tree-input-token-face)
-                      (faltoo-tree--token-cell item 'output_tokens 'faltoo-tree-output-token-face)
-                      (faltoo-tree--token-cell item 'cached_tokens 'faltoo-tree-cached-token-face)
-                      (faltoo-tree--token-cell item 'total_tokens 'faltoo-tree-total-token-face)
-                      preview)
-            (vector number (faltoo-tree--role-label item) type preview)))))
+         (preview (propertize
+                   (truncate-string-to-width (faltoo-tree--preview item)
+                                             (if faltoo-tree-token-view 18 120) nil nil "…")
+                   'face 'faltoo-tree-preview-face)))
+    (if faltoo-tree-token-view
+        (concat (faltoo-tree--pad (faltoo-tree--role-label item) 9) "  "
+                (faltoo-tree--pad type 13) "  "
+                (faltoo-tree--pad (faltoo-tree--token-cell item 'input_tokens 'faltoo-tree-input-token-face) 10) "  "
+                (faltoo-tree--pad (faltoo-tree--token-cell item 'output_tokens 'faltoo-tree-output-token-face) 9) "  "
+                (faltoo-tree--pad (faltoo-tree--token-cell item 'cached_tokens 'faltoo-tree-cached-token-face) 10) "  "
+                (faltoo-tree--pad (faltoo-tree--token-cell item 'total_tokens 'faltoo-tree-total-token-face) 10) "  "
+                preview)
+      (concat (faltoo-tree--pad (faltoo-tree--role-label item) 9) "  "
+              (faltoo-tree--pad type 13) "  "
+              preview))))
 
-(defun faltoo-tree--item-from-row (row)
-  "Return a small transcript item compatible with navigation predicates from ROW."
-  `((type . ,(or (alist-get 'message_type row) (alist-get 'type row)))
-    (role . ,(alist-get 'role row))
-    (faltoo-tree-kind . ,(alist-get 'kind row))
-    (faltoo-tree-preview . ,(alist-get 'preview row))
-    (faltoo-tree-input-tokens . ,(alist-get 'input_tokens row))
-    (faltoo-tree-output-tokens . ,(alist-get 'output_tokens row))
-    (faltoo-tree-cached-tokens . ,(alist-get 'cached_tokens row))
-    (faltoo-tree-total-tokens . ,(alist-get 'total_tokens row))))
+(defun faltoo-tree--pad (text width)
+  "Return TEXT padded or truncated to WIDTH."
+  (let ((text (truncate-string-to-width text width nil nil "…")))
+    (concat text (make-string (max 0 (- width (string-width text))) ? ))))
+
+(defun faltoo-tree--insert-entry (entry)
+  "Insert one transcript tree ENTRY."
+  (let* ((index (car entry))
+         (item (cdr entry))
+         (start (point)))
+    (insert (faltoo-tree--row-text index item) "\n")
+    (add-text-properties start (point) `(faltoo-tree-index ,index))))
+
+(defun faltoo-tree--append-entries (entries)
+  "Append transcript tree ENTRIES without redrawing old rows."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (goto-char (point-max))
+      (dolist (entry entries)
+        (faltoo-tree--insert-entry entry)))))
+
+(defun faltoo-tree--render-rows ()
+  "Render all current tree rows."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (faltoo-tree--append-entries faltoo-tree-row-entries)))
 
 (defun faltoo-tree--role-label (item)
   "Return the short user-facing role label for ITEM."
@@ -252,15 +214,16 @@
                     ((or "reasoning" "function_call" "web_search_call" "compaction") "assistant")
                     (_ "-")))))
     (pcase role
-      ("user" "usr")
-      ("assistant" "ast")
-      ("tool" "tol")
-      (_ (truncate-string-to-width role 3 nil nil "")))))
+      ("user" "USR")
+      ("assistant" "AST")
+      ("tool" "TOL")
+      (_ (upcase (truncate-string-to-width role 3 nil nil ""))))))
 
 (defun faltoo-tree--type-label (item)
   "Return the user-facing type label for ITEM."
   (or (alist-get 'faltoo-tree-kind item)
-      (pcase (alist-get 'type item)
+      (alist-get 'kind item)
+      (pcase (or (alist-get 'type item) (alist-get 'message_type item))
         ("message" (if (equal (alist-get 'role item) "assistant") "answer" "message"))
         ("function_call" (if (string-match-p "image" (or (alist-get 'name item) ""))
                              "image gen"
@@ -270,10 +233,12 @@
         (type (or type "-")))))
 
 (defun faltoo-tree--face (item)
-  "Return the row face for ITEM."
-  (pcase (alist-get 'type item)
-    ("function_call" 'faltoo-tree-tool-face)
-    ("function_call_output" 'faltoo-tree-tool-face)
+  "Return the type face for ITEM."
+  (pcase (or (alist-get 'type item) (alist-get 'message_type item))
+    ("function_call" (if (equal (alist-get 'kind item) "image gen")
+                         'faltoo-tree-image-face
+                       'faltoo-tree-tool-call-face))
+    ("function_call_output" 'faltoo-tree-tool-output-face)
     ("reasoning" 'faltoo-tree-reasoning-face)
     ("web_search_call" 'faltoo-tree-web-face)
     ("compaction" 'faltoo-tree-compaction-face)
@@ -283,8 +248,10 @@
 
 (defun faltoo-tree--preview (item)
   "Return a compact preview for transcript ITEM."
-  (or (alist-get 'faltoo-tree-preview item)
-      (pcase (alist-get 'type item)
+  (if-let ((preview (or (alist-get 'faltoo-tree-preview item)
+                         (alist-get 'preview item))))
+      (faltoo-tree--one-line preview)
+    (pcase (or (alist-get 'type item) (alist-get 'message_type item))
         ("reasoning" (concat "[reasoning] " (faltoo-tree--content-text (alist-get 'summary item))))
         ("function_call" (concat (or (alist-get 'name item) "function_call") ": "
                                  (faltoo-tree--tool-arguments (alist-get 'arguments item))))
@@ -310,10 +277,10 @@
 (defun faltoo-tree--token-value (item key)
   "Return token count KEY from ITEM usage or compact streamed metadata."
   (or (pcase key
-        ('input_tokens (alist-get 'faltoo-tree-input-tokens item))
-        ('output_tokens (alist-get 'faltoo-tree-output-tokens item))
-        ('cached_tokens (alist-get 'faltoo-tree-cached-tokens item))
-        ('total_tokens (alist-get 'faltoo-tree-total-tokens item)))
+        ('input_tokens (or (alist-get 'faltoo-tree-input-tokens item) (alist-get 'input_tokens item)))
+        ('output_tokens (or (alist-get 'faltoo-tree-output-tokens item) (alist-get 'output_tokens item)))
+        ('cached_tokens (or (alist-get 'faltoo-tree-cached-tokens item) (alist-get 'cached_tokens item)))
+        ('total_tokens (or (alist-get 'faltoo-tree-total-tokens item) (alist-get 'total_tokens item))))
       (let ((usage (alist-get 'usage item)))
         (pcase key
           ('cached_tokens (alist-get 'cached_tokens (alist-get 'input_tokens_details usage)))
@@ -389,36 +356,32 @@
 
 (defun faltoo-tree--answer-p (item)
   "Return non-nil when ITEM is an assistant answer row."
-  (and (equal (alist-get 'type item) "message")
+  (and (equal (or (alist-get 'type item) (alist-get 'message_type item)) "message")
        (equal (alist-get 'role item) "assistant")))
 
 (defun faltoo-tree--user-p (item)
   "Return non-nil when ITEM is a user message row."
-  (and (equal (alist-get 'type item) "message")
+  (and (equal (or (alist-get 'type item) (alist-get 'message_type item)) "message")
        (equal (alist-get 'role item) "user")))
-
-(defun faltoo-tree--visible-ids ()
-  "Return currently visible transcript row indexes."
-  (mapcar #'car tabulated-list-entries))
 
 (defun faltoo-tree--goto-id (id)
   "Move point to visible transcript row ID."
   (goto-char (point-min))
-  (while (and (not (eobp)) (not (equal (tabulated-list-get-id) id)))
+  (while (and (not (eobp))
+              (not (equal (get-text-property (line-beginning-position) 'faltoo-tree-index) id)))
     (forward-line 1))
   (beginning-of-line))
 
-(defun faltoo-tree--matching-indexes (predicate indexes)
-  "Return transcript INDEXES whose messages match PREDICATE."
-  (let ((items (or faltoo-tree-messages faltoo-tree-row-items)))
-    (cl-remove-if-not
-     (lambda (index)
-       (funcall predicate (nth index items)))
-     indexes)))
+(defun faltoo-tree--item-at-index (index)
+  "Return tree item for transcript INDEX."
+  (or (cdr (assoc index faltoo-tree-row-entries))
+      (nth index faltoo-tree-messages)))
 
 (defun faltoo-tree--find-index (predicate direction current indexes)
   "Return matching transcript index near CURRENT in DIRECTION, wrapping at edges."
-  (let* ((sorted (sort (faltoo-tree--matching-indexes predicate indexes) #'<))
+  (let* ((sorted (cl-remove-if-not
+                  (lambda (index) (funcall predicate (faltoo-tree--item-at-index index)))
+                  (sort (copy-sequence indexes) #'<)))
          (target (if (> direction 0)
                      (or (and current (cl-find-if (lambda (index) (> index current)) sorted))
                          (car sorted))
@@ -428,9 +391,17 @@
 
 (defun faltoo-tree--jump (predicate direction)
   "Jump to the next visible row matching PREDICATE in DIRECTION, wrapping at edges."
-  (faltoo-tree--goto-id
-   (faltoo-tree--find-index predicate direction (tabulated-list-get-id)
-                            (faltoo-tree--visible-ids))))
+  (if (derived-mode-p 'faltoo-tree-detail-mode)
+      (progn
+        (setq faltoo-tree-detail-index
+              (faltoo-tree--find-index predicate direction faltoo-tree-detail-index
+                                       (or faltoo-tree-detail-indexes
+                                           (number-sequence 0 (1- (length faltoo-tree-messages))))))
+        (faltoo-tree-detail-render))
+    (faltoo-tree--goto-id
+     (faltoo-tree--find-index predicate direction
+                              (unless (eobp) (faltoo-tree--current-index))
+                              (mapcar #'car faltoo-tree-row-entries)))))
 
 (defun faltoo-tree-search (query)
   "Search visible transcript rows by full backing JSON content for QUERY."
@@ -442,7 +413,7 @@
      (faltoo-tree--find-index
       (lambda (item)
         (string-match-p (regexp-quote query) (prin1-to-string item)))
-      1 (tabulated-list-get-id) (faltoo-tree--visible-ids))))
+      1 (faltoo-tree--current-index) (mapcar #'car faltoo-tree-row-entries))))
   (message "Faltoo tree search: %s" query))
 
 (defun faltoo-tree-previous-user ()
@@ -467,7 +438,12 @@
 
 (defun faltoo-tree--current-index ()
   "Return transcript index at point."
-  (or (tabulated-list-get-id) (user-error "No transcript row here")))
+  (or (get-text-property (line-beginning-position) 'faltoo-tree-index)
+      (and (not (bobp))
+           (save-excursion
+             (forward-line -1)
+             (get-text-property (line-beginning-position) 'faltoo-tree-index)))
+      (user-error "No transcript row here")))
 
 (defun faltoo-tree-inspect ()
   "Inspect selected transcript row."
@@ -476,7 +452,7 @@
   (let* ((index (faltoo-tree--current-index))
          (path faltoo-tree-path)
          (messages faltoo-tree-messages)
-         (visible-indexes (faltoo-tree--visible-ids))
+         (visible-indexes (mapcar #'car faltoo-tree-row-entries))
          (buf (get-buffer-create "*Faltoo Tree Detail*")))
     (with-current-buffer buf
       (faltoo-tree-detail-mode)
@@ -577,7 +553,7 @@
   (when-let ((usage (alist-get 'usage item)))
     (insert "\n## Usage\n\n```json\n" (faltoo-tree--json usage) "\n```\n"))
   (insert "\n## Content\n\n")
-  (pcase (alist-get 'type item)
+  (pcase (or (alist-get 'type item) (alist-get 'message_type item))
     ("function_call"
      (insert "```json\n" (faltoo-tree--limit (faltoo-tree--pretty-json-string (alist-get 'arguments item))) "\n```\n"))
     ("function_call_output"

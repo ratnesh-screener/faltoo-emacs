@@ -24,14 +24,6 @@
                        (markdown-blockquote-face :inherit font-lock-doc-face :slant italic)))
     (apply #'face-remap-add-relative face-spec)))
 
-(defun faltoo-ui-fontify-markdown (&optional start end)
-  "Refresh Markdown fontification between START and END."
-  (when (derived-mode-p 'markdown-mode)
-    (let ((beg (or start (point-min)))
-          (fin (or end (point-max))))
-      (font-lock-flush beg fin)
-      (font-lock-ensure beg fin))))
-
 (defvar faltoo-popup-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-k") #'faltoo-popup-close)
@@ -67,8 +59,6 @@
   (let ((return-window (selected-window)))
     (with-current-buffer buffer
       (setq faltoo-popup-return-window return-window))
-    (with-current-buffer buffer
-      (faltoo-ui-fontify-markdown))
     (let* ((background (face-attribute 'default :background nil t))
            (frame (posframe-show buffer
                                  :poshandler #'posframe-poshandler-frame-center
@@ -107,7 +97,6 @@ When PRESERVE-READER-POSITION is non-nil, keep existing window scroll and point.
         (goto-char (point-max))
         (insert text)
         (add-text-properties start (point) '(rear-nonsticky t))
-        (faltoo-ui-fontify-markdown start (point))
         (if preserve-reader-position
             (goto-char buffer-point)
           (goto-char (point-max)))))
