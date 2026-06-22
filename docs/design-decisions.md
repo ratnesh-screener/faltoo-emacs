@@ -168,7 +168,7 @@ Faltoo also has one generic repo-independent transcript:
 
 This is opened with `C-c f i` and anchored at `faltoo-generic-chat-directory`. It is for quick questions that should not use the current repo/session. It still uses the same transcript UI, streaming path, session commands, and prompt sending flow; only the workspace/session anchor differs.
 
-Repo transcript buffers set `default-directory` to the repo root, so chat sends, file references, slash commands, and refreshes use the same FaltooBot workspace/session as source-buffer commands from that repo. Running-request state is scoped by workspace: one repo or generic chat can be answering while another workspace accepts a new prompt.
+Repo transcript buffers set `default-directory` to the workspace root, so chat sends, file references, slash commands, and refreshes use the same FaltooBot workspace/session as source-buffer commands from that workspace. The workspace is the Git root when present, otherwise the current folder. Running-request state is scoped by workspace: one repo/folder or generic chat can be answering while another workspace accepts a new prompt.
 
 When a streamed assistant response completes, the finalized assistant heading stays clean and a quoted footer records elapsed wall-clock time, e.g. `> Assistant took: 20.0s`. If the Codex stream includes a `codex.rate_limits` event, store the latest formatted `Remaining limit: ...` text per workspace and append it to the same assistant footer. This is not a separate LLM call or standalone quota endpoint in the current FaltooBot path; it is metadata delivered by the Codex response stream.
 
@@ -961,9 +961,7 @@ slash-commands
 
 ### Workspace Detection
 
-Workspace is the Git repository root. If no Git repository is present, report an error.
-
-Do not implement complicated fallback workspace detection for MVP.
+Workspace is the Git repository root when present. If no Git repository is present, inform the user and use the current folder as the FaltooBot workspace/session. Review-specific Git operations still require a Git repository and should report that from the bridge.
 
 ### Review Set
 

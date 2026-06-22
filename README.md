@@ -20,7 +20,7 @@ The author's `~/.emacs.d/init.el` already has a `use-package faltoo` block.
 
 ## Main flow
 
-Open a file in a Git repo, then run commands from that source buffer. Faltoo uses that file's Git root as the FaltooBot workspace/session. Open files from another repo to talk to that repo's persisted FaltooChat session.
+Open a file in a Git repo, then run commands from that source buffer. Faltoo uses that file's Git root as the FaltooBot workspace/session. Outside Git, Faltoo uses the current folder and reports that fallback once. Open files from another repo/folder to talk to that workspace's persisted FaltooChat session.
 
 For review, open a Git repo with unstaged changes, then run:
 
@@ -145,8 +145,8 @@ C-c p     paste a saved prompt template for editing
 Built-in commands:
 
 ```text
-/reset        start a fresh session for the current Git workspace
-/resume       pick another session for the current Git workspace
+/reset        start a fresh session for the current workspace
+/resume       pick another session for the current workspace
 /name         rename the current session; empty name clears it
 /tree         inspect the current session messages
 /status       show Faltoo status in a temporary popup

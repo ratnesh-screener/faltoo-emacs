@@ -20,13 +20,18 @@ The active workspace is always recomputed from `default-directory'.")
 (defvar faltoo-last-rate-limits (make-hash-table :test #'equal))
 (defvar faltoo-after-reload-review-buffers-hook nil
   "Hook run after Faltoo reloads review buffers from disk.")
+(defvar faltoo-last-non-git-workspace-message nil
+  "Last non-Git workspace Faltoo reported as a folder fallback.")
 
 (defun faltoo-git-root ()
-  "Return the current Git root or signal an error."
-  (let ((root (locate-dominating-file default-directory ".git")))
-    (unless root
-      (user-error "Faltoo requires a Git repository"))
-    (file-truename root)))
+  "Return the current Git root, or current folder when outside Git."
+  (if-let ((root (locate-dominating-file default-directory ".git")))
+      (file-truename root)
+    (let ((workspace (file-truename default-directory)))
+      (unless (equal faltoo-last-non-git-workspace-message workspace)
+        (setq faltoo-last-non-git-workspace-message workspace)
+        (message "Faltoo: no Git repository found; using current folder"))
+      workspace)))
 
 (defun faltoo-workspace ()
   "Return the active Faltoo workspace for `default-directory'."
@@ -48,7 +53,7 @@ The active workspace is always recomputed from `default-directory'.")
   (setq faltoo-submitting (> (hash-table-count faltoo-submitting-workspaces) 0)))
 
 (defun faltoo-reset-workspace ()
-  "Use the Git root of `default-directory' as current workspace."
+  "Use the workspace for `default-directory'."
   (interactive)
   (setq faltoo-workspace (faltoo-git-root)))
 
@@ -119,7 +124,8 @@ The result is (BEG END START-LINE END-LINE CODE)."
   (let* ((parts nil)
          (workspace (or (and (boundp 'faltoo-chat-workspace) faltoo-chat-workspace)
                         (when-let ((root (locate-dominating-file default-directory ".git")))
-                          (file-truename root)))))
+                          (file-truename root))
+                        (file-truename default-directory))))
     (when (and workspace (faltoo-workspace-submitting-p workspace))
       (push "answering" parts))
     (when (and (boundp 'faltoo-comments) faltoo-comments)

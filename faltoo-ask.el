@@ -86,12 +86,15 @@
     question))
 
 (defun faltoo-ask--insert-follow-up ()
-  (let ((inhibit-read-only t))
-    (goto-char (point-max))
-    (faltoo-compose-insert-section "Follow-up")
-    (setq faltoo-ask-question-marker (point-marker)
-          faltoo-ask-sent nil)
-    (goto-char faltoo-ask-question-marker)))
+  (let ((inhibit-read-only t)
+        (visible (get-buffer-window-list (current-buffer) nil t)))
+    (save-excursion
+      (goto-char (point-max))
+      (faltoo-compose-insert-section "Follow-up")
+      (setq faltoo-ask-question-marker (point-marker)
+            faltoo-ask-sent nil))
+    (unless visible
+      (goto-char faltoo-ask-question-marker))))
 
 (defun faltoo-ask-send ()
   "Send current Ask popup question."

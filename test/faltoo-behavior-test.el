@@ -128,6 +128,48 @@
        (with-current-buffer buf-b
          (should (equal (faltoo-workspace) (file-truename root-b))))))))
 
+
+(ert-deftest faltoo-workspace-falls-back-to-current-folder-outside-git ()
+  "Scenario: Faltoo chat sessions can start from non-Git folders."
+  (let ((root (file-name-as-directory (make-temp-file "faltoo-non-git" t))))
+    (unwind-protect
+        (let ((default-directory root)
+              (faltoo-last-non-git-workspace-message nil)
+              messages)
+          (cl-letf (((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (push (apply #'format fmt args) messages))))
+            ;; When resolving a workspace outside Git.
+            ;; Then Faltoo uses the current folder and informs the user once.
+            (should (equal (faltoo-workspace) (file-truename root)))
+            (should (equal (car messages)
+                           "Faltoo: no Git repository found; using current folder"))
+            (faltoo-workspace)
+            (should (= (length messages) 1))))
+      (delete-directory root t))))
+
+(ert-deftest faltoo-chat-targets-current-folder-outside-git ()
+  "Scenario: Repo transcript opens from a non-Git folder using that folder as workspace."
+  (let ((root (file-name-as-directory (make-temp-file "faltoo-non-git-chat" t)))
+        captured-workspace)
+    (unwind-protect
+        (let ((default-directory root)
+              (faltoo-last-non-git-workspace-message nil))
+          (cl-letf (((symbol-function 'faltoo-bridge-messages)
+                     (lambda (_turns workspace)
+                       (setq captured-workspace workspace)
+                       nil))
+                    ((symbol-function 'pop-to-buffer) (lambda (buf &rest _args) buf))
+                    ((symbol-function 'message) (lambda (&rest _args) nil)))
+            ;; When the repo transcript is opened outside Git.
+            (faltoo-chat)
+
+            ;; Then the bridge receives the current folder as the workspace.
+            (should (equal captured-workspace (file-name-as-directory (file-truename root))))))
+      (when (get-buffer (faltoo-chat-buffer-name-for root))
+        (kill-buffer (faltoo-chat-buffer-name-for root)))
+      (delete-directory root t))))
+
 (ert-deftest faltoo-generic-chat-opens-repo-independent-transcript ()
   "Scenario: Generic chat uses a fixed non-Git workspace instead of the current repo."
   (let* ((root (file-name-as-directory (make-temp-file "faltoo-generic" t)))
@@ -185,6 +227,20 @@
       (when (get-buffer "*Faltoo Chat*")
         (kill-buffer "*Faltoo Chat*"))
       (delete-directory root t))))
+
+
+(ert-deftest faltoo-chat-buffer-exposes-workspace-path-to-buffer-annotations ()
+  "Scenario: Buffer completion annotations can show transcript workspace paths."
+  (let ((workspace (file-name-as-directory (make-temp-file "faltoo-annotated-workspace" t))))
+    (unwind-protect
+        (let ((buf (faltoo-chat-buffer workspace)))
+          ;; When a transcript buffer is created.
+          ;; Then it exposes the workspace through Emacs' standard buffer directory metadata.
+          (with-current-buffer buf
+            (should (equal list-buffers-directory (file-name-as-directory (file-truename workspace))))))
+      (when (get-buffer (faltoo-chat-buffer-name-for workspace))
+        (kill-buffer (faltoo-chat-buffer-name-for workspace)))
+      (delete-directory workspace t))))
 
 (ert-deftest faltoo-chat-uses-separate-transcripts-per-workspace ()
   "Scenario: Each Git repo gets its own transcript buffer and default directory."
@@ -1866,7 +1922,7 @@
    '("one")
    (lambda (_file _root)
      (faltoo-test--kill-chat-buffer)
-     (let ((popup (get-buffer-create "*Faltoo Test Popup*"))
+     (let ((popup (faltoo-popup-buffer "*Faltoo Test Popup*" #'faltoo-ask-mode))
            (faltoo-request-rate-limits (make-hash-table :test #'equal)))
        (with-current-buffer popup (erase-buffer))
 
@@ -1883,7 +1939,7 @@
           "question" popup
           (lambda (_ok)
             (with-current-buffer popup
-              (faltoo-compose-insert-section "Follow-up")))))
+              (faltoo-ask--insert-follow-up)))))
 
        ;; Then the usage footer is visible before the editable follow-up area.
        (with-current-buffer popup
@@ -2203,6 +2259,65 @@
 
     ;; Then the body is separated from the heading by one Markdown boundary line.
     (should (string-match-p "## Follow-up\n\ntyped prompt" (buffer-string)))))
+
+
+
+(ert-deftest faltoo-ask-follow-up-insertion-preserves-reader-position ()
+  "Scenario: Adding a popup follow-up after completion does not scroll the reader."
+  (let ((buf (faltoo-popup-buffer "*Faltoo Followup Scroll Test*" #'faltoo-ask-mode)))
+    (unwind-protect
+        (progn
+          ;; Given the reader is looking at the top of an answered popup.
+          (with-current-buffer buf
+            (insert "# Ask Faltoo\n\nanswer\nline 2\nline 3\nline 4")
+            (goto-char (point-min)))
+          (let ((window (display-buffer buf)))
+            (select-window window)
+            (set-window-point window (point-min))
+            (set-window-start window (point-min))
+
+            ;; When the follow-up section is added after completion.
+            (with-current-buffer buf
+              (faltoo-ask--insert-follow-up))
+
+            ;; Then the visible popup position stays where the reader left it.
+            (should (= (point) (point-min)))
+            (should (= (window-point window) (point-min)))
+            (should (= (window-start window) (point-min)))))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))))
+
+(ert-deftest faltoo-request-popup-completion-preserves-reader-position ()
+  "Scenario: Completing a popup response does not drag the popup reader to the bottom."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file _root)
+     (let ((popup (faltoo-popup-buffer "*Faltoo Popup Finish Scroll Test*" #'faltoo-popup-mode)))
+       (unwind-protect
+           (progn
+             ;; Given the reader is looking at the top of a visible popup.
+             (with-current-buffer popup
+               (insert "# Ask Faltoo\n\nold answer\nline 2\nline 3\nline 4")
+               (goto-char (point-min)))
+             (let ((window (display-buffer popup)))
+               (select-window window)
+               (set-window-point window (point-min))
+               (set-window-start window (point-min))
+
+               ;; When the answer finishes streaming.
+               (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                          (lambda (_args _payload on-event on-done)
+                            (funcall on-event '((classes . "answer") (text . "\nnew answer")))
+                            (funcall on-done t)))
+                         ((symbol-function 'ding) (lambda (&rest _args) nil)))
+                 (faltoo-request-message "question" popup))
+
+               ;; Then completion leaves the popup reader where it was.
+               (should (= (point) (point-min)))
+               (should (= (window-point window) (point-min)))
+               (should (= (window-start window) (point-min)))))
+         (when (buffer-live-p popup)
+           (kill-buffer popup)))))))
 
 (ert-deftest faltoo-popup-stream-preserves-reader-position ()
   "Scenario: Streaming popup text does not drag the reader to the bottom."

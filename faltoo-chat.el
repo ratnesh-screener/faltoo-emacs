@@ -81,7 +81,8 @@
       (unless (derived-mode-p 'faltoo-chat-mode)
         (faltoo-chat-mode))
       (setq default-directory workspace
-            faltoo-chat-workspace workspace))
+            faltoo-chat-workspace workspace)
+      (setq-local list-buffers-directory workspace))
     buf))
 
 (defun faltoo-chat--highlight-block (start end face overlays-var)
