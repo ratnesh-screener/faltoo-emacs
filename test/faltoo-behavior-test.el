@@ -1831,6 +1831,33 @@
        ;; Then it is empty; footer/help text is outside the payload.
        (should (string-empty-p (faltoo-ask--question-text)))))))
 
+(ert-deftest faltoo-ask-send-deactivates-source-selection ()
+  "Scenario: Submitting Ask clears the selected source region."
+  (faltoo-test--with-temp-git-file
+   '("one" "two")
+   (lambda (_file _root)
+     ;; Given Ask was opened from an active source selection.
+     (let ((source (current-buffer))
+           (source-window (selected-window)))
+       (goto-char (point-min))
+       (set-mark (point))
+       (forward-line 1)
+       (activate-mark)
+       (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+         (faltoo-ask))
+
+       ;; When the popup question is submitted.
+       (with-current-buffer "*Faltoo Popup*"
+         (setq faltoo-popup-return-window source-window)
+         (insert "explain this")
+         (cl-letf (((symbol-function 'faltoo-request-message)
+                    (lambda (_message _popup _on-done) nil)))
+           (faltoo-ask-send)))
+
+       ;; Then returning to the source buffer will not leave the region selected.
+       (with-current-buffer source
+         (should-not mark-active))))))
+
 (ert-deftest faltoo-ask-adds-editable-follow-up-after-response ()
   "Scenario: Ask popup becomes reusable after an assistant response finishes."
   (faltoo-test--with-temp-git-file
@@ -1993,6 +2020,25 @@
     (should (string-match-p "Transcript excerpt:\n\n```\nassistant text\n```" prompt))
     (should-not (string-match-p "### Line" prompt))
     (should-not (string-match-p "Code:" prompt))))
+
+(ert-deftest faltoo-submit-review-comments-preserves-insertion-order ()
+  "Scenario: Submitted review comments keep the order they were added."
+  (let* ((first (make-faltoo-comment :file "sample.py" :path "sample.py" :start 3 :end 3 :code "three" :text "first"))
+         (second (make-faltoo-comment :file "sample.py" :path "sample.py" :start 7 :end 7 :code "seven" :text "second"))
+         (third (make-faltoo-comment :file "sample.py" :path "sample.py" :start 1 :end 1 :code "one" :text "third"))
+         (faltoo-comments (list third second first))
+         submitted)
+    ;; Given pending comments are stored newest-first internally after line 3, 7, then 1 were added.
+
+    ;; When comments are submitted.
+    (cl-letf (((symbol-function 'faltoo-request-review)
+               (lambda (comments _on-submitted &optional _on-done)
+                 (setq submitted comments))))
+      (faltoo-submit-review-comments))
+
+    ;; Then the payload uses insertion order, not newest-first storage order.
+    (should (equal (mapcar (lambda (comment) (alist-get 'line_number_start comment)) submitted)
+                   '(3 7 1)))))
 
 (ert-deftest faltoo-request-review-records-review-prompt-in-transcript ()
   "Scenario: Review submissions write the user review prompt to the transcript."
@@ -2161,6 +2207,35 @@
                           (overlays-at (point)))))
        (kill-buffer popup)))))
 
+(ert-deftest faltoo-request-batches-answer-stream-appends ()
+  "Scenario: Answer chunks are queued and inserted in one UI append."
+  (let ((workspace (faltoo-workspace))
+        (popup (get-buffer-create "*Faltoo Batch Popup*"))
+        chat-appends popup-appends)
+    (unwind-protect
+        (cl-letf (((symbol-function 'faltoo-chat-append-stream)
+                   (lambda (text _workspace) (push text chat-appends)))
+                  ((symbol-function 'faltoo-popup-append-stream)
+                   (lambda (_buffer text) (push text popup-appends))))
+
+          ;; When several answer chunks arrive before the flush timer runs.
+          (faltoo-request--route-event '((classes . "answer") (text . "one")) workspace popup nil)
+          (faltoo-request--route-event '((classes . "answer") (text . " two")) workspace popup nil)
+          (faltoo-request--route-event '((classes . "answer") (text . " three")) workspace popup nil)
+
+          ;; Then the transcript and popup are not mutated per chunk.
+          (should-not chat-appends)
+          (should-not popup-appends)
+
+          ;; When the queued stream is flushed.
+          (faltoo-request--flush-answer workspace)
+
+          ;; Then each UI gets one combined append.
+          (should (equal chat-appends '("one two three")))
+          (should (equal popup-appends '("one two three"))))
+      (faltoo-request--clear-pending-answer workspace)
+      (when (buffer-live-p popup) (kill-buffer popup)))))
+
 (ert-deftest faltoo-request-renders-status-events-as-compact-quotes ()
   "Scenario: Streaming status/tool blocks are compact Markdown quotes."
   (faltoo-test--kill-chat-buffer)
@@ -2223,8 +2298,9 @@
   (faltoo-request--route-event '((classes . "status") (text . "first block")) (faltoo-workspace) nil nil)
   (faltoo-request--route-event '((classes . "tool") (text . "second block")) (faltoo-workspace) nil nil)
 
-  ;; When final answer text starts streaming.
+  ;; When final answer text starts streaming and the batched answer flushes.
   (faltoo-request--route-event '((classes . "answer") (text . "final answer")) (faltoo-workspace) nil nil)
+  (faltoo-request--flush-answer (faltoo-workspace))
 
   ;; Then the compact tool block is separated from the final answer body.
   (with-current-buffer (faltoo-test--chat-buffer-name)
@@ -2609,6 +2685,33 @@ hello
     (kill-buffer popup)))
 
 ;;; Comment specs
+
+(ert-deftest faltoo-comment-save-deactivates-source-selection ()
+  "Scenario: Saving a review comment clears the selected source region."
+  (faltoo-test--with-temp-git-file
+   '("one" "two")
+   (lambda (_file _root)
+     ;; Given a comment popup was opened from an active source selection.
+     (setq faltoo-comments nil)
+     (let ((source (current-buffer))
+           (source-window (selected-window)))
+       (goto-char (point-min))
+       (set-mark (point))
+       (forward-line 1)
+       (activate-mark)
+       (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+         (faltoo-comment))
+
+       ;; When the comment is saved.
+       (with-current-buffer "*Faltoo Comment*"
+         (setq faltoo-popup-return-window source-window)
+         (insert "please review this")
+         (cl-letf (((symbol-function 'select-frame-set-input-focus) (lambda (&rest _args) nil)))
+           (faltoo-comment-save)))
+
+       ;; Then returning to the source buffer will not leave the region selected.
+       (with-current-buffer source
+         (should-not mark-active))))))
 
 (ert-deftest faltoo-comment-save-marks-line-as-pending-review-comment ()
   "Scenario: Saving a line comment marks the source line."

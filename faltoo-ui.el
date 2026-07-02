@@ -36,6 +36,12 @@
   (setq-local mode-line-format nil)
   (setq-local truncate-lines nil))
 
+(defun faltoo-popup-deactivate-return-mark ()
+  "Deactivate the selected region in the popup return buffer."
+  (when (window-live-p faltoo-popup-return-window)
+    (with-current-buffer (window-buffer faltoo-popup-return-window)
+      (deactivate-mark))))
+
 (defun faltoo-popup-close ()
   "Close the active Faltoo posframe and return focus to the source window."
   (interactive)

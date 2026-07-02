@@ -141,6 +141,7 @@
       (unless (memq comment faltoo-comments)
         (push comment faltoo-comments)))
     (faltoo-comments-refresh)
+    (faltoo-popup-deactivate-return-mark)
     (faltoo-popup-close)
     (message "Faltoo: %d pending comment(s)" (length faltoo-comments))))
 
@@ -252,7 +253,7 @@
   (interactive)
   (unless faltoo-comments
     (user-error "No pending Faltoo comments"))
-  (let ((submitted faltoo-comments))
+  (let ((submitted (reverse faltoo-comments)))
     (faltoo-request-review
      (faltoo-comments--payload submitted)
      (lambda ()

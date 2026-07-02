@@ -12,6 +12,10 @@
 (defvar faltoo-request-rate-limits (make-hash-table :test #'equal))
 (defvar faltoo-request-processes (make-hash-table :test #'equal))
 (defvar faltoo-request-cancelled (make-hash-table :test #'equal))
+(defvar faltoo-request-stream-flush-delay 0.05)
+(defvar faltoo-request-pending-answer-chunks (make-hash-table :test #'equal))
+(defvar faltoo-request-pending-popup-buffers (make-hash-table :test #'equal))
+(defvar faltoo-request-stream-flush-timers (make-hash-table :test #'equal))
 
 (defun faltoo-request--event-text (event)
   (or (alist-get 'text event) ""))
@@ -38,6 +42,44 @@
   (when (faltoo-workspace-submitting-p (or workspace (faltoo-workspace)))
     (user-error "Faltoo request already running for this workspace")))
 
+(defun faltoo-request--clear-pending-answer (workspace)
+  "Clear queued answer chunks for WORKSPACE."
+  (when-let ((timer (gethash workspace faltoo-request-stream-flush-timers)))
+    (cancel-timer timer))
+  (remhash workspace faltoo-request-stream-flush-timers)
+  (remhash workspace faltoo-request-pending-answer-chunks)
+  (remhash workspace faltoo-request-pending-popup-buffers))
+
+(defun faltoo-request--flush-answer (workspace)
+  "Flush queued answer chunks for WORKSPACE into visible buffers."
+  (when-let ((timer (gethash workspace faltoo-request-stream-flush-timers)))
+    (cancel-timer timer))
+  (remhash workspace faltoo-request-stream-flush-timers)
+  (when-let ((chunks (gethash workspace faltoo-request-pending-answer-chunks)))
+    (let ((text (mapconcat #'identity (nreverse chunks) ""))
+          (popup-buffer (gethash workspace faltoo-request-pending-popup-buffers)))
+      (remhash workspace faltoo-request-pending-answer-chunks)
+      (remhash workspace faltoo-request-pending-popup-buffers)
+      (setq faltoo-last-assistant-message (concat faltoo-last-assistant-message text))
+      (puthash workspace (concat (or (gethash workspace faltoo-last-assistant-messages) "") text)
+               faltoo-last-assistant-messages)
+      (when (buffer-live-p popup-buffer)
+        (faltoo-popup-append-stream popup-buffer text))
+      (faltoo-chat-append-stream text workspace))))
+
+(defun faltoo-request--queue-answer (workspace popup-buffer text)
+  "Queue answer TEXT for batched UI flushing."
+  (puthash workspace
+           (cons text (gethash workspace faltoo-request-pending-answer-chunks))
+           faltoo-request-pending-answer-chunks)
+  (when popup-buffer
+    (puthash workspace popup-buffer faltoo-request-pending-popup-buffers))
+  (unless (gethash workspace faltoo-request-stream-flush-timers)
+    (puthash workspace
+             (run-at-time faltoo-request-stream-flush-delay nil
+                          #'faltoo-request--flush-answer workspace)
+             faltoo-request-stream-flush-timers)))
+
 (defun faltoo-request-cancel (&optional workspace)
   "Cancel the running Faltoo request for WORKSPACE."
   (interactive)
@@ -54,17 +96,13 @@
         (text (faltoo-request--event-text event)))
     (cond
      ((string= class "answer")
-      (setq faltoo-last-assistant-message (concat faltoo-last-assistant-message text))
-      (puthash workspace (concat (or (gethash workspace faltoo-last-assistant-messages) "") text)
-               faltoo-last-assistant-messages)
-      (when popup-buffer
-        (faltoo-popup-append-stream popup-buffer text))
-      (faltoo-chat-append-stream text workspace))
+      (faltoo-request--queue-answer workspace popup-buffer text))
      ((string= class "rate-limit")
       (puthash workspace text faltoo-request-rate-limits)
       (puthash workspace text faltoo-last-rate-limits)
       (faltoo-set-status text))
      ((string= class "error")
+      (faltoo-request--flush-answer workspace)
       (faltoo-set-status text)
       (when popup-buffer
         (faltoo-popup-append-stream-block popup-buffer (format "Error: %s" (string-trim text))
@@ -72,6 +110,7 @@
       (faltoo-chat-append-stream-block (format "Error: %s" (string-trim text))
                                        'faltoo-chat-error-face workspace))
      ((member class '("status" "tool"))
+      (faltoo-request--flush-answer workspace)
       (when (and on-submitted (string-prefix-p "Submitted" text))
         (funcall on-submitted))
       (faltoo-set-status text)
@@ -80,6 +119,7 @@
                                           'faltoo-chat-tool-face))
       (faltoo-chat-append-stream-block (faltoo-request--tool-summary text) 'faltoo-chat-tool-face workspace))
      ((string= class "done")
+      (faltoo-request--flush-answer workspace)
       (faltoo-set-status text)))))
 
 (defun faltoo-request-stream (args payload chat-title &optional popup-buffer on-submitted on-done)
@@ -89,6 +129,7 @@
     (faltoo-set-workspace-submitting workspace t)
     (puthash workspace (float-time) faltoo-request-start-times)
     (remhash workspace faltoo-request-rate-limits)
+    (faltoo-request--clear-pending-answer workspace)
     (setq faltoo-last-assistant-message "")
     (puthash workspace "" faltoo-last-assistant-messages)
     (faltoo-set-status chat-title)
@@ -113,6 +154,7 @@
           (faltoo-set-status (cond (cancelled "Faltoo cancelled")
                                    (ok "Faltoo complete")
                                    (t "Faltoo failed")))
+          (faltoo-request--flush-answer workspace)
           (faltoo-reload-workspace-buffers workspace)
           (faltoo-chat-finish-stream workspace elapsed rate-limit)
           (when (and ok popup-buffer rate-limit)

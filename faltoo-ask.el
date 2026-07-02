@@ -109,6 +109,7 @@
     (when (string-empty-p question)
       (user-error "Question is empty"))
     (setq faltoo-ask-sent t)
+    (faltoo-popup-deactivate-return-mark)
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (goto-char (point-max))
