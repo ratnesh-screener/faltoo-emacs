@@ -1975,6 +1975,25 @@
                 "# User\n\nsource question\n\n---\n# Assistant"
                 (buffer-string)))))))
 
+
+(ert-deftest faltoo-request-review-formats-transcript-comments-without-line-ranges ()
+  "Scenario: Transcript comments read as transcript excerpts, not source line reviews."
+  (let ((prompt (faltoo-request--review-prompt
+                 '(((filename . "Faltoo transcript")
+                    (line_number_start . 2291)
+                    (line_number_end . 2295)
+                    (file_line_number_start . 2291)
+                    (file_line_number_end . 2295)
+                    (code . "assistant text")
+                    (comment . "follow up"))))))
+    ;; Given a pending comment targets transcript text.
+
+    ;; Then the prompt keeps the excerpt but omits transcript line ranges.
+    (should (string-match-p "## File name `Faltoo transcript`" prompt))
+    (should (string-match-p "Transcript excerpt:\n\n```\nassistant text\n```" prompt))
+    (should-not (string-match-p "### Line" prompt))
+    (should-not (string-match-p "Code:" prompt))))
+
 (ert-deftest faltoo-request-review-records-review-prompt-in-transcript ()
   "Scenario: Review submissions write the user review prompt to the transcript."
   (faltoo-test--with-temp-git-file
@@ -2161,6 +2180,40 @@
     (should (cl-some (lambda (overlay)
                        (eq (overlay-get overlay 'face) 'faltoo-chat-tool-face))
                      (overlays-at (point))))))
+
+
+(ert-deftest faltoo-request-separates-answer-text-from-following-tool-quotes ()
+  "Scenario: Tool calls after assistant text start on their own quoted line."
+  (faltoo-test--kill-chat-buffer)
+  ;; Given assistant text has started streaming without a trailing newline.
+  (faltoo-chat-start-stream "Assistant · answering")
+  (faltoo-request--route-event '((classes . "answer") (text . "I will inspect this.")) (faltoo-workspace) nil nil)
+
+  ;; When a tool call follows that assistant text.
+  (faltoo-request--route-event '((classes . "tool") (text . "Shell: inspect files")) (faltoo-workspace) nil nil)
+
+  ;; Then the transcript starts the tool quote on a fresh line.
+  (with-current-buffer (faltoo-test--chat-buffer-name)
+    (should (string-match-p "I will inspect this\.\n\n> Shell: inspect files" (buffer-string)))
+    (should-not (string-match-p "this\.> Shell" (buffer-string)))))
+
+(ert-deftest faltoo-popup-separates-answer-text-from-following-tool-quotes ()
+  "Scenario: Popup tool calls after assistant text start on their own quoted line."
+  (let ((buf (faltoo-popup-buffer "*Faltoo Popup Tool Spacing Test*" #'faltoo-popup-mode)))
+    (unwind-protect
+        (progn
+          ;; Given assistant text has streamed into a popup without a trailing newline.
+          (faltoo-popup-append-stream buf "I will inspect this.")
+
+          ;; When a tool call follows that assistant text.
+          (faltoo-popup-append-stream-block buf "Shell: inspect files")
+
+          ;; Then the popup starts the tool quote on a fresh line.
+          (with-current-buffer buf
+            (should (string-match-p "I will inspect this\.\n\n> Shell: inspect files" (buffer-string)))
+            (should-not (string-match-p "this\.> Shell" (buffer-string)))))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))))
 
 (ert-deftest faltoo-request-separates-tool-quotes-from-final-answer ()
   "Scenario: Final answer text starts after a blank line following compact tool calls."
@@ -2670,6 +2723,75 @@ hello
          ;; Then the comment and overlay are gone.
          (should-not faltoo-comments)
          (should-not (overlay-buffer overlay)))))))
+
+
+(ert-deftest faltoo-chat-comment-uses-selected-transcript-lines ()
+  "Scenario: Transcript selections can be queued as review comments."
+  (let ((workspace (file-name-as-directory (make-temp-file "faltoo-chat-comment" t)))
+        (faltoo-comments nil))
+    (unwind-protect
+        (let ((buf (faltoo-chat-render '(((role . "assistant")
+                                          (text . "alpha\nbeta\ncharlie")))
+                                        workspace)))
+          ;; Given part of two transcript lines is selected.
+          (with-current-buffer buf
+            (goto-char (point-min))
+            (search-forward "eta")
+            (set-mark (point))
+            (search-forward "char")
+            (activate-mark)
+
+            ;; When adding a Faltoo comment from the transcript.
+            (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (&rest _args) nil)))
+              (faltoo-comment)))
+
+          ;; Then the popup targets full transcript lines and can save a pending comment.
+          (with-current-buffer "*Faltoo Comment*"
+            (should (string-match-p "# Faltoo Transcript Comment" (buffer-string)))
+            (should (string-match-p "```markdown\nbeta\ncharlie\n```" (buffer-string)))
+            (insert "explain this answer")
+            (faltoo-comment-save))
+
+          (let ((comment (car faltoo-comments)))
+            (should (equal (faltoo-comment-file comment) "Faltoo transcript"))
+            (should (equal (faltoo-comment-code comment) "beta\ncharlie"))
+            (should (equal (faltoo-comment-text comment) "explain this answer"))
+            (should (eq (overlay-buffer (faltoo-comment-overlay comment)) buf))))
+      (when (get-buffer (faltoo-chat-buffer-name-for workspace))
+        (kill-buffer (faltoo-chat-buffer-name-for workspace)))
+      (delete-directory workspace t))))
+
+(ert-deftest faltoo-submit-review-comments-clears-transcript-comment-overlays ()
+  "Scenario: Submitted transcript comments remove their transcript highlights."
+  (let ((workspace (file-name-as-directory (make-temp-file "faltoo-chat-submit-comment" t)))
+        (faltoo-comments nil))
+    (unwind-protect
+        (let* ((buf (faltoo-chat-render '(((role . "assistant") (text . "answer line"))) workspace))
+               (comment (make-faltoo-comment :file "Faltoo transcript"
+                                             :path (buffer-name buf)
+                                             :start 3
+                                             :end 3
+                                             :code "answer line"
+                                             :text "follow up here"
+                                             :source-buffer buf)))
+          ;; Given a pending transcript comment has marked its source line.
+          (setq faltoo-comments (list comment))
+          (faltoo-comments-refresh)
+          (let ((overlay (faltoo-comment-overlay comment)))
+            (should (overlayp overlay))
+
+            ;; When the bridge accepts the submitted comment batch.
+            (cl-letf (((symbol-function 'faltoo-request-review)
+                       (lambda (_comments on-submitted &optional _on-done)
+                         (funcall on-submitted))))
+              (faltoo-submit-review-comments))
+
+            ;; Then the submitted marker disappears from the transcript.
+            (should-not faltoo-comments)
+            (should-not (overlay-buffer overlay))))
+      (when (get-buffer (faltoo-chat-buffer-name-for workspace))
+        (kill-buffer (faltoo-chat-buffer-name-for workspace)))
+      (delete-directory workspace t))))
 
 (ert-deftest faltoo-comment-popup-separates-sections-with-horizontal-rules ()
   "Scenario: Comment popup sections are visually separated."

@@ -9,7 +9,7 @@
 (require 'faltoo-compose)
 (require 'faltoo-faces)
 
-(cl-defstruct faltoo-comment file path start end code text overlay)
+(cl-defstruct faltoo-comment file path start end code text overlay source-buffer)
 
 (defvar faltoo-comments nil)
 (defvar faltoo-comments-buffer-name "*Faltoo Comments*")
@@ -52,9 +52,15 @@
                      (<= (faltoo-comment-start comment) end)))
               faltoo-comments))
 
+(defun faltoo-comments--source-buffer (comment)
+  (or (and (buffer-live-p (faltoo-comment-source-buffer comment))
+           (faltoo-comment-source-buffer comment))
+      (get-buffer (faltoo-comment-path comment))
+      (find-buffer-visiting (faltoo-comment-path comment))))
+
 (defun faltoo-comments--mark (comment)
   (when (> (faltoo-comment-start comment) 0)
-    (let ((buf (find-buffer-visiting (faltoo-comment-path comment))))
+    (let ((buf (faltoo-comments--source-buffer comment)))
       (when buf
         (with-current-buffer buf
           (save-excursion
@@ -84,26 +90,30 @@
 (defun faltoo-comment (&optional file-level)
   "Add or edit a pending Faltoo review comment."
   (interactive)
-  (let* ((workspace (faltoo-workspace))
-         (path (faltoo-current-file))
-         (file (faltoo-relative-file path))
+  (let* ((chat (derived-mode-p 'faltoo-chat-mode))
+         (workspace (faltoo-workspace))
+         (source-buffer (current-buffer))
+         (path (if chat (buffer-name) (faltoo-current-file)))
+         (file (if chat "Faltoo transcript" (faltoo-relative-file path)))
          (range (if file-level
                     (list (point-min) (point-min) 0 0 "")
                   (faltoo-comments--range)))
          (start (nth 2 range))
          (end (nth 3 range))
          (code (nth 4 range))
-         (language (faltoo-current-language))
+         (language (if chat "markdown" (faltoo-current-language)))
          (existing (faltoo-comments--existing path start end))
-         (target (or existing (make-faltoo-comment :file file :path path :start start :end end :code code)))
+         (target (or existing (make-faltoo-comment :file file :path path :start start :end end :code code :source-buffer source-buffer)))
          (buf (faltoo-popup-buffer "*Faltoo Comment*" #'faltoo-comment-mode)))
     (with-current-buffer buf
       (setq default-directory workspace
             faltoo-comment-target target)
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (faltoo-compose-insert-title (if file-level "Faltoo File Comment" "Faltoo Review Comment"))
-        (faltoo-compose-insert-meta "File" file)
+        (faltoo-compose-insert-title (cond (chat "Faltoo Transcript Comment")
+                                           (file-level "Faltoo File Comment")
+                                           (t "Faltoo Review Comment")))
+        (faltoo-compose-insert-meta (if chat "Transcript" "File") file)
         (unless file-level
           (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
           (faltoo-compose-insert-section "Code")
@@ -187,11 +197,15 @@
 (defun faltoo-comments--comment-at-point ()
   (or (get-text-property (point) 'faltoo-comment)
       (get-text-property (line-beginning-position) 'faltoo-comment)
-      (when buffer-file-name
-        (faltoo-comments--existing (faltoo-current-file) (line-number-at-pos) (line-number-at-pos)))))
+      (let ((line (line-number-at-pos)))
+        (cond
+         (buffer-file-name
+          (faltoo-comments--existing (faltoo-current-file) line line))
+         ((derived-mode-p 'faltoo-chat-mode)
+          (faltoo-comments--existing (buffer-name) line line))))))
 
 (defun faltoo-comments--goto-source (comment)
-  (let ((buf (find-buffer-visiting (faltoo-comment-path comment))))
+  (let ((buf (faltoo-comments--source-buffer comment)))
     (if buf
         (switch-to-buffer buf)
       (find-file (faltoo-comment-path comment))))
@@ -257,7 +271,7 @@
   (faltoo-comments--jump -1))
 
 (defun faltoo-comments--jump (direction)
-  (let* ((path (faltoo-current-file))
+  (let* ((path (if (derived-mode-p 'faltoo-chat-mode) (buffer-name) (faltoo-current-file)))
          (lines (sort (mapcar #'faltoo-comment-start
                               (cl-remove-if-not (lambda (comment)
                                                   (and (string= path (faltoo-comment-path comment))

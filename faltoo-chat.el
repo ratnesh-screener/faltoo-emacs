@@ -18,6 +18,7 @@
 (defvar-local faltoo-chat-assistant-overlays nil)
 (defvar-local faltoo-chat-stream-heading-marker nil)
 (defvar-local faltoo-chat-stream-answer-started nil)
+(defvar-local faltoo-chat-stream-last-block nil)
 (defvar-local faltoo-chat-workspace nil)
 
 (defcustom faltoo-generic-chat-directory
@@ -152,6 +153,7 @@
               faltoo-chat-assistant-overlays nil
               faltoo-chat-stream-heading-marker nil
               faltoo-chat-stream-answer-started nil
+              faltoo-chat-stream-last-block nil
               faltoo-chat-prompt-heading-marker nil)
         (erase-buffer)
         (dolist (message messages)
@@ -267,7 +269,8 @@
         (faltoo-chat--insert-rule)
         (let ((start (point)))
           (setq faltoo-chat-stream-heading-marker (copy-marker start)
-                faltoo-chat-stream-answer-started nil)
+                faltoo-chat-stream-answer-started nil
+                faltoo-chat-stream-last-block nil)
           (insert (format "# %s" title))
           (faltoo-chat--highlight-assistant-block start (point))
           (insert "\n\n"))))
@@ -283,16 +286,27 @@
         (save-excursion
           (goto-char (point-max))
           (unless (looking-back "\n\n" nil)
-            (setq prefix "\n")))))
+            (setq prefix "\n"))))
+      (setq faltoo-chat-stream-last-block nil))
     (faltoo-popup-append buf (concat prefix text) t)))
 
 (defun faltoo-chat-append-stream-block (text &optional face workspace)
   "Append stream TEXT as a quoted transcript block, optionally with FACE."
   (with-current-buffer (faltoo-chat-buffer workspace)
-    (let ((inhibit-read-only t)
-          (start (point-max)))
+    (let* ((inhibit-read-only t)
+           (end (point-max))
+           (prefix (cond
+                    (faltoo-chat-stream-last-block "")
+                    ((= end (point-min)) "")
+                    ((not (= (char-before end) ?\n)) "\n\n")
+                    ((and (> end (1+ (point-min)))
+                          (= (char-before (1- end)) ?\n))
+                     "")
+                    (t "\n")))
+           (start (+ end (length prefix))))
+      (setq faltoo-chat-stream-last-block t)
       (faltoo-popup-append (current-buffer)
-                           (concat "> " (string-trim-right text) "\n")
+                           (concat prefix "> " (string-trim-right text) "\n")
                            t)
       (when face
         (faltoo-chat--highlight-block start (point-max) face 'faltoo-chat-tool-overlays)))))

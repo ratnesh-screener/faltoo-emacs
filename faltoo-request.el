@@ -145,8 +145,18 @@
                             (alist-get 'line_number_start comment)))
                  (end (or (alist-get 'file_line_number_end comment)
                           (alist-get 'line_number_end comment))))
-            (if (and (= start 0) (= end 0))
-                (setq lines (append lines '("### File comment" "")))
+            (cond
+             ((string= filename "Faltoo transcript")
+              (setq lines (append lines
+                                  (list "Transcript excerpt:"
+                                        ""
+                                        "```"
+                                        (alist-get 'code comment)
+                                        "```"
+                                        ""))))
+             ((and (= start 0) (= end 0))
+              (setq lines (append lines '("### File comment" ""))))
+             (t
               (setq lines (append lines
                                   (list (format "### Line `%s-%s`" start end)
                                         ""
@@ -155,7 +165,7 @@
                                         "```"
                                         (alist-get 'code comment)
                                         "```"
-                                        ""))))
+                                        "")))))
             (setq lines (append lines (list "Comment:" (alist-get 'comment comment) ""))))))
       (unless (eq group (car (last groups)))
         (setq lines (append lines '("---" "")))))

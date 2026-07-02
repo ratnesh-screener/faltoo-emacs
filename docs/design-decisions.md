@@ -241,7 +241,7 @@ This intentionally differs from `faltoo.nvim`, where Ask saves a pending questio
 Decision:
 
 - Chat/Ask = immediate send from the current repo transcript or source-buffer popup.
-- Review comments = prepared/batched and submitted together.
+- Review comments = prepared/batched and submitted together, including comments on selected transcript text.
 
 Rationale:
 
@@ -484,6 +484,7 @@ Support:
 - line comment on current line
 - range comment on active region
 - file-level comment
+- transcript selection/current-line comment, for asking follow-up questions about assistant output without copy/paste
 
 ### Comment Input UI
 

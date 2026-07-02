@@ -91,7 +91,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Request cancellation is per workspace: `C-c f q` from source/review buffers through the main Faltoo prefix.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
 - `C-c /` runs built-in session commands (`/reset`, `/resume`, `/name`, `/tree`, `/status`); `C-c p` inserts saved prompt templates. Typed slash text submits as a normal prompt.
-- Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup.
+- Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup. Transcript selections/current lines can also be queued as pending comments with the same `C-c f c` / `C-c f s` batch flow.
 - Review buffers are read-only, use direct single-key review bindings, and show a header line with `Faltoo[1/N]`.
 - `diff-hl` is configured buffer-locally in review buffers for full-line highlights.
 - Faltoo never auto-stages assistant edits.

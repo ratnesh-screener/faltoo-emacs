@@ -176,6 +176,38 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["rows"][1]["cached_tokens"], 8)
         self.assertEqual(events[1]["rows"][1]["total_tokens"], 12)
 
+    async def test_append_review_formats_transcript_comments_without_line_ranges(self):
+        """Scenario: Transcript review comments are submitted as transcript excerpts."""
+        bridge = load_bridge()
+        captured_questions = []
+
+        async def append_user_turn(_session, question):
+            captured_questions.append(question)
+
+        async def empty_answer_stream(_session):
+            if False:
+                yield None
+
+        bridge.append_user_turn = append_user_turn
+        bridge.get_answer_streaming = empty_answer_stream
+
+        await bridge.append_review(
+            Path("/tmp/faltoo-workspace"),
+            [
+                {
+                    "filename": "Faltoo transcript",
+                    "line_number_start": 2291,
+                    "line_number_end": 2295,
+                    "code": "assistant text",
+                    "comment": "follow up",
+                }
+            ],
+        )
+
+        self.assertIn("Transcript excerpt:\n\n```\nassistant text\n```", captured_questions[0])
+        self.assertNotIn("### Line", captured_questions[0])
+        self.assertNotIn("Code:", captured_questions[0])
+
     async def test_manual_slash_command_is_submitted_as_plain_text(self):
         """Scenario: Manually typed slash commands are not expanded by the bridge."""
         bridge = load_bridge()

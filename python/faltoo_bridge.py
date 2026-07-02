@@ -12,7 +12,7 @@ from typing import Any
 SHELL_COMMAND_SEPARATOR = "\n\n<!-- shell-command -->\n\n"
 
 from faltoobot.faltoochat.git import get_unstaged_files, is_git_workspace  # ty: ignore[unresolved-import]
-from faltoobot.faltoochat.review_api import Review, reviews_prompt  # ty: ignore[unresolved-import]
+from faltoobot.faltoochat.review_api import Review  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.slash_commands import SlashCommandStore  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.messages_rendering import get_item_text  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.stream import get_event_text  # ty: ignore[unresolved-import]
@@ -131,6 +131,38 @@ def messages(workspace: Path, limit: int, turns: int | None) -> int:
 
     print(json.dumps({"messages": _last_user_turns(messages_payload, turns)}, ensure_ascii=False))
     return 0
+
+
+def _reviews_prompt(comments: list[Review]) -> str:
+    lines = ["# Comments in code review", ""]
+    grouped: dict[Path, list[Review]] = {}
+    for comment in comments:
+        grouped.setdefault(comment["filename"], []).append(comment)
+
+    for index, (filename, items) in enumerate(grouped.items()):
+        lines.extend([f"## File name `{filename}`", ""])
+        for comment in items:
+            line_start = comment.get("file_line_number_start", comment["line_number_start"])
+            line_end = comment.get("file_line_number_end", comment["line_number_end"])
+            if str(filename) == "Faltoo transcript":
+                lines.extend(["Transcript excerpt:", "", "```", comment["code"], "```", ""])
+            elif line_start == 0 and line_end == 0:
+                lines.extend(["### File comment", ""])
+            else:
+                lines.extend([
+                    f"### Line `{line_start}-{line_end}`",
+                    "",
+                    "Code:",
+                    "",
+                    "```",
+                    comment["code"],
+                    "```",
+                    "",
+                ])
+            lines.extend(["Comment:", comment["comment"], ""])
+        if index < len(grouped) - 1:
+            lines.extend(["---", ""])
+    return "\n".join(lines).strip()
 
 
 def _normalize_comments(items: list[dict[str, Any]]) -> list[Review]:
@@ -398,7 +430,7 @@ async def append_review(workspace: Path, items: list[dict[str, Any]]) -> int:
         return 0
 
     session = _session(workspace)
-    await append_user_turn(session, question=reviews_prompt(comments))
+    await append_user_turn(session, question=_reviews_prompt(comments))
     _emit(
         True,
         "status",

@@ -90,6 +90,8 @@ C-c C-l   load more transcript turns; numeric prefix sets exact turn count
 C-c C-p   previous user message
 C-c C-n   next user message
 C-c C-f   insert file reference
+C-c f c   add pending comment on selected transcript text/current line
+C-c f s   submit pending comments
 C-c /     run session command
 C-c p     paste saved prompt template
 ```
@@ -167,7 +169,7 @@ Manually typed slash text is sent to the LLM as normal prompt text. Use `C-c /` 
 - Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo. `C-c f i` opens a generic `*Faltoo Chat*` session anchored at `faltoo-generic-chat-directory` for quick questions that should not use the current repo context.
 - Ask always rebuilds from the active region/current line and streams responses in the centered posframe and transcript. The last-response popup preserves follow-up drafts after close/reopen.
 - Completed assistant transcript footers include elapsed time and the latest streamed Codex limit when available, e.g. `> Assistant took: 20.0s` / `> Remaining limit: 5h = 98%`.
-- Review-comment submission streams to the current repo transcript and status/mode-line.
+- Review-comment submission streams to the current repo transcript and status/mode-line. Transcript selections can also be marked as pending comments with `C-c f c` and submitted with the same batch flow.
 - `C-c f q` cancels the current repo's running answer stream.
 - After a Faltoo request finishes, unmodified open buffers in that repo are refreshed from disk so assistant edits do not trigger stale-file save prompts. Buffers with unsaved local edits are left alone.
 - Faltoo never auto-stages changes.
