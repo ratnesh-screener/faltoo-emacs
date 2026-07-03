@@ -175,43 +175,65 @@
           (setq groups (append groups (list (cons filename (list comment))))))))
     groups))
 
+(defun faltoo-request--transcript-review-prompt (comments)
+  "Return the user prompt for transcript COMMENTS."
+  (string-trim
+   (string-join
+    (mapcar (lambda (comment)
+              (string-join
+               (list "Your response:"
+                     ""
+                     "```"
+                     (alist-get 'code comment)
+                     "```"
+                     ""
+                     "Comment:"
+                     (alist-get 'comment comment))
+               "\n"))
+            comments)
+    "\n\n---\n\n")))
+
 (defun faltoo-request--review-prompt (comments)
   "Return the user prompt FaltooBot receives for review COMMENTS."
-  (let ((groups (faltoo-request--group-review-comments comments))
-        (lines '("# Comments in code review" "")))
-    (dolist (group groups)
-      (let ((filename (car group)))
-        (setq lines (append lines (list (format "## File name `%s`" filename) "")))
-        (dolist (comment (cdr group))
-          (let* ((start (or (alist-get 'file_line_number_start comment)
-                            (alist-get 'line_number_start comment)))
-                 (end (or (alist-get 'file_line_number_end comment)
-                          (alist-get 'line_number_end comment))))
-            (cond
-             ((string= filename "Faltoo transcript")
-              (setq lines (append lines
-                                  (list "Transcript excerpt:"
-                                        ""
-                                        "```"
-                                        (alist-get 'code comment)
-                                        "```"
-                                        ""))))
-             ((and (= start 0) (= end 0))
-              (setq lines (append lines '("### File comment" ""))))
-             (t
-              (setq lines (append lines
-                                  (list (format "### Line `%s-%s`" start end)
-                                        ""
-                                        "Code:"
-                                        ""
-                                        "```"
-                                        (alist-get 'code comment)
-                                        "```"
-                                        "")))))
-            (setq lines (append lines (list "Comment:" (alist-get 'comment comment) ""))))))
-      (unless (eq group (car (last groups)))
-        (setq lines (append lines '("---" "")))))
-    (string-trim (string-join lines "\n"))))
+  (if (seq-every-p (lambda (comment)
+                    (string= (alist-get 'filename comment) "Faltoo transcript"))
+                  comments)
+      (faltoo-request--transcript-review-prompt comments)
+    (let ((groups (faltoo-request--group-review-comments comments))
+          (lines '("# Comments in code review" "")))
+      (dolist (group groups)
+        (let ((filename (car group)))
+          (setq lines (append lines (list (format "## File name `%s`" filename) "")))
+          (dolist (comment (cdr group))
+            (let* ((start (or (alist-get 'file_line_number_start comment)
+                              (alist-get 'line_number_start comment)))
+                   (end (or (alist-get 'file_line_number_end comment)
+                            (alist-get 'line_number_end comment))))
+              (cond
+               ((string= filename "Faltoo transcript")
+                (setq lines (append lines
+                                    (list "Your response:"
+                                          ""
+                                          "```"
+                                          (alist-get 'code comment)
+                                          "```"
+                                          ""))))
+               ((and (= start 0) (= end 0))
+                (setq lines (append lines '("### File comment" ""))))
+               (t
+                (setq lines (append lines
+                                    (list (format "### Line `%s-%s`" start end)
+                                          ""
+                                          "Code:"
+                                          ""
+                                          "```"
+                                          (alist-get 'code comment)
+                                          "```"
+                                          "")))))
+              (setq lines (append lines (list "Comment:" (alist-get 'comment comment) ""))))))
+        (unless (eq group (car (last groups)))
+          (setq lines (append lines '("---" "")))))
+      (string-trim (string-join lines "\n")))))
 
 (defun faltoo-request-message (text &optional popup-buffer on-done skip-transcript-user workspace)
   "Send TEXT as a chat message."

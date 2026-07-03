@@ -176,8 +176,8 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["rows"][1]["cached_tokens"], 8)
         self.assertEqual(events[1]["rows"][1]["total_tokens"], 12)
 
-    async def test_append_review_formats_transcript_comments_without_line_ranges(self):
-        """Scenario: Transcript review comments are submitted as transcript excerpts."""
+    async def test_append_review_formats_transcript_comments_as_response_comments(self):
+        """Scenario: Transcript review comments are submitted as response comments."""
         bridge = load_bridge()
         captured_questions = []
 
@@ -204,7 +204,10 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-        self.assertIn("Transcript excerpt:\n\n```\nassistant text\n```", captured_questions[0])
+        self.assertIn("Your response:\n\n```\nassistant text\n```", captured_questions[0])
+        self.assertNotIn("Comments in code review", captured_questions[0])
+        self.assertNotIn("File name", captured_questions[0])
+        self.assertNotIn("Faltoo transcript", captured_questions[0])
         self.assertNotIn("### Line", captured_questions[0])
         self.assertNotIn("Code:", captured_questions[0])
 

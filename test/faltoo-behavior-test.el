@@ -2003,8 +2003,8 @@
                 (buffer-string)))))))
 
 
-(ert-deftest faltoo-request-review-formats-transcript-comments-without-line-ranges ()
-  "Scenario: Transcript comments read as transcript excerpts, not source line reviews."
+(ert-deftest faltoo-request-review-formats-transcript-comments-as-response-comments ()
+  "Scenario: Transcript comments read as direct response comments, not source reviews."
   (let ((prompt (faltoo-request--review-prompt
                  '(((filename . "Faltoo transcript")
                     (line_number_start . 2291)
@@ -2015,9 +2015,11 @@
                     (comment . "follow up"))))))
     ;; Given a pending comment targets transcript text.
 
-    ;; Then the prompt keeps the excerpt but omits transcript line ranges.
-    (should (string-match-p "## File name `Faltoo transcript`" prompt))
-    (should (string-match-p "Transcript excerpt:\n\n```\nassistant text\n```" prompt))
+    ;; Then the prompt keeps only the response excerpt and comment.
+    (should (string-match-p "Your response:\n\n```\nassistant text\n```" prompt))
+    (should-not (string-match-p "Comments in code review" prompt))
+    (should-not (string-match-p "File name" prompt))
+    (should-not (string-match-p "Faltoo transcript" prompt))
     (should-not (string-match-p "### Line" prompt))
     (should-not (string-match-p "Code:" prompt))))
 

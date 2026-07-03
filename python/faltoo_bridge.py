@@ -133,7 +133,30 @@ def messages(workspace: Path, limit: int, turns: int | None) -> int:
     return 0
 
 
+def _transcript_reviews_prompt(comments: list[Review]) -> str:
+    sections = []
+    for comment in comments:
+        sections.append(
+            "\n".join(
+                [
+                    "Your response:",
+                    "",
+                    "```",
+                    comment["code"],
+                    "```",
+                    "",
+                    "Comment:",
+                    comment["comment"],
+                ]
+            )
+        )
+    return "\n\n---\n\n".join(sections).strip()
+
+
 def _reviews_prompt(comments: list[Review]) -> str:
+    if all(str(comment["filename"]) == "Faltoo transcript" for comment in comments):
+        return _transcript_reviews_prompt(comments)
+
     lines = ["# Comments in code review", ""]
     grouped: dict[Path, list[Review]] = {}
     for comment in comments:
@@ -145,7 +168,7 @@ def _reviews_prompt(comments: list[Review]) -> str:
             line_start = comment.get("file_line_number_start", comment["line_number_start"])
             line_end = comment.get("file_line_number_end", comment["line_number_end"])
             if str(filename) == "Faltoo transcript":
-                lines.extend(["Transcript excerpt:", "", "```", comment["code"], "```", ""])
+                lines.extend(["Your response:", "", "```", comment["code"], "```", ""])
             elif line_start == 0 and line_end == 0:
                 lines.extend(["### File comment", ""])
             else:
