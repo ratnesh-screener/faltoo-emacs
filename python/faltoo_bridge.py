@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 import sys
+import traceback
 from typing import Any
 
 SHELL_COMMAND_SEPARATOR = "\n\n<!-- shell-command -->\n\n"
@@ -55,6 +56,16 @@ def _session_payload(session: Session) -> dict[str, str]:
 
 def _tool_summary(text: str) -> str:
     return text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)[0].strip()
+
+
+def _hook_feedback_text(text: str) -> bool:
+    return text.lstrip().startswith("## Post-response hook feedback")
+
+
+def _message_role(classes: str, text: str) -> str:
+    if _hook_feedback_text(text):
+        return "hook-feedback"
+    return "assistant" if classes in {"answer", "thinking"} else classes
 
 
 def _stdin_payload() -> dict[str, Any]:
@@ -126,7 +137,7 @@ def messages(workspace: Path, limit: int, turns: int | None) -> int:
         if not rendering:
             continue
         text, classes = rendering
-        role = "assistant" if classes in {"answer", "thinking"} else classes
+        role = _message_role(classes, text)
         messages_payload.append({"role": role, "text": _tool_summary(text) if classes == "tool" else text.strip()})
 
     print(json.dumps({"messages": _last_user_turns(messages_payload, turns)}, ensure_ascii=False))
@@ -422,58 +433,129 @@ def tree_rows(workspace: Path) -> int:
     return 0
 
 
+def _emit_payload(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+
 def _emit(is_new: bool, classes: str, text: str) -> None:
-    print(
-        json.dumps(
-            {"is_new": is_new, "classes": classes, "text": text},
-            ensure_ascii=False,
-        ),
-        flush=True,
-    )
+    _emit_payload({"is_new": is_new, "classes": classes, "text": text})
 
 
-async def _stream_answer(session: Session) -> None:
+def _emit_complete(request_id: str, ok: bool) -> None:
+    _emit_payload({"id": request_id, "type": "complete", "ok": ok})
+
+
+async def _stream_answer(session: Session, emit=None) -> None:
+    emit = emit or _emit
     async for event in get_answer_streaming(session):
         is_new, classes, text = get_event_text(event)
         # Some stream events only update state and have no visible text.
         # Newline-only answer chunks are visible and keep Markdown fences intact.
         if text == "":
             continue
-        if classes == "tool" and text.startswith("Remaining limit"):
+        if getattr(event, "type", "") == "faltoobot.post_response_hook.feedback":
+            classes = "hook-feedback"
+        elif classes == "tool" and text.startswith("Remaining limit"):
             classes = "rate-limit"
-        _emit(is_new, classes, text)
+        emit(is_new, classes, text)
 
-    _emit(True, "done", "Assistant response saved.")
+    emit(True, "done", "Assistant response saved.")
 
-async def append_review(workspace: Path, items: list[dict[str, Any]]) -> int:
+
+def websocket_enabled(_workspace: Path) -> int:
+    config = build_config()
+    enabled = bool(
+        getattr(config, "openai_websocket", False)
+        and (getattr(config, "openai_api_key", None) or getattr(config, "openai_oauth", None))
+    )
+    _emit_payload({"enabled": enabled})
+    return 0
+
+
+async def append_review(workspace: Path, items: list[dict[str, Any]], emit=None) -> int:
+    emit = emit or _emit
     comments = _normalize_comments(items)
     # The UI can submit with a stale empty queue after comments were cleared.
     if not comments:
-        _emit(True, "done", "No review comments to submit.")
+        emit(True, "done", "No review comments to submit.")
         return 0
 
     session = _session(workspace)
     await append_user_turn(session, question=_reviews_prompt(comments))
-    _emit(
+    emit(
         True,
         "status",
         f"Submitted {len(comments)} review comment(s). Waiting for assistant...",
     )
-    await _stream_answer(session)
+    await _stream_answer(session, emit)
     return 0
 
 
-async def append_message(workspace: Path, text: str) -> int:
+async def append_message(workspace: Path, text: str, emit=None) -> int:
+    emit = emit or _emit
     text = text.strip()
     # FaltooBot requires a non-empty user turn.
     if not text:
-        _emit(True, "done", "No message to submit.")
+        emit(True, "done", "No message to submit.")
         return 0
 
     session = _session(workspace)
     await append_user_turn(session, question=text)
-    _emit(True, "status", "Submitted message. Waiting for assistant...")
-    await _stream_answer(session)
+    emit(True, "status", "Submitted message. Waiting for assistant...")
+    await _stream_answer(session, emit)
+    return 0
+
+
+async def daemon_handle_request(workspace: Path, request: dict[str, Any]) -> int:
+    request_id = str(request.get("id") or "")
+    command = str(request.get("command") or "")
+    payload = request.get("payload") if isinstance(request.get("payload"), dict) else {}
+
+    def emit(is_new: bool, classes: str, text: str) -> None:
+        _emit_payload(
+            {
+                "id": request_id,
+                "is_new": is_new,
+                "classes": classes,
+                "text": text,
+            }
+        )
+
+    try:
+        if command == "append-message":
+            await append_message(workspace, str(payload.get("text") or ""), emit)
+        elif command == "append-review":
+            await append_review(workspace, _payload_comments(payload), emit)
+        elif command == "ping":
+            emit(True, "status", "pong")
+        elif command == "shutdown":
+            _emit_complete(request_id, True)
+            return 1
+        else:
+            emit(True, "error", f"Unknown daemon command: {command}")
+            _emit_complete(request_id, False)
+            return 0
+        _emit_complete(request_id, True)
+    except Exception:
+        emit(True, "error", traceback.format_exc())
+        _emit_complete(request_id, False)
+    return 0
+
+
+async def _stdin_lines():
+    loop = asyncio.get_running_loop()
+    while True:
+        line = await loop.run_in_executor(None, sys.stdin.readline)
+        if line == "":
+            return
+        if line.strip():
+            yield line
+
+
+async def daemon(workspace: Path) -> int:
+    async for line in _stdin_lines():
+        if await daemon_handle_request(workspace, json.loads(line)):
+            return 0
     return 0
 
 
@@ -513,6 +595,12 @@ def main() -> int:
     tree_rows_parser = sub.add_parser("tree-rows")
     tree_rows_parser.add_argument("--workspace", default=str(Path.cwd()))
 
+    websocket_parser = sub.add_parser("websocket-enabled")
+    websocket_parser.add_argument("--workspace", default=str(Path.cwd()))
+
+    daemon_parser = sub.add_parser("daemon")
+    daemon_parser.add_argument("--workspace", default=str(Path.cwd()))
+
     sub.add_parser("append-review")
     sub.add_parser("append-message")
     sub.add_parser("slash-commands")
@@ -540,6 +628,10 @@ def main() -> int:
         return session_status(Path(args.workspace))
     if args.command == "tree-rows":
         return tree_rows(Path(args.workspace))
+    if args.command == "websocket-enabled":
+        return websocket_enabled(Path(args.workspace))
+    if args.command == "daemon":
+        return asyncio.run(daemon(Path(args.workspace)))
     if args.command == "append-review":
         payload = _stdin_payload()
         workspace = Path(str(payload.get("workspace") or Path.cwd()))

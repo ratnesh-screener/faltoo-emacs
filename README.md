@@ -120,7 +120,9 @@ The local option defaults to:
 /Users/ratneshrastogi/screener_dev/FaltooBot/.venv/bin/faltoochat
 ```
 
-This choice is stored per workspace, so switching one repo/generic chat does not change other chats. It affects new bridge calls for that chat; already-running processes keep the command they started with. While a local-core chat is answering, the mode-line label changes from `Faltoo:answering` to `Faltoo-beta:answering`.
+This choice is stored per workspace, so switching one repo/generic chat does not change other chats. It affects new bridge calls for that chat; already-running processes keep the command they started with. Switching also stops that workspace's persistent websocket bridge, if one is running, so the next request uses the selected core. While a local-core chat is answering, the mode-line label changes from `Faltoo:answering` to `Faltoo-beta:answering`.
+
+If FaltooBot config enables OpenAI websocket mode, Faltoo Emacs automatically keeps a persistent bridge process per workspace for chat/review requests. Otherwise it uses the regular one-shot bridge process.
 
 This is intentionally a command path, not a shell alias; Emacs will not see shell aliases such as `faltoo_codex`.
 
@@ -169,7 +171,7 @@ Manually typed slash text is sent to the LLM as normal prompt text. Use `C-c /` 
 - Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo. `C-c f i` opens a generic `*Faltoo Chat*` session anchored at `faltoo-generic-chat-directory` for quick questions that should not use the current repo context.
 - Ask always rebuilds from the active region/current line and streams responses in the centered posframe and transcript. The last-response popup preserves follow-up drafts after close/reopen.
 - Completed assistant transcript footers include elapsed time and the latest streamed Codex limit when available, e.g. `> Assistant took: 20.0s` / `> Remaining limit: 5h = 98%`.
-- Review-comment submission streams to the current repo transcript and status/mode-line. Transcript selections can also be marked as pending comments with `C-c f c` and submitted with the same batch flow.
+- Pending comments are scoped to the current workspace. Review-comment submission streams to that workspace transcript and status/mode-line. Transcript selections can also be marked as pending comments with `C-c f c` and submitted with the same batch flow.
 - `C-c f q` cancels the current repo's running answer stream.
 - After a Faltoo request finishes, unmodified open buffers in that repo are refreshed from disk so assistant edits do not trigger stale-file save prompts. Buffers with unsaved local edits are left alone.
 - Faltoo never auto-stages changes.

@@ -126,6 +126,59 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status_result, 0)
 
 
+
+    def test_websocket_enabled_reports_faltoobot_config(self):
+        """Scenario: The bridge reports whether FaltooBot websocket mode is configured."""
+        bridge = load_bridge()
+
+        # Given FaltooBot config has websocket enabled with auth.
+        bridge.build_config = lambda: types.SimpleNamespace(
+            openai_websocket=True,
+            openai_api_key="key",
+            openai_oauth=None,
+        )
+
+        # When Emacs asks whether websocket mode should use a persistent bridge.
+        out = io.StringIO()
+        with redirect_stdout(out):
+            result = bridge.websocket_enabled(Path("/tmp/project"))
+
+        # Then the bridge returns a small JSON capability response.
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(out.getvalue()), {"enabled": True})
+
+    async def test_daemon_streams_append_message_events_with_request_id(self):
+        """Scenario: The persistent daemon tags stream events with the request id."""
+        bridge = load_bridge()
+        captured_questions = []
+
+        async def append_user_turn(_session, question):
+            captured_questions.append(question)
+
+        async def answer_stream(_session):
+            yield "chunk"
+
+        bridge.append_user_turn = append_user_turn
+        bridge.get_answer_streaming = answer_stream
+        bridge.get_event_text = lambda _event: (False, "answer", "hello")
+
+        # When the daemon handles an append-message request.
+        out = io.StringIO()
+        with redirect_stdout(out):
+            result = await bridge.daemon_handle_request(
+                Path("/tmp/project"),
+                {"id": "req-1", "command": "append-message", "payload": {"text": "Hi"}},
+            )
+
+        # Then every emitted event belongs to that request and the daemon stays alive.
+        events = [json.loads(line) for line in out.getvalue().splitlines()]
+        self.assertEqual(result, 0)
+        self.assertEqual(captured_questions, ["Hi"])
+        self.assertTrue(all(event["id"] == "req-1" for event in events))
+        self.assertEqual(events[-1], {"id": "req-1", "type": "complete", "ok": True})
+        self.assertEqual(events[1]["classes"], "answer")
+        self.assertEqual(events[1]["text"], "hello")
+
     def test_tree_rows_streams_compact_rows_without_expanding_large_payloads(self):
         """Scenario: Tree rows stream as compact JSONL batches for large transcripts."""
         bridge = load_bridge()
@@ -267,6 +320,60 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
                 {"classes": "answer", "text": "M faltoo.el"},
             ],
         )
+
+
+
+    def test_messages_marks_persisted_hook_feedback_with_distinct_role(self):
+        """Scenario: Persisted hook feedback can be styled after transcript refresh."""
+        bridge = load_bridge()
+
+        # Given messages.json contains a persisted post-response hook feedback item.
+        bridge.get_item_text = lambda item: (item["content"], "answer")
+        bridge.get_messages = lambda _session: {
+            "messages": [
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": "## Post-response hook feedback\n\n### Refactor Code\n\nHook notes",
+                }
+            ],
+            "workspace": "/tmp/project",
+        }
+
+        # When Emacs asks for transcript messages.
+        out = io.StringIO()
+        with redirect_stdout(out):
+            result = bridge.messages(Path("/tmp/project"), 100, None)
+
+        # Then the message carries a hook-feedback role, not a generic assistant role.
+        self.assertEqual(result, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["messages"][0]["role"], "hook-feedback")
+        self.assertIn("Refactor Code", payload["messages"][0]["text"])
+
+    async def test_post_response_hook_feedback_gets_distinct_stream_class(self):
+        """Scenario: Post-response hook feedback is not emitted as a generic tool block."""
+        bridge = load_bridge()
+        emitted = []
+
+        # Given FaltooBot streams dedicated hook feedback events.
+        event = types.SimpleNamespace(type="faltoobot.post_response_hook.feedback")
+        bridge.get_event_text = lambda _event: (True, "tool", "Hook feedback body")
+        bridge._emit = lambda is_new, classes, text: emitted.append(
+            {"is_new": is_new, "classes": classes, "text": text}
+        )
+
+        async def answer_stream(_session):
+            yield event
+
+        bridge.get_answer_streaming = answer_stream
+
+        # When the bridge streams the event to Emacs.
+        await bridge._stream_answer({})
+
+        # Then Emacs can style it separately from normal tool calls.
+        self.assertEqual(emitted[0]["classes"], "hook-feedback")
+        self.assertEqual(emitted[0]["text"], "Hook feedback body")
 
     async def test_codex_rate_limit_event_gets_distinct_stream_class(self):
         """Scenario: Codex remaining-limit events are distinguishable from tool calls."""

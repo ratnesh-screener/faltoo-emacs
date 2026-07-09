@@ -82,15 +82,15 @@
    2000
    (lambda (file _root)
      ;; Given many pending line comments in one review buffer.
-     (setq faltoo-comments nil)
-     (dotimes (index 300)
-       (push (make-faltoo-comment :file "large.py"
-                                  :path (file-truename file)
-                                  :start (+ 1 (* index 3))
-                                  :end (+ 1 (* index 3))
-                                  :code "line"
-                                  :text "comment")
-             faltoo-comments))
+     (setq faltoo-comments (make-hash-table :test #'equal))
+     (faltoo-comments--set
+      (cl-loop for index below 300
+               collect (make-faltoo-comment :file "large.py"
+                                            :path (file-truename file)
+                                            :start (+ 1 (* index 3))
+                                            :end (+ 1 (* index 3))
+                                            :code "line"
+                                            :text "comment")))
 
      ;; When overlays are refreshed.
      ;; Then the operation remains interactive.

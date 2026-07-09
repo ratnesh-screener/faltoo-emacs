@@ -123,18 +123,15 @@ When PRESERVE-READER-POSITION is non-nil, keep existing window scroll and point.
   "Append assistant answer TEXT to popup BUFFER."
   (let (prefix)
     (with-current-buffer buffer
-      (setq prefix (if (and faltoo-popup-stream-needs-answer-separator
-                            (not faltoo-popup-stream-answer-started))
-                       "\n"
-                     ""))
+      (setq prefix (if faltoo-popup-stream-needs-answer-separator "\n" ""))
       (setq faltoo-popup-stream-answer-started t
             faltoo-popup-stream-needs-answer-separator nil))
     (faltoo-popup-append buffer (concat prefix text) t)))
 
 (defun faltoo-popup-append-stream-block (buffer text &optional face)
   "Append compact quoted stream block TEXT to popup BUFFER."
-  (let ((quoted (concat "> " (mapconcat #'identity (split-string text "\n") "\n> ") "\n"))
-        prefix)
+  (let ((body (concat "> " (mapconcat #'identity (split-string text "\n") "\n> ") "\n"))
+        prefix start)
     (with-current-buffer buffer
       (let ((end (point-max)))
         (setq prefix (cond
@@ -144,9 +141,15 @@ When PRESERVE-READER-POSITION is non-nil, keep existing window scroll and point.
                       ((and (> end (1+ (point-min)))
                             (= (char-before (1- end)) ?\n))
                        "")
-                      (t "\n"))))
+                      (t "\n")))
+        (setq start (+ end (length prefix))))
       (setq faltoo-popup-stream-needs-answer-separator t))
-    (faltoo-popup-append buffer (concat prefix (if face (propertize quoted 'face face) quoted)) t)))
+    (faltoo-popup-append buffer (concat prefix body) t)
+    (when face
+      (with-current-buffer buffer
+        (let ((overlay (make-overlay start (point-max) nil nil nil)))
+          (overlay-put overlay 'face face)
+          (overlay-put overlay 'priority 10))))))
 
 
 (provide 'faltoo-ui)

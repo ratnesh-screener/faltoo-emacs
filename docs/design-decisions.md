@@ -275,7 +275,7 @@ Because the transcript is editable, avoid overusing plain single-letter keys whe
 
 ## Ask Behavior
 
-Ask should be source-buffer-first. Users should be able to ask about the current line, active region, defun, or file without switching to the transcript.
+Ask should be source-buffer-first. Users should be able to ask about the current line or active region without switching to the transcript.
 
 Preferred UI:
 
@@ -286,13 +286,10 @@ Preferred UI:
 - `C-c C-f` inserts a file reference.
 - `C-c /` runs built-in session commands. `C-c p` pastes a saved prompt template.
 
-Ask commands:
+Ask command:
 
 ```elisp
-faltoo-ask              ; ask at point/current context
-faltoo-ask-region       ; ask about active region
-faltoo-ask-defun        ; optional future command
-faltoo-ask-file         ; optional future command
+faltoo-ask              ; ask about active region or current line
 ```
 
 Streaming response behavior:
@@ -544,7 +541,7 @@ faltoo-comments-summary
 faltoo-delete-current-comment
 ```
 
-These should navigate, inspect, edit, and delete pending comments before submission.
+These should navigate, inspect, edit, and delete pending comments before submission. Pending comments are scoped by workspace/Git root so comments queued in one repo or transcript cannot be submitted to another repo's FaltooChat session.
 
 ## Submitting
 
@@ -619,14 +616,42 @@ unstaged-files
 append-review
 append-message
 slash-commands
+websocket-enabled
+daemon
 ```
 
 Emacs side should provide:
 
 - synchronous bridge call helper for commands like `messages`, `unstaged-files`, `slash-commands`
 - asynchronous streaming helper for `append-message` and `append-review`
+- if FaltooBot config enables OpenAI websocket mode, route append streams through one persistent daemon process per workspace
+- if websocket mode is disabled, keep the simple one-shot process flow
 - JSONL process filter with chunk accumulator
 - process sentinel for completion/failure
+
+
+### Persistent Websocket Bridge
+
+FaltooBot's websocket implementation stores `previous_response_id`, input index, and
+the open websocket in Python module state. A one-shot Python process loses this
+state after every request, so Emacs would only partially benefit from enabling
+websocket mode in FaltooBot.
+
+Decision:
+
+- Ask the bridge whether FaltooBot websocket mode is enabled for the current
+  Python environment.
+- When enabled, keep one `daemon` bridge process per workspace and send
+  `append-message` / `append-review` requests to it as JSONL.
+- The daemon tags emitted stream events with a request id and sends a final
+  completion event. Emacs still allows only one active request per workspace.
+- Idle daemon processes stop after 30 minutes.
+- Cancellation kills the current workspace's daemon process.
+- Non-append commands and non-websocket workspaces keep the old one-shot bridge
+  flow.
+
+Rationale: this is the smallest Emacs-side change that lets FaltooBot reuse its
+intended websocket session state while preserving the existing stream routing.
 
 ### Python Resolution
 
@@ -645,6 +670,7 @@ Rationale:
 - This mirrors the Neovim plugin's behavior.
 - It allows testing local FaltooBot core changes from Emacs without launching FaltooChat in a terminal or relying on shell aliases that Emacs cannot see.
 - Already-running bridge processes keep the command they started with; the selected command affects new bridge calls for that workspace.
+- Switching the command clears that workspace's websocket capability cache and stops its persistent daemon, so the next request starts under the newly selected core.
 - When a workspace using the local core is answering, the mode-line label changes from `Faltoo:...` to `Faltoo-beta:...` so the active core is visible without opening a status command.
 
 ## Status / Mode Line
@@ -958,6 +984,8 @@ unstaged-files
 append-review
 append-message
 slash-commands
+websocket-enabled
+daemon
 ```
 
 ### Workspace Detection

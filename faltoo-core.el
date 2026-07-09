@@ -128,10 +128,10 @@ The result is (BEG END START-LINE END-LINE CODE)."
                         (file-truename default-directory))))
     (when (and workspace (faltoo-workspace-submitting-p workspace))
       (push "answering" parts))
-    (when (and (boundp 'faltoo-comments) faltoo-comments)
-      (push (format "%d comment%s" (length faltoo-comments)
-                    (if (= (length faltoo-comments) 1) "" "s"))
-            parts))
+    (when (fboundp 'faltoo-comments-count)
+      (let ((count (faltoo-comments-count workspace)))
+        (when (> count 0)
+          (push (format "%d comment%s" count (if (= count 1) "" "s")) parts))))
     (if parts
         (concat " " (faltoo-status--label workspace) ":"
                 (string-join (nreverse parts) " · "))
@@ -153,10 +153,6 @@ The result is (BEG END START-LINE END-LINE CODE)."
           (let ((buffer-read-only nil))
             (revert-buffer :ignore-auto :noconfirm))))))
   (run-hooks 'faltoo-after-reload-review-buffers-hook))
-
-(defun faltoo-reload-review-buffers ()
-  "Reload live Faltoo review buffers from disk and refresh review UI."
-  (faltoo-reload-workspace-buffers (faltoo-workspace)))
 
 (provide 'faltoo-core)
 ;;; faltoo-core.el ends here

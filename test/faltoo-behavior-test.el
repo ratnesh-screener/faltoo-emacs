@@ -431,6 +431,86 @@
     (should (equal (faltoo-bridge-command-for-workspace "/repo-b/") "faltoobot"))
     (should (equal validated-command "/tmp/local-faltoochat"))))
 
+
+(ert-deftest faltoo-bridge-stream-uses-persistent-daemon-for-websocket-append ()
+  "Scenario: Websocket append requests go through the persistent bridge daemon."
+  (let (routed-to)
+    ;; Given FaltooBot websocket mode is enabled for the workspace.
+    (cl-letf (((symbol-function 'faltoo-bridge-websocket-enabled-p) (lambda (_workspace) t))
+              ((symbol-function 'faltoo-bridge--daemon-stream)
+               (lambda (&rest _args)
+                 (setq routed-to 'daemon)
+                 'daemon-process))
+              ((symbol-function 'faltoo-bridge--oneshot-stream)
+               (lambda (&rest _args)
+                 (setq routed-to 'oneshot)
+                 'oneshot-process))
+              ((symbol-function 'faltoo-bridge--command) (lambda (&rest _args) '("cat"))))
+
+      ;; When an append-message stream starts.
+      (should (eq (faltoo-bridge-stream
+                   '("append-message")
+                   '((workspace . "/repo/") (text . "hello"))
+                   #'ignore #'ignore)
+                  'daemon-process)))
+
+    ;; Then the long-lived daemon path is used.
+    (should (eq routed-to 'daemon))))
+
+(ert-deftest faltoo-bridge-stream-keeps-oneshot-when-websocket-disabled ()
+  "Scenario: Non-websocket append requests keep the existing one-shot bridge."
+  (let (routed-to)
+    ;; Given FaltooBot websocket mode is disabled for the workspace.
+    (cl-letf (((symbol-function 'faltoo-bridge-websocket-enabled-p) (lambda (_workspace) nil))
+              ((symbol-function 'faltoo-bridge--daemon-stream)
+               (lambda (&rest _args)
+                 (setq routed-to 'daemon)
+                 'daemon-process))
+              ((symbol-function 'faltoo-bridge--oneshot-stream)
+               (lambda (&rest _args)
+                 (setq routed-to 'oneshot)
+                 'oneshot-process)))
+
+      ;; When an append-review stream starts.
+      (should (eq (faltoo-bridge-stream
+                   '("append-review")
+                   '((workspace . "/repo/") (comments . []))
+                   #'ignore #'ignore)
+                  'oneshot-process)))
+
+    ;; Then the current one-shot path is used.
+    (should (eq routed-to 'oneshot))))
+
+
+(ert-deftest faltoo-bridge-daemon-complete-finishes-current-request ()
+  "Scenario: Daemon complete events finish the matching Emacs request."
+  (let ((process (start-process "faltoo-test-daemon" nil "cat"))
+        events done)
+    (unwind-protect
+        (progn
+          ;; Given a daemon process has one active request.
+          (process-put process 'faltoo-requests (make-hash-table :test #'equal))
+          (puthash "req-1"
+                   (cons (lambda (event) (push event events))
+                         (lambda (ok) (setq done ok)))
+                   (process-get process 'faltoo-requests))
+
+          ;; When the daemon emits a stream event and then completes.
+          (cl-letf (((symbol-function 'faltoo-bridge--schedule-daemon-idle-stop) #'ignore))
+            (faltoo-bridge--daemon-handle-line
+             "/repo/" process
+             "{\"id\":\"req-1\",\"classes\":\"answer\",\"text\":\"hello\"}")
+            (faltoo-bridge--daemon-handle-line
+             "/repo/" process
+             "{\"id\":\"req-1\",\"type\":\"complete\",\"ok\":true}"))
+
+          ;; Then the event is routed and the request callback is cleared.
+          (should (equal (alist-get 'text (car events)) "hello"))
+          (should (eq done t))
+          (should (= (hash-table-count (process-get process 'faltoo-requests)) 0)))
+      (when (process-live-p process)
+        (delete-process process)))))
+
 (ert-deftest faltoo-bridge-messages-passes-turn-limit-to-bridge ()
   "Scenario: Transcript history loading asks the bridge for recent user turns."
   (let ((faltoo-workspace "/tmp/faltoo-test") captured-args)
@@ -1529,6 +1609,26 @@
                          (eq (overlay-get overlay 'face) 'faltoo-chat-tool-face))
                        (overlays-at (point)))))))
 
+
+(ert-deftest faltoo-chat-render-shows-persisted-hook-feedback-with-dedicated-face ()
+  "Scenario: Persisted post-response hook feedback keeps its distinct styling after transcript refresh."
+  (let ((buf (faltoo-chat-render '(((role . "hook-feedback")
+                                    (text . "## Post-response hook feedback
+
+### Refactor Code
+
+Hook notes"))))))
+    ;; Given hook feedback was loaded from messages.json.
+
+    ;; Then it is quoted and highlighted differently from regular tool blocks.
+    (with-current-buffer buf
+      (should (string-match-p "> ## Post-response hook feedback" (buffer-string)))
+      (goto-char (point-min))
+      (search-forward "Refactor Code")
+      (should (cl-some (lambda (overlay)
+                         (eq (overlay-get overlay 'face) 'faltoo-chat-hook-feedback-face))
+                       (overlays-at (point)))))))
+
 (ert-deftest faltoo-chat-refresh-loads-configured-number-of-turns ()
   "Scenario: Transcript refresh asks the bridge for the configured turn count."
   (let ((faltoo-chat-turns 12) captured-turns)
@@ -2023,14 +2123,49 @@
     (should-not (string-match-p "### Line" prompt))
     (should-not (string-match-p "Code:" prompt))))
 
+(ert-deftest faltoo-submit-review-comments-uses-current-workspace-queue ()
+  "Scenario: Submitting comments sends only the current repo's pending comments."
+  (let* ((root-a (file-name-as-directory (make-temp-file "faltoo-comments-a" t)))
+         (root-b (file-name-as-directory (make-temp-file "faltoo-comments-b" t)))
+         (faltoo-comments (make-hash-table :test #'equal))
+         submitted)
+    (unwind-protect
+        (progn
+          ;; Given two workspaces have independent pending comments.
+          (make-directory (expand-file-name ".git" root-a))
+          (make-directory (expand-file-name ".git" root-b))
+          (faltoo-comments--set
+           (list (make-faltoo-comment :file "a.py" :path "a.py" :start 1 :end 1 :code "a" :text "from a"))
+           root-a)
+          (faltoo-comments--set
+           (list (make-faltoo-comment :file "b.py" :path "b.py" :start 1 :end 1 :code "b" :text "from b"))
+           root-b)
+
+          ;; When comments are submitted from workspace B.
+          (let ((default-directory root-b))
+            (cl-letf (((symbol-function 'faltoo-request-review)
+                       (lambda (comments on-submitted &optional _on-done)
+                         (setq submitted comments)
+                         (funcall on-submitted))))
+              (faltoo-submit-review-comments)))
+
+          ;; Then only workspace B comments are sent and workspace A remains pending.
+          (should (equal (mapcar (lambda (comment) (alist-get 'filename comment)) submitted)
+                         '("b.py")))
+          (should (= (faltoo-comments-count root-a) 1))
+          (should-not (faltoo-comments--list root-b)))
+      (delete-directory root-a t)
+      (delete-directory root-b t))))
+
 (ert-deftest faltoo-submit-review-comments-preserves-insertion-order ()
   "Scenario: Submitted review comments keep the order they were added."
   (let* ((first (make-faltoo-comment :file "sample.py" :path "sample.py" :start 3 :end 3 :code "three" :text "first"))
          (second (make-faltoo-comment :file "sample.py" :path "sample.py" :start 7 :end 7 :code "seven" :text "second"))
          (third (make-faltoo-comment :file "sample.py" :path "sample.py" :start 1 :end 1 :code "one" :text "third"))
-         (faltoo-comments (list third second first))
+         (faltoo-comments (make-hash-table :test #'equal))
          submitted)
     ;; Given pending comments are stored newest-first internally after line 3, 7, then 1 were added.
+    (faltoo-comments--set (list third second first))
 
     ;; When comments are submitted.
     (cl-letf (((symbol-function 'faltoo-request-review)
@@ -2292,6 +2427,46 @@
       (when (buffer-live-p buf)
         (kill-buffer buf)))))
 
+
+(ert-deftest faltoo-popup-stream-block-face-uses-priority-overlay ()
+  "Scenario: Live popup hook feedback face wins over Markdown quote styling."
+  (let ((buf (faltoo-popup-buffer "*Faltoo Popup Hook Face Test*" #'faltoo-popup-mode)))
+    (unwind-protect
+        (progn
+          ;; Given a hook feedback block is appended to a live popup stream.
+          (faltoo-popup-append-stream-block buf "Hook feedback body" 'faltoo-chat-hook-feedback-face)
+
+          ;; Then the block has a high-priority face overlay, not only a text property.
+          (with-current-buffer buf
+            (goto-char (point-min))
+            (search-forward "Hook feedback body")
+            (let ((hook-overlay (cl-find-if
+                                 (lambda (overlay)
+                                   (eq (overlay-get overlay 'face) 'faltoo-chat-hook-feedback-face))
+                                 (overlays-at (point)))))
+              (should hook-overlay)
+              (should (> (overlay-get hook-overlay 'priority) 0)))))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))))
+
+(ert-deftest faltoo-popup-separates-answer-text-after-tool-quotes ()
+  "Scenario: Popup assistant text after tool blocks starts after a blank line."
+  (let ((buf (faltoo-popup-buffer "*Faltoo Popup Tool Answer Spacing Test*" #'faltoo-popup-mode)))
+    (unwind-protect
+        (progn
+          ;; Given assistant text and a tool block are already in the popup stream.
+          (faltoo-popup-append-stream buf "Initial answer.")
+          (faltoo-popup-append-stream-block buf "Post-Response Hook Feedback: Refactor Code")
+
+          ;; When assistant text continues after the tool block.
+          (faltoo-popup-append-stream buf "Hook fired and returned feedback.")
+
+          ;; Then the next answer starts after a blank line.
+          (with-current-buffer buf
+            (should (string-match-p "> Post-Response Hook Feedback: Refactor Code\n\nHook fired" (buffer-string)))))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))))
+
 (ert-deftest faltoo-request-separates-tool-quotes-from-final-answer ()
   "Scenario: Final answer text starts after a blank line following compact tool calls."
   (faltoo-test--kill-chat-buffer)
@@ -2325,7 +2500,99 @@
     (should (string-match-p "Shell: inspect files" (buffer-string)))
     (should-not (string-match-p "giant-file" (buffer-string)))))
 
+
+
+(ert-deftest faltoo-request-renders-legacy-live-hook-feedback-prefix-with-dedicated-face ()
+  "Scenario: Live hook feedback status text keeps distinct styling before bridge reload."
+  (faltoo-test--kill-chat-buffer)
+  ;; Given a chat stream is active.
+  (faltoo-chat-start-stream "Assistant · answering")
+
+  ;; When an old daemon emits hook feedback as a generic tool block.
+  (faltoo-request--route-event
+   '((classes . "tool") (text . "Post-Response Hook Feedback: Refactor Code
+
+Hook notes"))
+   (faltoo-workspace) nil nil)
+
+  ;; Then it still uses the hook feedback face.
+  (with-current-buffer (faltoo-test--chat-buffer-name)
+    (goto-char (point-min))
+    (search-forward "Refactor Code")
+    (should (cl-some (lambda (overlay)
+                       (eq (overlay-get overlay 'face) 'faltoo-chat-hook-feedback-face))
+                     (overlays-at (point))))))
+
+(ert-deftest faltoo-request-renders-hook-feedback-class-with-dedicated-face ()
+  "Scenario: Hook feedback stream events use a distinct face without content sniffing."
+  (faltoo-test--kill-chat-buffer)
+  ;; Given a chat stream is active.
+  (faltoo-chat-start-stream "Assistant · answering")
+
+  ;; When a hook-feedback event is routed into the transcript.
+  (faltoo-request--route-event
+   '((classes . "hook-feedback") (text . "Hook feedback body"))
+   (faltoo-workspace) nil nil)
+
+  ;; Then it is quoted and highlighted separately from tool calls.
+  (with-current-buffer (faltoo-test--chat-buffer-name)
+    (should (string-match-p "> Hook feedback body" (buffer-string)))
+    (goto-char (point-min))
+    (search-forward "Hook feedback body")
+    (let ((hook-overlay (cl-find-if
+                         (lambda (overlay)
+                           (eq (overlay-get overlay 'face) 'faltoo-chat-hook-feedback-face))
+                         (overlays-at (point)))))
+      (should hook-overlay)
+      (should (numberp (overlay-get hook-overlay 'priority)))
+      (should (> (overlay-get hook-overlay 'priority) 0)))))
+
+(ert-deftest faltoo-request-renders-full-post-response-hook-feedback ()
+  "Scenario: Post-response hook feedback is inserted as full Markdown."
+  (faltoo-test--kill-chat-buffer)
+  ;; Given full hook feedback has more lines than normal tool summaries keep.
+  (faltoo-chat-start-stream "Assistant · answering")
+
+  ;; When the feedback is routed into the transcript.
+  (faltoo-request--route-event
+   '((classes . "tool")
+     (text . "## Post-response hook feedback\n\n### Refactor Code\n\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6"))
+   (faltoo-workspace) nil nil)
+
+  ;; Then the full Markdown is quoted, untruncated, and wrapped as its own block.
+  (with-current-buffer (faltoo-test--chat-buffer-name)
+    (should (string-match-p "> ────────────────\n> ## Post-response hook feedback" (buffer-string)))
+    (should (string-match-p "> line 6\n> ────────────────" (buffer-string)))
+    (goto-char (point-min))
+    (search-forward "Refactor Code")
+    (should (cl-some (lambda (overlay)
+                       (eq (overlay-get overlay 'face) 'faltoo-chat-hook-feedback-face))
+                     (overlays-at (point))))
+    (should-not (string-match-p (regexp-quote "...") (buffer-string)))))
+
+(ert-deftest faltoo-request-separates-answer-text-after-post-response-hook-feedback ()
+  "Scenario: Assistant text after post-response hook feedback starts after a blank line."
+  (faltoo-test--kill-chat-buffer)
+  ;; Given assistant text already streamed before hook feedback.
+  (faltoo-chat-start-stream "Assistant · answering")
+  (faltoo-request--route-event '((classes . "answer") (text . "Previous answer.")) (faltoo-workspace) nil nil)
+  (faltoo-request--flush-answer (faltoo-workspace))
+
+  ;; When hook feedback arrives and follow-up assistant text starts.
+  (faltoo-request--route-event
+   '((classes . "tool")
+     (text . "## Post-response hook feedback\n\n### Refactor Code\n\nFull feedback."))
+   (faltoo-workspace) nil nil)
+  (faltoo-request--route-event '((classes . "answer") (text . "Hook fired and returned feedback.")) (faltoo-workspace) nil nil)
+  (faltoo-request--flush-answer (faltoo-workspace))
+
+  ;; Then the hook feedback is separated from both assistant sections.
+  (with-current-buffer (faltoo-test--chat-buffer-name)
+    (should (string-match-p "Previous answer\.\n\n> ────────────────\n> ## Post-response hook feedback" (buffer-string)))
+    (should (string-match-p "> Full feedback\.\n> ────────────────\n\nHook fired" (buffer-string)))))
+
 ;;; Reload specs
+
 
 (ert-deftest faltoo-reload-loads-plugin-files-in-place ()
   "Scenario: Faltoo code can be reloaded without restarting Emacs."
@@ -2694,7 +2961,7 @@ hello
    '("one" "two")
    (lambda (_file _root)
      ;; Given a comment popup was opened from an active source selection.
-     (setq faltoo-comments nil)
+     (setq faltoo-comments (make-hash-table :test #'equal))
      (let ((source (current-buffer))
            (source-window (selected-window)))
        (goto-char (point-min))
@@ -2721,7 +2988,7 @@ hello
    '("one" "two" "three")
    (lambda (_file _root)
      ;; Given point is on line 2 and the comment popup is open.
-     (setq faltoo-comments nil)
+     (setq faltoo-comments (make-hash-table :test #'equal))
      (goto-char (point-min))
      (forward-line 1)
 
@@ -2735,8 +3002,8 @@ hello
           (faltoo-comment-save))))
 
      ;; Then there is one pending comment with a source overlay.
-     (should (= (length faltoo-comments) 1))
-     (let ((comment (car faltoo-comments)))
+     (should (= (faltoo-comments-count) 1))
+     (let ((comment (car (faltoo-comments--list))))
        (should (equal (faltoo-comment-start comment) 2))
        (should (overlayp (faltoo-comment-overlay comment)))
        (should-not (overlay-get (faltoo-comment-overlay comment) 'before-string))))))
@@ -2747,7 +3014,7 @@ hello
    '("one" "two")
    (lambda (_file _root)
      ;; Given no pending comments.
-     (setq faltoo-comments nil)
+     (setq faltoo-comments (make-hash-table :test #'equal))
 
      ;; When saving a file-level review comment.
      (faltoo-test--without-popup-display
@@ -2759,19 +3026,20 @@ hello
           (faltoo-comment-save))))
 
      ;; Then the comment exists but has no line overlay.
-     (should (= (length faltoo-comments) 1))
-     (should (= (faltoo-comment-start (car faltoo-comments)) 0))
-     (should-not (faltoo-comment-overlay (car faltoo-comments))))))
+     (should (= (faltoo-comments-count) 1))
+     (should (= (faltoo-comment-start (car (faltoo-comments--list))) 0))
+     (should-not (faltoo-comment-overlay (car (faltoo-comments--list)))))))
 
 (ert-deftest faltoo-comments-summary-renders-pending-comments ()
   "Scenario: Pending comments can be reviewed before submission."
-  (let ((faltoo-comments
-         (list (make-faltoo-comment :file "sample.py"
-                                    :path "/repo/sample.py"
-                                    :start 2
-                                    :end 3
-                                    :text "tighten this up"))))
+  (let ((faltoo-comments (make-hash-table :test #'equal)))
     ;; Given there is a pending range comment.
+    (faltoo-comments--set
+     (list (make-faltoo-comment :file "sample.py"
+                                :path "/repo/sample.py"
+                                :start 2
+                                :end 3
+                                :text "tighten this up")))
 
     ;; When rendering the comments summary.
     (let ((buf (faltoo-comments-summary-render)))
@@ -2788,12 +3056,13 @@ hello
    '("one" "two" "three")
    (lambda (file _root)
      ;; Given the summary is showing a pending comment on line 2.
-     (let ((faltoo-comments
-            (list (make-faltoo-comment :file "sample.py"
-                                       :path (file-truename file)
-                                       :start 2
-                                       :end 2
-                                       :text "check this"))))
+     (let ((faltoo-comments (make-hash-table :test #'equal)))
+       (faltoo-comments--set
+        (list (make-faltoo-comment :file "sample.py"
+                                   :path (file-truename file)
+                                   :start 2
+                                   :end 2
+                                   :text "check this")))
        (with-current-buffer (faltoo-comments-summary-render)
          (search-forward "sample.py")
 
@@ -2815,7 +3084,7 @@ hello
                                          :start 2
                                          :end 2
                                          :text "remove me")))
-       (setq faltoo-comments (list comment))
+       (faltoo-comments--set (list comment))
        (faltoo-comments-refresh)
        (goto-char (point-min))
        (forward-line 1)
@@ -2826,14 +3095,14 @@ hello
          (faltoo-delete-current-comment)
 
          ;; Then the comment and overlay are gone.
-         (should-not faltoo-comments)
+         (should-not (faltoo-comments--list))
          (should-not (overlay-buffer overlay)))))))
 
 
 (ert-deftest faltoo-chat-comment-uses-selected-transcript-lines ()
   "Scenario: Transcript selections can be queued as review comments."
   (let ((workspace (file-name-as-directory (make-temp-file "faltoo-chat-comment" t)))
-        (faltoo-comments nil))
+        (faltoo-comments (make-hash-table :test #'equal)))
     (unwind-protect
         (let ((buf (faltoo-chat-render '(((role . "assistant")
                                           (text . "alpha\nbeta\ncharlie")))
@@ -2857,7 +3126,7 @@ hello
             (insert "explain this answer")
             (faltoo-comment-save))
 
-          (let ((comment (car faltoo-comments)))
+          (let ((comment (car (faltoo-comments--list workspace))))
             (should (equal (faltoo-comment-file comment) "Faltoo transcript"))
             (should (equal (faltoo-comment-code comment) "beta\ncharlie"))
             (should (equal (faltoo-comment-text comment) "explain this answer"))
@@ -2869,7 +3138,7 @@ hello
 (ert-deftest faltoo-submit-review-comments-clears-transcript-comment-overlays ()
   "Scenario: Submitted transcript comments remove their transcript highlights."
   (let ((workspace (file-name-as-directory (make-temp-file "faltoo-chat-submit-comment" t)))
-        (faltoo-comments nil))
+        (faltoo-comments (make-hash-table :test #'equal)))
     (unwind-protect
         (let* ((buf (faltoo-chat-render '(((role . "assistant") (text . "answer line"))) workspace))
                (comment (make-faltoo-comment :file "Faltoo transcript"
@@ -2880,7 +3149,7 @@ hello
                                              :text "follow up here"
                                              :source-buffer buf)))
           ;; Given a pending transcript comment has marked its source line.
-          (setq faltoo-comments (list comment))
+          (faltoo-comments--set (list comment))
           (faltoo-comments-refresh)
           (let ((overlay (faltoo-comment-overlay comment)))
             (should (overlayp overlay))
@@ -2892,7 +3161,7 @@ hello
               (faltoo-submit-review-comments))
 
             ;; Then the submitted marker disappears from the transcript.
-            (should-not faltoo-comments)
+            (should-not (faltoo-comments--list workspace))
             (should-not (overlay-buffer overlay))))
       (when (get-buffer (faltoo-chat-buffer-name-for workspace))
         (kill-buffer (faltoo-chat-buffer-name-for workspace)))
@@ -2931,7 +3200,7 @@ hello
    '("one")
    (lambda (_file _root)
      ;; Given a comment popup is opened but no comment is typed.
-     (setq faltoo-comments nil)
+     (setq faltoo-comments (make-hash-table :test #'equal))
 
      ;; When saving the empty popup.
      (faltoo-test--without-popup-display
@@ -2941,7 +3210,7 @@ hello
           (faltoo-comment-save))))
 
      ;; Then no pending review comment is created.
-     (should-not faltoo-comments))))
+     (should-not (faltoo-comments--list)))))
 
 (ert-deftest faltoo-comment-popup-places-cursor-in-editable-comment-area ()
   "Scenario: Comment popup starts with point in the editable area."
@@ -2968,7 +3237,7 @@ hello
                                          :end 2
                                          :code "two"
                                          :text "review note")))
-       (setq faltoo-comments (list comment))
+       (faltoo-comments--set (list comment))
        (faltoo-comments-refresh)
        (let ((overlay (faltoo-comment-overlay comment)))
          (should (overlayp overlay))
@@ -2980,20 +3249,21 @@ hello
            (faltoo-submit-review-comments))
 
          ;; Then the submitted marker disappears from the source buffer.
-         (should-not faltoo-comments)
+         (should-not (faltoo-comments--list))
          (should-not (overlay-buffer overlay)))))))
 
 (ert-deftest faltoo-submit-review-comments-sends-json-object-payload ()
   "Scenario: Review submission serializes a bridge-safe JSON payload."
-  (let ((faltoo-comments
-         (list (make-faltoo-comment :file "faltoo.el"
-                                    :path "/repo/faltoo.el"
-                                    :start 1
-                                    :end 1
-                                    :code "code"
-                                    :text "review note")))
+  (let ((faltoo-comments (make-hash-table :test #'equal))
         captured-payload)
     ;; Given one pending review comment and a mocked request submitter.
+    (faltoo-comments--set
+     (list (make-faltoo-comment :file "faltoo.el"
+                                :path "/repo/faltoo.el"
+                                :start 1
+                                :end 1
+                                :code "code"
+                                :text "review note")))
     (cl-letf (((symbol-function 'faltoo-request-review)
                (lambda (comments _on-submitted &optional _on-done)
                  (setq captured-payload
@@ -3148,7 +3418,8 @@ hello
   ;; Given a pending review comment.
   (let ((faltoo-submitting nil)
         (faltoo-submitting-workspaces (make-hash-table :test #'equal))
-        (faltoo-comments (list (make-faltoo-comment :file "x" :path "x" :start 1 :end 1 :text "note"))))
+        (faltoo-comments (make-hash-table :test #'equal)))
+    (faltoo-comments--set (list (make-faltoo-comment :file "x" :path "x" :start 1 :end 1 :text "note")))
 
     ;; Then Faltoo reports pending work before Emacs quits.
     (should (faltoo-has-pending-work-p))
@@ -3191,17 +3462,17 @@ hello
      (should (equal (buffer-string) "local edit"))
      (should (buffer-modified-p)))))
 
-(ert-deftest faltoo-reload-review-buffers-refreshes-review-ui-state ()
+(ert-deftest faltoo-reload-workspace-buffers-refreshes-review-ui-state ()
   "Scenario: Reloading assistant-edited review buffers refreshes overlays and diff highlights."
   (let ((refreshed nil))
     ;; Given a review reload hook is registered.
     (add-hook 'faltoo-after-reload-review-buffers-hook
               (lambda () (setq refreshed t)))
 
-    ;; When review buffers are reloaded after a request.
+    ;; When workspace buffers are reloaded after a request.
     (unwind-protect
         (progn
-          (faltoo-reload-review-buffers)
+          (faltoo-reload-workspace-buffers default-directory)
 
           ;; Then review UI refresh hooks run once at the architecture boundary.
           (should refreshed))

@@ -89,6 +89,7 @@
 (defun faltoo-chat--highlight-block (start end face overlays-var)
   (let ((overlay (make-overlay start end nil nil nil)))
     (overlay-put overlay 'face face)
+    (overlay-put overlay 'priority 10)
     (push overlay (symbol-value overlays-var))))
 
 (defun faltoo-chat--highlight-user-block (start end)
@@ -96,6 +97,9 @@
 
 (defun faltoo-chat--highlight-tool-block (start end)
   (faltoo-chat--highlight-block start end 'faltoo-chat-tool-face 'faltoo-chat-tool-overlays))
+
+(defun faltoo-chat--highlight-hook-feedback-block (start end)
+  (faltoo-chat--highlight-block start end 'faltoo-chat-hook-feedback-face 'faltoo-chat-tool-overlays))
 
 (defun faltoo-chat--highlight-assistant-block (start end)
   (faltoo-chat--highlight-block start end 'faltoo-chat-assistant-face 'faltoo-chat-assistant-overlays))
@@ -111,13 +115,15 @@
          (role-text (or (alist-get 'role message) "message"))
          (role (capitalize role-text))
          (text (or (alist-get 'text message) "")))
-    (if (string= (downcase role-text) "tool")
+    (if (member (downcase role-text) '("tool" "hook-feedback"))
         (progn
           (unless (or (bobp) (looking-back "\n" nil))
             (insert "\n"))
           (setq start (point))
-          (insert "> " text "\n")
-          (faltoo-chat--highlight-tool-block start (point)))
+          (insert "> " (mapconcat #'identity (split-string (string-trim-right text) "\n") "\n> ") "\n")
+          (if (string= (downcase role-text) "hook-feedback")
+              (faltoo-chat--highlight-hook-feedback-block start (point))
+            (faltoo-chat--highlight-tool-block start (point))))
       (faltoo-chat--insert-rule)
       (setq start (point))
       (insert (format "# %s" role))
@@ -281,7 +287,8 @@
   (let ((buf (faltoo-chat-buffer workspace))
         (prefix ""))
     (with-current-buffer buf
-      (unless faltoo-chat-stream-answer-started
+      (when (or (not faltoo-chat-stream-answer-started)
+                faltoo-chat-stream-last-block)
         (setq faltoo-chat-stream-answer-started t)
         (save-excursion
           (goto-char (point-max))
@@ -303,11 +310,10 @@
                           (= (char-before (1- end)) ?\n))
                      "")
                     (t "\n")))
-           (start (+ end (length prefix))))
+           (start (+ end (length prefix)))
+           (body (concat "> " (mapconcat #'identity (split-string (string-trim-right text) "\n") "\n> "))))
       (setq faltoo-chat-stream-last-block t)
-      (faltoo-popup-append (current-buffer)
-                           (concat prefix "> " (string-trim-right text) "\n")
-                           t)
+      (faltoo-popup-append (current-buffer) (concat prefix body "\n") t)
       (when face
         (faltoo-chat--highlight-block start (point-max) face 'faltoo-chat-tool-overlays)))))
 

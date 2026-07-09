@@ -87,11 +87,12 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Ask always rebuilds from the active region/current line when invoked; responses stream in the posframe and current repo transcript. Last-response popups preserve follow-up drafts across close/reopen.
 - Faltoo workspace/session follows the current buffer's Git root when present; outside Git it falls back to the current folder and informs the user once. Popup and repo transcript buffers set `default-directory` to that workspace so sends continue in the correct session. Generic chat intentionally uses `faltoo-generic-chat-directory` instead of source-buffer workspace detection.
 - The Python bridge resolves its Python from the current workspace's command override, falling back to `faltoo-faltoobot-command`; this allows per-chat switching between released FaltooBot and the local venv command.
+- If FaltooBot config enables OpenAI websocket mode, append-message/append-review streams use one persistent daemon process per workspace; otherwise they use the one-shot bridge. Switching a workspace's Faltoo core stops that workspace daemon and clears its websocket capability cache.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
 - Request cancellation is per workspace: `C-c f q` from source/review buffers through the main Faltoo prefix.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
 - `C-c /` runs built-in session commands (`/reset`, `/resume`, `/name`, `/tree`, `/status`); `C-c p` inserts saved prompt templates. Typed slash text submits as a normal prompt.
-- Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup. Transcript selections/current lines can also be queued as pending comments with the same `C-c f c` / `C-c f s` batch flow.
+- Pending review comments are scoped per workspace. Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup. Transcript selections/current lines can also be queued as pending comments with the same `C-c f c` / `C-c f s` batch flow.
 - Review buffers are read-only, use direct single-key review bindings, and show a header line with `Faltoo[1/N]`.
 - `diff-hl` is configured buffer-locally in review buffers for full-line highlights.
 - Faltoo never auto-stages assistant edits.

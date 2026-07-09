@@ -6,8 +6,10 @@
   "Return labels for pending Faltoo work."
   (append
    (when (faltoo-any-submitting-p) (list "a running request"))
-   (when (and (boundp 'faltoo-comments) faltoo-comments)
-     (list (format "%d pending review comment(s)" (length faltoo-comments))))))
+   (when (fboundp 'faltoo-comments-total-count)
+     (let ((count (faltoo-comments-total-count)))
+       (when (> count 0)
+         (list (format "%d pending review comment(s)" count)))))))
 
 (defun faltoo-has-pending-work-p ()
   "Return non-nil when Faltoo has pending work."

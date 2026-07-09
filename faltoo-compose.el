@@ -44,19 +44,6 @@
   "Insert dim help TEXT."
   (insert "\n" (propertize text 'face 'faltoo-popup-meta-face) "\n"))
 
-(defun faltoo-compose-set-message (buffer title text &optional read-only)
-  "Replace BUFFER with Markdown TITLE and TEXT."
-  (with-current-buffer buffer
-    (let ((inhibit-read-only t))
-      (setq buffer-read-only nil)
-      (erase-buffer)
-      (faltoo-compose-insert-title title)
-      (insert "\n" text)
-      (goto-char (point-min))
-      (when read-only
-        (setq buffer-read-only t)))))
-
-
 (defun faltoo-session-workspace ()
   "Return the workspace for commands run from source, popup, or transcript buffers."
   (faltoo-active-workspace))

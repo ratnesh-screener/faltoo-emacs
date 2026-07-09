@@ -28,6 +28,14 @@
   '((t :inherit font-lock-comment-face))
   "Theme-aware face for truncated tool blocks in the Faltoo transcript.")
 
+(defface faltoo-chat-hook-feedback-face
+  '((t :inherit font-lock-constant-face :foreground "#a67555"))
+  "Muted orange face for post-response hook feedback blocks.")
+
+(set-face-attribute 'faltoo-chat-hook-feedback-face nil
+                    :inherit 'font-lock-constant-face
+                    :foreground "#a67555")
+
 (defface faltoo-chat-error-face
   '((t :inherit error))
   "Theme-aware face for Faltoo stream errors in the transcript.")

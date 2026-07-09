@@ -64,13 +64,6 @@
         (faltoo-ask--insert-prompt context)))
     (faltoo-popup-show buf 100 28)))
 
-(defun faltoo-ask-region ()
-  "Ask Faltoo about active region."
-  (interactive)
-  (unless (use-region-p)
-    (user-error "No active region"))
-  (faltoo-ask))
-
 (defun faltoo-ask--question-text ()
   (string-trim (buffer-substring-no-properties faltoo-ask-question-marker (point-max))))
 

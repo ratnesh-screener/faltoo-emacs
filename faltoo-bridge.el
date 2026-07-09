@@ -1,5 +1,6 @@
 ;;; faltoo-bridge.el --- Python bridge for Faltoo -*- lexical-binding: t; -*-
 
+(require 'cl-lib)
 (require 'json)
 (require 'subr-x)
 (require 'faltoo-core)
@@ -27,6 +28,18 @@
 (defvar faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal)
   "Per-workspace FaltooBot/FaltooChat command overrides.")
 
+(defcustom faltoo-bridge-daemon-idle-seconds 1800
+  "Seconds before an idle persistent Faltoo bridge is stopped."
+  :type 'integer
+  :group 'faltoo)
+
+(defconst faltoo-bridge--cache-miss (make-symbol "faltoo-cache-miss"))
+(defvar faltoo-bridge-websocket-enabled-cache (make-hash-table :test #'equal))
+(defvar faltoo-bridge-daemons (make-hash-table :test #'equal))
+(defvar faltoo-bridge-daemon-idle-timers (make-hash-table :test #'equal))
+(defvar faltoo-bridge-daemon-next-id 0)
+(defconst faltoo-bridge--daemon-commands '("append-message" "append-review"))
+
 (defun faltoo-bridge-command-for-workspace (&optional workspace)
   "Return the active Faltoo command for WORKSPACE."
   (or (and workspace (gethash workspace faltoo-faltoobot-workspace-commands))
@@ -47,6 +60,8 @@
                                    (faltoo-bridge-command-for-workspace workspace))))))
     (faltoo-bridge--command-executable command)
     (puthash workspace command faltoo-faltoobot-workspace-commands)
+    (remhash workspace faltoo-bridge-websocket-enabled-cache)
+    (faltoo-bridge-stop-daemon workspace)
     (message "Faltoo using for %s: %s"
              (file-name-nondirectory (directory-file-name workspace))
              command)))
@@ -113,8 +128,139 @@
   (json-parse-string (faltoo-bridge-call-raw args input workspace)
                      :object-type 'alist :array-type 'list))
 
+
+(defun faltoo-bridge-websocket-enabled-p (workspace)
+  "Return non-nil when WORKSPACE should use the persistent websocket bridge."
+  (let ((cached (gethash workspace faltoo-bridge-websocket-enabled-cache
+                         faltoo-bridge--cache-miss)))
+    (if (not (eq cached faltoo-bridge--cache-miss))
+        cached
+      (let* ((payload (faltoo-bridge-call-json
+                       (list "websocket-enabled" "--workspace" workspace)
+                       nil workspace))
+             (enabled (eq (alist-get 'enabled payload) t)))
+        (puthash workspace enabled faltoo-bridge-websocket-enabled-cache)
+        enabled))))
+
+(defun faltoo-bridge--daemon-command-p (args)
+  (member (car args) faltoo-bridge--daemon-commands))
+
+(defun faltoo-bridge--cancel-daemon-idle-timer (workspace)
+  (when-let ((timer (gethash workspace faltoo-bridge-daemon-idle-timers)))
+    (cancel-timer timer))
+  (remhash workspace faltoo-bridge-daemon-idle-timers))
+
+(defun faltoo-bridge-stop-daemon (workspace)
+  "Stop WORKSPACE's persistent bridge daemon."
+  (faltoo-bridge--cancel-daemon-idle-timer workspace)
+  (when-let ((process (gethash workspace faltoo-bridge-daemons)))
+    (remhash workspace faltoo-bridge-daemons)
+    (delete-process process)))
+
+(defun faltoo-bridge--schedule-daemon-idle-stop (workspace process)
+  (when (= (hash-table-count (process-get process 'faltoo-requests)) 0)
+    (faltoo-bridge--cancel-daemon-idle-timer workspace)
+    (puthash workspace
+             (run-at-time faltoo-bridge-daemon-idle-seconds nil
+                          #'faltoo-bridge-stop-daemon workspace)
+             faltoo-bridge-daemon-idle-timers)))
+
+(defun faltoo-bridge--daemon-handle-line (workspace process line)
+  (let* ((event (json-parse-string line :object-type 'alist :array-type 'list))
+         (request-id (alist-get 'id event))
+         (requests (process-get process 'faltoo-requests))
+         (callbacks (gethash request-id requests)))
+    (when callbacks
+      (let ((on-event (car callbacks))
+            (on-done (cdr callbacks)))
+        (if (string= (or (alist-get 'type event) "") "complete")
+            (progn
+              (remhash request-id requests)
+              (funcall on-done (eq (alist-get 'ok event) t))
+              (faltoo-bridge--schedule-daemon-idle-stop workspace process))
+          (funcall on-event event))))))
+
+(defun faltoo-bridge--daemon-filter (workspace process chunk)
+  (process-put process 'faltoo-pending
+               (concat (or (process-get process 'faltoo-pending) "") chunk))
+  (let ((lines (split-string (process-get process 'faltoo-pending) "\n")))
+    (process-put process 'faltoo-pending (car (last lines)))
+    (dolist (line (butlast lines))
+      (unless (string-empty-p line)
+        (faltoo-bridge--daemon-handle-line workspace process line)))))
+
+(defun faltoo-bridge--daemon-sentinel (workspace buffer stderr-buffer process _event)
+  (when (memq (process-status process) '(exit signal))
+    (let ((requests (process-get process 'faltoo-requests))
+          (cancelled (process-get process 'faltoo-cancelled))
+          (stderr (string-trim (with-current-buffer stderr-buffer (buffer-string)))))
+      (maphash (lambda (_id callbacks)
+                 (let ((on-event (car callbacks))
+                       (on-done (cdr callbacks)))
+                   (if cancelled
+                       (funcall on-event '((classes . "status") (text . "Cancelled.")))
+                     (funcall on-event `((classes . "error")
+                                          (text . ,(if (string-empty-p stderr)
+                                                       "Faltoo bridge failed"
+                                                     stderr)))))
+                   (funcall on-done nil)))
+               requests))
+    (remhash workspace faltoo-bridge-daemons)
+    (faltoo-bridge--cancel-daemon-idle-timer workspace)
+    (kill-buffer buffer)
+    (kill-buffer stderr-buffer)))
+
+(defun faltoo-bridge--ensure-daemon (workspace)
+  (or (and-let* ((process (gethash workspace faltoo-bridge-daemons))
+                 ((process-live-p process)))
+        process)
+      (let* ((cmd (faltoo-bridge--command
+                   (list "daemon" "--workspace" workspace) workspace))
+             (buffer (generate-new-buffer " *faltoo-bridge-daemon*"))
+             (stderr-buffer (generate-new-buffer " *faltoo-bridge-daemon-stderr*"))
+             (process (make-process
+                       :name "faltoo-bridge-daemon"
+                       :buffer buffer
+                       :command cmd
+                       :connection-type 'pipe
+                       :noquery t
+                       :stderr stderr-buffer
+                       :filter (lambda (proc chunk)
+                                 (faltoo-bridge--daemon-filter workspace proc chunk))
+                       :sentinel (lambda (proc event)
+                                   (faltoo-bridge--daemon-sentinel
+                                    workspace buffer stderr-buffer proc event)))))
+        (process-put process 'faltoo-requests (make-hash-table :test #'equal))
+        (puthash workspace process faltoo-bridge-daemons)
+        process)))
+
+(defun faltoo-bridge--daemon-stream (args payload on-event on-done)
+  "Send append ARGS and PAYLOAD through a persistent bridge daemon."
+  (let* ((workspace (alist-get 'workspace payload))
+         (process (faltoo-bridge--ensure-daemon workspace))
+         (request-id (number-to-string (cl-incf faltoo-bridge-daemon-next-id)))
+         (requests (process-get process 'faltoo-requests)))
+    (faltoo-bridge--cancel-daemon-idle-timer workspace)
+    (puthash request-id (cons on-event on-done) requests)
+    (process-send-string
+     process
+     (concat (json-serialize `((id . ,request-id)
+                               (command . ,(car args))
+                               (payload . ,payload)))
+             "\n"))
+    process))
+
 (defun faltoo-bridge-stream (args payload on-event on-done)
   "Run bridge ARGS with PAYLOAD.
+Call ON-EVENT for each JSONL event and ON-DONE with t/nil at completion."
+  (let ((workspace (alist-get 'workspace payload)))
+    (if (and (faltoo-bridge--daemon-command-p args)
+             (faltoo-bridge-websocket-enabled-p workspace))
+        (faltoo-bridge--daemon-stream args payload on-event on-done)
+      (faltoo-bridge--oneshot-stream args payload on-event on-done))))
+
+(defun faltoo-bridge--oneshot-stream (args payload on-event on-done)
+  "Run one-shot bridge ARGS with PAYLOAD.
 Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
   (let* ((workspace (alist-get 'workspace payload))
          (cmd (faltoo-bridge--command args workspace))
@@ -221,11 +367,6 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
 (defun faltoo-bridge-slash-commands (&optional workspace)
   (let ((workspace (or workspace (faltoo-active-workspace))))
     (alist-get 'commands (faltoo-bridge-call-json (list "slash-commands") nil workspace))))
-
-(defun faltoo-bridge-session-info (&optional workspace)
-  "Return current Faltoo session info for WORKSPACE."
-  (let ((workspace (or workspace (faltoo-workspace))))
-    (faltoo-bridge-call-json (list "session-info" "--workspace" workspace) nil workspace)))
 
 (defun faltoo-bridge-reset-session (&optional workspace)
   "Start a fresh Faltoo session for WORKSPACE and return session info."

@@ -11,7 +11,12 @@
 
 (cl-defstruct faltoo-comment file path start end code text overlay source-buffer)
 
-(defvar faltoo-comments nil)
+(defvar faltoo-comments (make-hash-table :test #'equal))
+(when (listp faltoo-comments)
+  (let ((comments faltoo-comments))
+    (setq faltoo-comments (make-hash-table :test #'equal))
+    (when comments
+      (puthash (faltoo-workspace) comments faltoo-comments))))
 (defvar faltoo-comments-buffer-name "*Faltoo Comments*")
 
 (defvar-local faltoo-comment-target nil)
@@ -39,18 +44,44 @@
 (define-derived-mode faltoo-comments-summary-mode special-mode "Faltoo-Comments"
   "Mode for pending Faltoo review comments.")
 
-(defun faltoo-comments-count ()
-  (length faltoo-comments))
+(defun faltoo-comments--workspace (&optional workspace)
+  "Return normalized comment WORKSPACE."
+  (file-name-as-directory
+   (file-truename (or workspace
+                     (and (boundp 'faltoo-chat-workspace) faltoo-chat-workspace)
+                     (faltoo-workspace)))))
+
+(defun faltoo-comments--list (&optional workspace)
+  "Return pending comments for WORKSPACE."
+  (gethash (faltoo-comments--workspace workspace) faltoo-comments))
+
+(defun faltoo-comments--set (comments &optional workspace)
+  "Set pending COMMENTS for WORKSPACE."
+  (let ((workspace (faltoo-comments--workspace workspace)))
+    (if comments
+        (puthash workspace comments faltoo-comments)
+      (remhash workspace faltoo-comments))))
+
+(defun faltoo-comments--all ()
+  "Return all pending comments across workspaces."
+  (cl-loop for comments being the hash-values of faltoo-comments append comments))
+
+(defun faltoo-comments-total-count ()
+  "Return pending comment count across all workspaces."
+  (cl-loop for comments being the hash-values of faltoo-comments sum (length comments)))
+
+(defun faltoo-comments-count (&optional workspace)
+  (length (faltoo-comments--list workspace)))
 
 (defun faltoo-comments--range ()
   (faltoo-current-line-range))
 
-(defun faltoo-comments--existing (path start end)
+(defun faltoo-comments--existing (path start end &optional workspace)
   (cl-find-if (lambda (comment)
                 (and (string= path (faltoo-comment-path comment))
                      (<= start (faltoo-comment-end comment))
                      (<= (faltoo-comment-start comment) end)))
-              faltoo-comments))
+              (faltoo-comments--list workspace)))
 
 (defun faltoo-comments--source-buffer (comment)
   (or (and (buffer-live-p (faltoo-comment-source-buffer comment))
@@ -80,11 +111,14 @@
       (delete-overlay (faltoo-comment-overlay comment)))
     (setf (faltoo-comment-overlay comment) nil)))
 
-(defun faltoo-comments-refresh ()
-  "Refresh all pending comment overlays."
-  (faltoo-comments--delete-overlays faltoo-comments)
-  (dolist (comment faltoo-comments)
-    (faltoo-comments--mark comment))
+(defun faltoo-comments-refresh (&optional workspace)
+  "Refresh pending comment overlays for WORKSPACE, or all workspaces."
+  (let ((comments (if workspace
+                      (faltoo-comments--list workspace)
+                    (faltoo-comments--all))))
+    (faltoo-comments--delete-overlays comments)
+    (dolist (comment comments)
+      (faltoo-comments--mark comment)))
   (force-mode-line-update t))
 
 (defun faltoo-comment (&optional file-level)
@@ -135,15 +169,18 @@
   (interactive)
   (let ((comment faltoo-comment-target)
         (text (string-trim (buffer-substring-no-properties faltoo-comment-text-marker (point-max)))))
-    (if (string-empty-p text)
-        (setq faltoo-comments (delq comment faltoo-comments))
-      (setf (faltoo-comment-text comment) text)
-      (unless (memq comment faltoo-comments)
-        (push comment faltoo-comments)))
-    (faltoo-comments-refresh)
+    (let ((comments (faltoo-comments--list))
+          (workspace (faltoo-comments--workspace)))
+      (if (string-empty-p text)
+          (faltoo-comments--set (delq comment comments) workspace)
+        (setf (faltoo-comment-text comment) text)
+        (unless (memq comment comments)
+          (push comment comments))
+        (faltoo-comments--set comments workspace))
+      (faltoo-comments-refresh workspace))
     (faltoo-popup-deactivate-return-mark)
     (faltoo-popup-close)
-    (message "Faltoo: %d pending comment(s)" (length faltoo-comments))))
+    (message "Faltoo: %d pending comment(s)" (faltoo-comments-count))))
 
 (defun faltoo-comments--payload (comments)
   (mapcar (lambda (comment)
@@ -166,14 +203,16 @@
 
 (defun faltoo-comments-summary-render ()
   "Render pending review comments into `faltoo-comments-buffer-name'."
-  (let ((buf (get-buffer-create faltoo-comments-buffer-name)))
+  (let ((workspace (faltoo-comments--workspace))
+        (buf (get-buffer-create faltoo-comments-buffer-name)))
     (with-current-buffer buf
       (faltoo-comments-summary-mode)
+      (setq default-directory workspace)
       (let ((inhibit-read-only t))
         (erase-buffer)
         (insert "Pending Faltoo comments\n\n")
-        (if faltoo-comments
-            (dolist (comment (reverse faltoo-comments))
+        (if-let ((comments (faltoo-comments--list workspace)))
+            (dolist (comment (reverse comments))
               (let ((start (point)))
                 (insert (format "%s:%s\n"
                                 (faltoo-comment-file comment)
@@ -238,9 +277,9 @@
     (unless comment (user-error "No Faltoo comment at point"))
     (when (overlayp (faltoo-comment-overlay comment))
       (delete-overlay (faltoo-comment-overlay comment)))
-    (setq faltoo-comments (delq comment faltoo-comments))
-    (faltoo-comments-refresh)
-    (message "Faltoo: %d pending comment(s)" (length faltoo-comments))))
+    (faltoo-comments--set (delq comment (faltoo-comments--list)))
+    (faltoo-comments-refresh (faltoo-comments--workspace))
+    (message "Faltoo: %d pending comment(s)" (faltoo-comments-count))))
 
 (defun faltoo-comments-summary-delete ()
   "Delete the pending comment at point and refresh the summary."
@@ -251,15 +290,16 @@
 (defun faltoo-submit-review-comments ()
   "Submit pending review comments to FaltooBot."
   (interactive)
-  (unless faltoo-comments
+  (unless (faltoo-comments--list)
     (user-error "No pending Faltoo comments"))
-  (let ((submitted (reverse faltoo-comments)))
+  (let* ((workspace (faltoo-comments--workspace))
+         (submitted (reverse (faltoo-comments--list workspace))))
     (faltoo-request-review
      (faltoo-comments--payload submitted)
      (lambda ()
        (faltoo-comments--delete-overlays submitted)
-       (setq faltoo-comments (cl-set-difference faltoo-comments submitted))
-       (faltoo-comments-refresh)))))
+       (faltoo-comments--set (cl-set-difference (faltoo-comments--list workspace) submitted) workspace)
+       (faltoo-comments-refresh workspace)))))
 
 (defun faltoo-next-comment ()
   "Jump to next pending comment in current buffer."
@@ -277,7 +317,7 @@
                               (cl-remove-if-not (lambda (comment)
                                                   (and (string= path (faltoo-comment-path comment))
                                                        (> (faltoo-comment-start comment) 0)))
-                                                faltoo-comments))
+                                                (faltoo-comments--list)))
                       #'<))
          (line (line-number-at-pos))
          (target (if (> direction 0) (car lines) (car (last lines)))))
