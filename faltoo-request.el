@@ -267,9 +267,9 @@
      "Submitting ask..."
      popup-buffer nil on-done)))
 
-(defun faltoo-request-review (comments on-submitted &optional on-done)
-  "Submit COMMENTS as review comments."
-  (let ((workspace (faltoo-workspace)))
+(defun faltoo-request-review (comments on-submitted &optional on-done workspace)
+  "Submit COMMENTS as review comments for WORKSPACE."
+  (let ((workspace (or workspace (faltoo-active-workspace))))
     (faltoo-request-ensure-idle workspace)
     (faltoo-chat-append-user-message (faltoo-request--review-prompt comments) workspace)
     (faltoo-request-stream

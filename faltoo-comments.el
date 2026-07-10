@@ -20,6 +20,7 @@
 (defvar faltoo-comments-buffer-name "*Faltoo Comments*")
 
 (defvar-local faltoo-comment-target nil)
+(defvar-local faltoo-comment-workspace nil)
 (defvar-local faltoo-comment-text-marker nil)
 
 (defvar faltoo-comment-mode-map
@@ -125,7 +126,7 @@
   "Add or edit a pending Faltoo review comment."
   (interactive)
   (let* ((chat (derived-mode-p 'faltoo-chat-mode))
-         (workspace (faltoo-workspace))
+         (workspace (faltoo-comments--workspace))
          (source-buffer (current-buffer))
          (path (if chat (buffer-name) (faltoo-current-file)))
          (file (if chat "Faltoo transcript" (faltoo-relative-file path)))
@@ -141,7 +142,8 @@
          (buf (faltoo-popup-buffer "*Faltoo Comment*" #'faltoo-comment-mode)))
     (with-current-buffer buf
       (setq default-directory workspace
-            faltoo-comment-target target)
+            faltoo-comment-target target
+            faltoo-comment-workspace workspace)
       (let ((inhibit-read-only t))
         (erase-buffer)
         (faltoo-compose-insert-title (cond (chat "Faltoo Transcript Comment")
@@ -167,20 +169,20 @@
 (defun faltoo-comment-save ()
   "Save the current comment popup."
   (interactive)
-  (let ((comment faltoo-comment-target)
-        (text (string-trim (buffer-substring-no-properties faltoo-comment-text-marker (point-max)))))
-    (let ((comments (faltoo-comments--list))
-          (workspace (faltoo-comments--workspace)))
-      (if (string-empty-p text)
-          (faltoo-comments--set (delq comment comments) workspace)
-        (setf (faltoo-comment-text comment) text)
-        (unless (memq comment comments)
-          (push comment comments))
-        (faltoo-comments--set comments workspace))
-      (faltoo-comments-refresh workspace))
+  (let* ((comment faltoo-comment-target)
+         (text (string-trim (buffer-substring-no-properties faltoo-comment-text-marker (point-max))))
+         (workspace faltoo-comment-workspace)
+         (comments (faltoo-comments--list workspace)))
+    (if (string-empty-p text)
+        (faltoo-comments--set (delq comment comments) workspace)
+      (setf (faltoo-comment-text comment) text)
+      (unless (memq comment comments)
+        (push comment comments))
+      (faltoo-comments--set comments workspace))
+    (faltoo-comments-refresh workspace)
     (faltoo-popup-deactivate-return-mark)
     (faltoo-popup-close)
-    (message "Faltoo: %d pending comment(s)" (faltoo-comments-count))))
+    (message "Faltoo: %d pending comment(s)" (faltoo-comments-count workspace))))
 
 (defun faltoo-comments--payload (comments)
   (mapcar (lambda (comment)
@@ -299,7 +301,8 @@
      (lambda ()
        (faltoo-comments--delete-overlays submitted)
        (faltoo-comments--set (cl-set-difference (faltoo-comments--list workspace) submitted) workspace)
-       (faltoo-comments-refresh workspace)))))
+       (faltoo-comments-refresh workspace))
+     nil workspace)))
 
 (defun faltoo-next-comment ()
   "Jump to next pending comment in current buffer."

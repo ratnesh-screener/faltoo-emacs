@@ -2123,6 +2123,54 @@ Hook notes"))))))
     (should-not (string-match-p "### Line" prompt))
     (should-not (string-match-p "Code:" prompt))))
 
+(ert-deftest faltoo-generic-chat-comments-use-generic-workspace-queue ()
+  "Scenario: Generic chat comments remain attached to the generic chat workspace."
+  (let* ((parent (file-name-as-directory (make-temp-file "faltoo-generic-comments" t)))
+         (workspace (expand-file-name "quick-chat/" parent))
+         (faltoo-generic-chat-directory workspace)
+         (faltoo-generic-chat-workspace-cache nil)
+         (faltoo-comments (make-hash-table :test #'equal))
+         (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+         (faltoo-submitting nil)
+         submitted-workspace)
+    (unwind-protect
+        (progn
+          ;; Given the generic chat directory lives under an unrelated Git repo.
+          (make-directory (expand-file-name ".git" parent))
+          (faltoo-set-workspace-submitting (file-name-as-directory (file-truename parent)) t)
+          (setq workspace (faltoo-generic-chat-workspace))
+          (let ((chat (faltoo-chat-buffer workspace)))
+            (with-current-buffer chat
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (insert "assistant response\n"))
+              (goto-char (point-min))
+
+              ;; When a transcript comment is saved and submitted.
+              (faltoo-test--without-popup-display
+               (lambda ()
+                 (faltoo-comment)
+                 (with-current-buffer "*Faltoo Comment*"
+                   (goto-char (point-max))
+                   (insert "follow up")
+                   (faltoo-comment-save))))
+              (cl-letf (((symbol-function 'faltoo-chat-append-user-message) #'ignore)
+                        ((symbol-function 'faltoo-request-stream)
+                         (lambda (_args payload _title _popup on-submitted _on-done)
+                           (setq submitted-workspace (alist-get 'workspace payload))
+                           (funcall on-submitted))))
+                (faltoo-submit-review-comments)))
+
+            ;; Then it is submitted from the generic queue, not the busy parent repo.
+            (should (equal submitted-workspace workspace))
+            (should-not (faltoo-comments--list workspace))
+            (should-not (faltoo-comments--list parent))))
+      (when (get-buffer "*Faltoo Chat*")
+        (kill-buffer "*Faltoo Chat*"))
+      (when (get-buffer "*Faltoo Comment*")
+        (kill-buffer "*Faltoo Comment*"))
+      (delete-directory parent t))))
+
 (ert-deftest faltoo-submit-review-comments-uses-current-workspace-queue ()
   "Scenario: Submitting comments sends only the current repo's pending comments."
   (let* ((root-a (file-name-as-directory (make-temp-file "faltoo-comments-a" t)))
@@ -2144,7 +2192,7 @@ Hook notes"))))))
           ;; When comments are submitted from workspace B.
           (let ((default-directory root-b))
             (cl-letf (((symbol-function 'faltoo-request-review)
-                       (lambda (comments on-submitted &optional _on-done)
+                       (lambda (comments on-submitted &optional _on-done _workspace)
                          (setq submitted comments)
                          (funcall on-submitted))))
               (faltoo-submit-review-comments)))
@@ -2169,7 +2217,7 @@ Hook notes"))))))
 
     ;; When comments are submitted.
     (cl-letf (((symbol-function 'faltoo-request-review)
-               (lambda (comments _on-submitted &optional _on-done)
+               (lambda (comments _on-submitted &optional _on-done _workspace)
                  (setq submitted comments))))
       (faltoo-submit-review-comments))
 
@@ -3156,7 +3204,7 @@ hello
 
             ;; When the bridge accepts the submitted comment batch.
             (cl-letf (((symbol-function 'faltoo-request-review)
-                       (lambda (_comments on-submitted &optional _on-done)
+                       (lambda (_comments on-submitted &optional _on-done _workspace)
                          (funcall on-submitted))))
               (faltoo-submit-review-comments))
 
@@ -3244,7 +3292,7 @@ hello
 
          ;; When the bridge accepts the submitted comment batch.
          (cl-letf (((symbol-function 'faltoo-request-review)
-                    (lambda (_comments on-submitted &optional _on-done)
+                    (lambda (_comments on-submitted &optional _on-done _workspace)
                       (funcall on-submitted))))
            (faltoo-submit-review-comments))
 
@@ -3265,7 +3313,7 @@ hello
                                 :code "code"
                                 :text "review note")))
     (cl-letf (((symbol-function 'faltoo-request-review)
-               (lambda (comments _on-submitted &optional _on-done)
+               (lambda (comments _on-submitted &optional _on-done _workspace)
                  (setq captured-payload
                        (list (cons 'workspace "/repo")
                              (cons 'comments (vconcat comments))))
