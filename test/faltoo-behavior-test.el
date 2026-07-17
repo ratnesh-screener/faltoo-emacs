@@ -1748,6 +1748,76 @@ Hook notes"))))))
                            (eq (overlay-get overlay 'face) 'faltoo-chat-assistant-face))
                          (overlays-at (point))))))
 
+(ert-deftest faltoo-chat-reloaded-transcript-matches-live-response-grouping ()
+  "Scenario: Reloaded responses group every event like the equivalent live stream."
+  (let* ((workspace (file-name-as-directory (make-temp-file "faltoo-chat-render" t)))
+         (feedback "## Post-response hook feedback
+
+### Refactor Code
+
+Keep the flow minimal.")
+         live loaded)
+    (unwind-protect
+        (progn
+          ;; Given one live response contains visible answer, tool, and hook
+          ;; events while omitting its reasoning event.
+          (with-current-buffer (faltoo-chat-render nil workspace)
+            (insert "Inspect this code.
+
+"))
+          (faltoo-chat-start-stream "Assistant · answering" workspace)
+          (faltoo-request--route-event
+           '((classes . "answer") (text . "I will inspect it.
+
+")) workspace nil nil)
+          (faltoo-request--route-event
+           '((classes . "thinking") (text . "Reasoning summary: check the architecture.
+
+"))
+           workspace nil nil)
+          (faltoo-request--route-event
+           '((classes . "tool") (text . "Shell: inspect repository")) workspace nil nil)
+          (faltoo-request--route-event
+           '((classes . "tool") (text . "Web search: relevant API")) workspace nil nil)
+          (faltoo-request--route-event
+           '((classes . "answer") (text . "The tools confirm the current flow."))
+           workspace nil nil)
+          (faltoo-request--route-event
+           `((classes . "hook-feedback") (text . ,feedback)) workspace nil nil)
+          (faltoo-request--route-event
+           '((classes . "answer") (text . "The implementation looks correct."))
+           workspace nil nil)
+          (faltoo-request--flush-answer workspace)
+          (faltoo-chat-finish-stream workspace)
+          (with-current-buffer (faltoo-chat-buffer workspace)
+            (setq live (buffer-substring-no-properties (point-min) (point-max))))
+          (kill-buffer (faltoo-chat-buffer workspace))
+
+          ;; When the equivalent persisted events are loaded from messages.json.
+          (with-current-buffer
+              (faltoo-chat-render
+               `(((role . "user") (text . "Inspect this code."))
+                 ((role . "assistant") (class . "answer") (text . "I will inspect it."))
+                 ((role . "assistant") (class . "thinking")
+                  (text . "Reasoning summary: check the architecture."))
+                 ((role . "tool") (class . "tool") (text . "Shell: inspect repository"))
+                 ((role . "tool") (class . "tool") (text . "Web search: relevant API"))
+                 ((role . "assistant") (class . "answer")
+                  (text . "The tools confirm the current flow."))
+                 ((role . "hook-feedback") (class . "hook-feedback") (text . ,feedback))
+                 ((role . "assistant") (class . "answer")
+                  (text . "The implementation looks correct.")))
+               workspace)
+            (setq loaded (buffer-substring-no-properties (point-min) (point-max))))
+
+          ;; Then reloading reproduces the minimal live transcript exactly.
+          (should (equal loaded live)))
+      (faltoo-request--clear-pending-answer workspace)
+      (when (get-buffer (faltoo-chat-buffer-name-for workspace))
+        (kill-buffer (faltoo-chat-buffer-name-for workspace)))
+      (delete-directory workspace t))))
+
+
 (ert-deftest faltoo-chat-finish-stream-appends-next-prompt-without-refreshing-history ()
   "Scenario: Completed streams stay in-place and add the next user turn."
   (faltoo-test--kill-chat-buffer)

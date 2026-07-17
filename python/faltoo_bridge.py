@@ -55,7 +55,7 @@ def _session_payload(session: Session) -> dict[str, str]:
 
 
 def _tool_summary(text: str) -> str:
-    return text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)[0].strip()
+    return text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)[0].replace("**", "").strip()
 
 
 def _hook_feedback_text(text: str) -> bool:
@@ -138,7 +138,13 @@ def messages(workspace: Path, limit: int, turns: int | None) -> int:
             continue
         text, classes = rendering
         role = _message_role(classes, text)
-        messages_payload.append({"role": role, "text": _tool_summary(text) if classes == "tool" else text.strip()})
+        messages_payload.append(
+            {
+                "role": role,
+                "class": classes,
+                "text": _tool_summary(text) if classes == "tool" else text.strip(),
+            }
+        )
 
     print(json.dumps({"messages": _last_user_turns(messages_payload, turns)}, ensure_ascii=False))
     return 0

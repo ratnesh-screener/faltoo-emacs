@@ -323,6 +323,33 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
 
 
 
+    def test_messages_remove_markdown_emphasis_from_tool_summaries(self):
+        """Scenario: Reloaded tool summaries match the minimal live rendering."""
+        bridge = load_bridge()
+
+        # Given a persisted tool call uses FaltooBot's bold Markdown label.
+        bridge.get_item_text = lambda _item: (
+            "**Shell:** Collect final code references and status",
+            "tool",
+        )
+        bridge.get_messages = lambda _session: {
+            "messages": [{"type": "function_call"}],
+            "workspace": "/tmp/project",
+        }
+
+        # When Emacs asks the bridge for transcript messages.
+        out = io.StringIO()
+        with redirect_stdout(out):
+            result = bridge.messages(Path("/tmp/project"), 100, None)
+
+        # Then the loaded summary has the same plain label as the live stream.
+        self.assertEqual(result, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(
+            payload["messages"][0]["text"],
+            "Shell: Collect final code references and status",
+        )
+
     def test_messages_marks_persisted_hook_feedback_with_distinct_role(self):
         """Scenario: Persisted hook feedback can be styled after transcript refresh."""
         bridge = load_bridge()
@@ -349,6 +376,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, 0)
         payload = json.loads(out.getvalue())
         self.assertEqual(payload["messages"][0]["role"], "hook-feedback")
+        self.assertEqual(payload["messages"][0]["class"], "answer")
         self.assertIn("Refactor Code", payload["messages"][0]["text"])
 
     async def test_post_response_hook_feedback_gets_distinct_stream_class(self):
