@@ -174,7 +174,9 @@
          (workspace faltoo-comment-workspace)
          (comments (faltoo-comments--list workspace)))
     (if (string-empty-p text)
-        (faltoo-comments--set (delq comment comments) workspace)
+        (progn
+          (faltoo-comments--delete-overlays (list comment))
+          (faltoo-comments--set (delq comment comments) workspace))
       (setf (faltoo-comment-text comment) text)
       (unless (memq comment comments)
         (push comment comments))

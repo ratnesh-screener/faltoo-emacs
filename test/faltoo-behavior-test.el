@@ -3126,6 +3126,38 @@ hello
        (should (overlayp (faltoo-comment-overlay comment)))
        (should-not (overlay-get (faltoo-comment-overlay comment) 'before-string))))))
 
+(ert-deftest faltoo-comment-cleared-while-editing-removes-source-highlight ()
+  "Scenario: Clearing an existing comment removes its pending line highlight."
+  (faltoo-test--with-temp-git-file
+   '("one" "two" "three")
+   (lambda (_file _root)
+     ;; Given line 2 has a saved pending comment and source highlight.
+     (setq faltoo-comments (make-hash-table :test #'equal))
+     (goto-char (point-min))
+     (forward-line 1)
+     (faltoo-test--without-popup-display
+      (lambda ()
+        (faltoo-comment)
+        (with-current-buffer "*Faltoo Comment*"
+          (goto-char (point-max))
+          (insert "remove this comment")
+          (faltoo-comment-save))))
+     (let* ((comment (car (faltoo-comments--list)))
+            (overlay (faltoo-comment-overlay comment)))
+       (should (overlay-buffer overlay))
+
+       ;; When editing the comment, clearing its text, and saving.
+       (faltoo-test--without-popup-display
+        (lambda ()
+          (faltoo-comment)
+          (with-current-buffer "*Faltoo Comment*"
+            (delete-region faltoo-comment-text-marker (point-max))
+            (faltoo-comment-save))))
+
+       ;; Then both the pending comment and its visible highlight are gone.
+       (should-not (faltoo-comments--list))
+       (should-not (overlay-buffer overlay))))))
+
 (ert-deftest faltoo-file-comment-does-not-create-line-overlay ()
   "Scenario: File-level comments are pending but do not mark a line."
   (faltoo-test--with-temp-git-file
