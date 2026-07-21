@@ -1907,6 +1907,28 @@ Keep the flow minimal.")
        (should (equal (plist-get context :end) 2))
        (should (equal (plist-get context :code) "two"))))))
 
+(ert-deftest faltoo-current-line-range-includes-bol-endpoint-in-both-directions ()
+  "Scenario: A region endpoint at the next line start includes that full line."
+  (faltoo-test--with-temp-git-file
+   '("one" "two" "three")
+   (lambda (_file _root)
+     (dolist (direction '(forward reverse))
+       ;; Given two lines are selected with point at a line beginning.
+       (goto-char (point-min))
+       (when (eq direction 'reverse)
+         (forward-line 1))
+       (set-mark (point))
+       (forward-line (if (eq direction 'forward) 1 -1))
+       (activate-mark)
+
+       ;; When the shared Ask/comment source range is expanded.
+       (let ((range (faltoo-current-line-range)))
+
+         ;; Then both touched lines are included in either selection direction.
+         (should (equal (nth 2 range) 1))
+         (should (equal (nth 3 range) 2))
+         (should (equal (nth 4 range) "one\ntwo")))))))
+
 (ert-deftest faltoo-ask-uses-full-lines-for-active-region ()
   "Scenario: Ask expands a partial active region to complete source lines."
   (faltoo-test--with-temp-git-file
