@@ -9,7 +9,8 @@
 (require 'faltoo-compose)
 (require 'faltoo-faces)
 
-(cl-defstruct faltoo-comment file path start end code text overlay source-buffer)
+(cl-defstruct faltoo-comment
+  file path start end code text overlay source-buffer display-start display-end display-type)
 
 (defvar faltoo-comments (make-hash-table :test #'equal))
 (when (listp faltoo-comments)
@@ -77,12 +78,18 @@
 (defun faltoo-comments--range ()
   (faltoo-current-line-range))
 
-(defun faltoo-comments--existing (path start end &optional workspace)
-  (cl-find-if (lambda (comment)
-                (and (string= path (faltoo-comment-path comment))
-                     (<= start (faltoo-comment-end comment))
-                     (<= (faltoo-comment-start comment) end)))
-              (faltoo-comments--list workspace)))
+(defun faltoo-comments--existing (path start end &optional workspace display-start display-end display-type)
+  (cl-find-if
+   (lambda (comment)
+     (and (string= path (faltoo-comment-path comment))
+          (if (eq display-type 'delete)
+              (and (eq (faltoo-comment-display-type comment) 'delete)
+                   (<= display-start (faltoo-comment-display-end comment))
+                   (<= (faltoo-comment-display-start comment) display-end))
+            (and (not (eq (faltoo-comment-display-type comment) 'delete))
+                 (<= start (faltoo-comment-end comment))
+                 (<= (faltoo-comment-start comment) end)))))
+   (faltoo-comments--list workspace)))
 
 (defun faltoo-comments--source-buffer (comment)
   (or (and (buffer-live-p (faltoo-comment-source-buffer comment))
@@ -90,19 +97,49 @@
       (get-buffer (faltoo-comment-path comment))
       (find-buffer-visiting (faltoo-comment-path comment))))
 
+(defun faltoo-comments--review-line-position (line &optional display-line)
+  "Return the generated review position for source LINE."
+  (or (and display-line
+           (save-excursion
+             (goto-char (point-min))
+             (forward-line (1- display-line))
+             (and (= (or (get-text-property (point) 'faltoo-review-file-line) -1) line)
+                  (point))))
+      (save-excursion
+        (goto-char (point-min))
+        (let (fallback found)
+          (while (and (< (point) (point-max)) (not found))
+            (when (= (or (get-text-property (point) 'faltoo-review-file-line) -1) line)
+              (setq fallback (or fallback (point)))
+              (unless (eq (get-text-property (point) 'faltoo-review-line-type) 'delete)
+                (setq found (point))))
+            (forward-line 1))
+          (or found fallback)))))
+
+(defun faltoo-comments--position (comment end)
+  "Return COMMENT's start or END position in the current source/review buffer."
+  (let ((line (if end (faltoo-comment-end comment) (faltoo-comment-start comment)))
+        (display-line (if end
+                          (faltoo-comment-display-end comment)
+                        (faltoo-comment-display-start comment))))
+    (if (bound-and-true-p faltoo-review-source-file)
+        (faltoo-comments--review-line-position line display-line)
+      (save-excursion
+        (goto-char (point-min))
+        (forward-line (1- line))
+        (point)))))
+
 (defun faltoo-comments--mark (comment)
   (when (> (faltoo-comment-start comment) 0)
-    (let ((buf (faltoo-comments--source-buffer comment)))
-      (when buf
-        (with-current-buffer buf
-          (save-excursion
-            (goto-char (point-min))
-            (forward-line (1- (faltoo-comment-start comment)))
-            (let ((beg (line-beginning-position)))
-              (forward-line (1+ (- (faltoo-comment-end comment) (faltoo-comment-start comment))))
-              (let ((overlay (make-overlay beg (line-beginning-position))))
-                (overlay-put overlay 'face 'faltoo-review-comment-face)
-                (setf (faltoo-comment-overlay comment) overlay)))))))))
+    (when-let ((buf (faltoo-comments--source-buffer comment)))
+      (with-current-buffer buf
+        (save-excursion
+          (let ((beg (faltoo-comments--position comment nil)))
+            (goto-char (faltoo-comments--position comment t))
+            (forward-line 1)
+            (let ((overlay (make-overlay beg (point))))
+              (overlay-put overlay 'face 'faltoo-review-comment-face)
+              (setf (faltoo-comment-overlay comment) overlay))))))))
 
 
 (defun faltoo-comments--delete-overlays (comments)
@@ -137,9 +174,20 @@
          (end (nth 3 range))
          (code (nth 4 range))
          (language (if chat "markdown" (faltoo-current-language)))
-         (existing (faltoo-comments--existing path start end))
-         (target (or existing (make-faltoo-comment :file file :path path :start start :end end :code code :source-buffer source-buffer)))
+         (display-start (and (bound-and-true-p faltoo-review-source-file)
+                             (line-number-at-pos (nth 0 range))))
+         (display-end (and (bound-and-true-p faltoo-review-source-file)
+                           (line-number-at-pos (nth 1 range))))
+         (display-type (and display-start
+                            (get-text-property (nth 0 range) 'faltoo-review-line-type)))
+         (existing (faltoo-comments--existing path start end nil
+                                              display-start display-end display-type))
+         (target (or existing (make-faltoo-comment :file file :path path :start start :end end :code code)))
          (buf (faltoo-popup-buffer "*Faltoo Comment*" #'faltoo-comment-mode)))
+    (setf (faltoo-comment-source-buffer target) source-buffer
+          (faltoo-comment-display-start target) display-start
+          (faltoo-comment-display-end target) display-end
+          (faltoo-comment-display-type target) display-type)
     (with-current-buffer buf
       (setq default-directory workspace
             faltoo-comment-target target
@@ -189,8 +237,10 @@
 (defun faltoo-comments--payload (comments)
   (mapcar (lambda (comment)
             (list (cons 'filename (faltoo-comment-file comment))
-                  (cons 'line_number_start (faltoo-comment-start comment))
-                  (cons 'line_number_end (faltoo-comment-end comment))
+                  (cons 'line_number_start (or (faltoo-comment-display-start comment)
+                                               (faltoo-comment-start comment)))
+                  (cons 'line_number_end (or (faltoo-comment-display-end comment)
+                                             (faltoo-comment-end comment)))
                   (cons 'file_line_number_start (faltoo-comment-start comment))
                   (cons 'file_line_number_end (faltoo-comment-end comment))
                   (cons 'code (faltoo-comment-code comment))
@@ -241,8 +291,14 @@
 (defun faltoo-comments--comment-at-point ()
   (or (get-text-property (point) 'faltoo-comment)
       (get-text-property (line-beginning-position) 'faltoo-comment)
-      (let ((line (line-number-at-pos)))
+      (let ((line (or (get-text-property (line-beginning-position) 'faltoo-review-file-line)
+                      (line-number-at-pos))))
         (cond
+         ((bound-and-true-p faltoo-review-source-file)
+          (let ((display-line (line-number-at-pos))
+                (type (get-text-property (line-beginning-position) 'faltoo-review-line-type)))
+            (faltoo-comments--existing (faltoo-current-file) line line nil
+                                       display-line display-line type)))
          (buffer-file-name
           (faltoo-comments--existing (faltoo-current-file) line line))
          ((derived-mode-p 'faltoo-chat-mode)
@@ -253,9 +309,8 @@
     (if buf
         (switch-to-buffer buf)
       (find-file (faltoo-comment-path comment))))
-  (goto-char (point-min))
   (when (> (faltoo-comment-start comment) 0)
-    (forward-line (1- (faltoo-comment-start comment)))))
+    (goto-char (faltoo-comments--position comment nil))))
 
 (defun faltoo-comments-summary-jump ()
   "Jump from the summary to the comment source."
@@ -318,22 +373,24 @@
 
 (defun faltoo-comments--jump (direction)
   (let* ((path (if (derived-mode-p 'faltoo-chat-mode) (buffer-name) (faltoo-current-file)))
-         (lines (sort (mapcar #'faltoo-comment-start
-                              (cl-remove-if-not (lambda (comment)
-                                                  (and (string= path (faltoo-comment-path comment))
-                                                       (> (faltoo-comment-start comment) 0)))
-                                                (faltoo-comments--list)))
-                      #'<))
-         (line (line-number-at-pos))
-         (target (if (> direction 0) (car lines) (car (last lines)))))
-    (unless lines (user-error "No Faltoo comments in this buffer"))
-    (dolist (candidate lines)
-      (when (and (> direction 0) (> candidate line) (or (not target) (< candidate target)))
-        (setq target candidate))
-      (when (and (< direction 0) (< candidate line))
-        (setq target candidate)))
-    (goto-char (point-min))
-    (forward-line (1- target))))
+         (comments (sort (cl-remove-if-not
+                          (lambda (comment)
+                            (and (string= path (faltoo-comment-path comment))
+                                 (> (faltoo-comment-start comment) 0)))
+                          (copy-sequence (faltoo-comments--list)))
+                         (lambda (a b) (< (faltoo-comment-start a) (faltoo-comment-start b)))))
+         (line (or (get-text-property (line-beginning-position) 'faltoo-review-file-line)
+                   (line-number-at-pos)))
+         (target (if (> direction 0) (car comments) (car (last comments)))))
+    (unless comments (user-error "No Faltoo comments in this buffer"))
+    (dolist (comment comments)
+      (let ((candidate (faltoo-comment-start comment)))
+        (when (and (> direction 0) (> candidate line)
+                   (< candidate (faltoo-comment-start target)))
+          (setq target comment))
+        (when (and (< direction 0) (< candidate line))
+          (setq target comment))))
+    (goto-char (faltoo-comments--position target nil))))
 
 (add-hook 'faltoo-after-reload-review-buffers-hook #'faltoo-comments-refresh)
 

@@ -41,8 +41,8 @@ Decisions borrowed from `gptel`:
 
 Decisions that intentionally differ from `gptel`:
 
-- The source buffer is the primary UI during review.
-- Ask/comment interactions should happen in centered `posframe` popups while keeping source buffers primary.
+- The generated full-file review buffer is the primary UI during review; the real source buffer stays untouched.
+- Ask/comment interactions should happen in centered `posframe` popups while keeping code buffers primary.
 - The transcript should be available on demand, but should not be required for asking questions or reviewing code.
 
 We will not initially depend on `gptel` or implement Faltoo as a `gptel` backend. FaltooBot owns its own sessions, history, bridge protocol, review prompts, tool events, and workspace behavior, so a custom Faltoo implementation is more appropriate.
@@ -94,7 +94,7 @@ faltoo-core.el         ; workspace/session state
 faltoo-bridge.el       ; Python bridge calls and streaming JSONL parser
 faltoo-chat.el         ; per-workspace transcript/chat buffers
 faltoo-tree.el         ; messages.json transcript inspector
-faltoo-review.el       ; review source-buffer minor mode and unstaged files
+faltoo-review.el       ; generated full-file review buffers and unstaged files
 faltoo-comments.el     ; pending comment data, overlays, navigation
 faltoo-compose.el      ; compose helpers for comments and posframe Ask
 faltoo-ui.el           ; shared window/display helpers
@@ -111,16 +111,16 @@ Use scoped modes:
 
 ### `faltoo-review-mode`
 
-A buffer-local minor mode for source buffers currently under Faltoo review.
+A buffer-local minor mode for generated full-file review buffers.
 
 Responsibilities:
 
-- Preserve the original major mode of source files.
-- Mark review buffers read-only.
-- Add review-specific keybindings.
-- Display pending comment overlays/fringe markers.
-- Support next/previous pending comment navigation.
-- Clean up overlays/keybindings/read-only state when disabled.
+- Reuse the source file's major mode without modifying its real buffer.
+- Keep generated review buffers read-only.
+- Insert removed Git rows inline and highlight added/removed rows.
+- Add review-specific keybindings and hunk/file navigation.
+- Display pending comment overlays mapped to canonical source files.
+- Kill generated buffers while preserving comments when review stops.
 
 This is the Emacs-native equivalent of Faltoo review behavior in `faltoo.nvim`.
 
@@ -405,58 +405,20 @@ Do not overload literal `/` in MVP.
 
 ## Review Workflow
 
-Review workflow is separate from ordinary chat.
+Review is code-first but uses generated buffers so removed lines can appear inline without modifying source files.
 
-Commands:
+`faltoo-review-unstaged` asks the bridge for unstaged files and opens one generated buffer per file. Each review buffer:
 
-```elisp
-faltoo-open-unstaged
-faltoo-review-on
-faltoo-review-off
-faltoo-comment
-faltoo-file-comment
-faltoo-submit-review-comments
-faltoo-comments-summary
-faltoo-delete-current-comment
-faltoo-next-comment
-faltoo-prev-comment
-```
+- keeps the source file's major mode and normal Emacs navigation; generated buffers do not guarantee LSP-managed-buffer parity;
+- is read-only;
+- renders the complete working-tree file;
+- inserts removed Git rows before the corresponding added/current rows;
+- uses theme-aware Magit diff faces for added and removed rows;
+- maps Ask/comment line ranges and file identity back to the real source file.
 
-Naming can be shortened for public commands, but the workflow should remain explicit.
+The real source buffer remains untouched and editable. Pending comments are keyed by workspace and canonical source path, so comments created from the source or generated review buffer share one queue and survive `faltoo-review-stop`.
 
-### Open Unstaged Files
-
-`faltoo-open-unstaged` should:
-
-- Ask the bridge for current unstaged files.
-- Open them with `find-file-noselect` / `switch-to-buffer`.
-- Enable `faltoo-review-mode` in those buffers.
-- Mark them read-only.
-- Optionally close/bury unmodified review buffers not in the unstaged set.
-- If no unstaged files exist, show the repo transcript instead.
-
-Use the bridge's unstaged-file logic first, to match FaltooBot's workspace/git behavior. A pure-Elisp or Magit fallback can be added later.
-
-### Source Buffer State
-
-Source buffers under review must keep their original major modes. For example:
-
-- Python files stay in Python mode.
-- Elisp files stay in Emacs Lisp mode.
-- TypeScript files stay in their existing mode.
-
-`faltoo-review-mode` is only additive.
-
-### Buffers Excluded from Review Mode
-
-Do not enable review mode in:
-
-- non-file buffers
-- special buffers
-- minibuffers
-- Magit/status/process buffers
-- git commit/rebase message buffers
-- files outside the current Faltoo workspace/project
+Review mode excludes non-file, special, Magit, process, commit, and rebase buffers. Those buffers are never converted into review buffers.
 
 ## Review Comments
 
@@ -763,10 +725,11 @@ Inside `faltoo-review-mode`, use direct single-key bindings because review buffe
 ```text
 a/c/s     ask, comment, submit comments
 ]/[/=     next hunk, previous hunk, show hunk
-n/p       next/previous pending comment
-N/P       next/previous review file
+g/G       top/bottom of review buffer
+n/p       next/previous review file
+N/P       next/previous pending comment
 S/U       stage/unstage current file
-H s/H r   stage/revert current hunk
+D         Magit current-file diff
 ```
 
 Do not make aggressive single-key bindings global or in editable prompt buffers.
@@ -799,137 +762,44 @@ These are intentionally undecided and can be revisited:
 
 ## Review / Stage / Unstage Pipeline
 
-Decision: Faltoo should provide a full-file review experience inside ordinary source buffers, while Magit/Git remains responsible for actual staging and unstaging.
+Decision: Faltoo owns full-file review presentation and pending comments; Magit owns Git index changes.
 
-### Core Principle
+### Review Presentation
 
-Separate three concepts:
+Faltoo parses a zero-context working-tree diff from Magit/Git and merges it with the current file contents. The generated review buffer shows:
 
-1. **Faltoo review set**: files currently being reviewed with Faltoo.
-2. **Pending Faltoo comments**: line/range/file comments to send to FaltooBot.
-3. **Git index state**: what is staged/unstaged for commit.
+- unchanged lines as normal source text;
+- added lines with `magit-diff-added-highlight` inheritance;
+- removed lines inserted inline with `magit-diff-removed-highlight` inheritance.
 
-Faltoo owns the first two. Magit/Git owns the third.
+Generated rows carry source-line and hunk properties. Ask/comments use source-line properties for payloads, while overlays can stay on the exact generated rows selected by the user.
 
-### Full-File Review Experience
-
-The preferred review UI is not a Magit diff buffer as the primary workspace. Instead:
-
-- Open one changed file at a time as a normal source buffer.
-- Keep the file's normal major mode and LSP/Eglot/xref/navigation behavior.
-- Enable `faltoo-review-mode` in that file.
-- Mark the file read-only by default while reviewing.
-- Show Git change indicators in the source buffer.
-- Let the user jump to definitions, use xref, search, visit related files, and navigate normally.
-
-This matches the important property of the Neovim workflow: the user reviews a real file buffer, not only a patch/diff buffer.
-
-### Diff Display in Source Buffers
-
-Use `diff-hl` as the required integration for in-buffer Git change indicators.
-
-Rationale:
-
-- `diff-hl-mode` highlights uncommitted changes in the fringe/margin of ordinary file buffers.
-- It supports navigating between hunks.
-- It can show the current hunk.
-- In Git buffers, it supports staging/unstaging changes.
-- It integrates with Magit via `magit-post-refresh-hook`.
-- It preserves normal source-buffer navigation and editing features.
-
-Faltoo requires `diff-hl` for the intended review workflow and enables it in `faltoo-review-mode` buffers.
-
-Potential integration commands:
-
-```elisp
-faltoo-next-change       ; delegate to diff-hl-next-hunk through required dependency
-faltoo-prev-change       ; delegate to diff-hl-previous-hunk through required dependency
-faltoo-show-change       ; delegate to diff-hl-show-hunk through required dependency
-faltoo-stage-hunk        ; delegate to diff-hl-stage-current-hunk through required dependency
-faltoo-revert-hunk       ; delegate to diff-hl-revert-hunk through required dependency, with confirmation
-```
-
-These commands are convenience wrappers. They should not make Faltoo a replacement for Magit.
+Change navigation is implemented over those hunk properties and wraps between hunks. File navigation keeps the one-file-at-a-time review flow.
 
 ### Magit Role
 
-Magit remains the preferred staging/unstaging and commit UI.
-
-Faltoo should provide easy jumps to Magit:
-
-```elisp
-faltoo-magit-status
-faltoo-magit-diff-current-file
-faltoo-magit-diff-review-files
-```
-
-When in a Magit diff, Magit already supports visiting the corresponding file/worktree location. This is useful as a secondary workflow, but the primary Faltoo review experience should still be source-buffer-first.
-
-### Staging/Unstaging Policy
-
-Faltoo must not auto-stage assistant edits.
-
-Staging/unstaging should be available from the source review buffer, but delegated to existing Git tooling:
-
-- File-level stage: prefer Magit (`magit-stage-file`) through required dependency; otherwise run `git add -- <file>`.
-- File-level unstage: prefer Magit (`magit-unstage-file`) through required dependency; otherwise run `git restore --staged -- <file>`, with `git reset -q HEAD -- <file>` as fallback.
-- Hunk-level operations: delegate to `diff-hl` commands. If a complex index state does not map cleanly from the source buffer, open Magit diff rather than implementing custom patch application.
-
-Faltoo should provide wrapper commands such as:
+Faltoo delegates file staging, unstaging, status, and conventional diff views to Magit:
 
 ```elisp
 faltoo-stage-current-file
 faltoo-unstage-current-file
-faltoo-stage-current-hunk
-faltoo-unstage-current-hunk
-faltoo-revert-current-hunk
+faltoo-magit-status
+faltoo-magit-diff-current-file
 ```
 
-After any staging/unstaging/revert operation:
+Faltoo does not implement patch application or auto-stage assistant edits. Hunk staging/reverting remains a Magit operation rather than custom review-buffer plumbing.
 
-1. Refresh `diff-hl` indicators in review buffers.
-2. Refresh Magit buffers if Magit is loaded/open.
-3. Refresh Faltoo mode-line/status.
-4. Keep the same Faltoo review set unless the user explicitly refreshes it.
+After staging, unstaging, refresh, or assistant edits, regenerate open review buffers from disk and refresh pending-comment overlays. Keep the review set until the user stops or starts a new review.
 
-After FaltooBot responds and possibly edits files:
+### Implemented Scope
 
-1. Reload review buffers from disk.
-2. Refresh Git change indicators.
-3. Keep review files in the Faltoo review set.
-4. Let the user inspect changes in source buffers and/or Magit.
-5. Let the user stage/unstage explicitly using Magit, `diff-hl` hunk commands.
-
-### MVP Scope
-
-MVP should implement:
-
-- `faltoo-review-unstaged`: open unstaged files as ordinary source buffers.
-- `faltoo-review-mode`: source-buffer review minor mode.
-- `diff-hl` cooperation in review buffers.
-- Commands to jump between Faltoo comments.
-- Commands to jump between Git hunks through `diff-hl`.
-- Commands to stage/unstage the current file from the review buffer.
-- Hunk-level stage/unstage/revert wrappers via `diff-hl`.
-- Command to open Magit status.
-
-MVP should not implement:
-
-- A custom staging UI.
-- A custom hunk-staging engine or patch application engine.
-- Staged-diff review as the primary workflow.
-- Auto-staging assistant edits.
-
-### Future Enhancements
-
-Possible future work:
-
-- Better Magit section integration for Faltoo review files/comments.
-- A review-file navigator showing one file at a time.
-- `diff-hl` inline hunk preview integration.
-- Commands to stage all Faltoo review files, with confirmation.
-- Optional Ediff workflow for assistant-generated changes.
-- Staged-diff review mode for advanced workflows.
+- Generated full-file review buffers for unstaged files.
+- Inline removed rows and full-line added/removed faces.
+- Wrapped file and hunk navigation.
+- Ask/comment support mapped to canonical source files.
+- Workspace-scoped comments shared between source and review buffers.
+- File-level stage/unstage and Magit status/diff commands.
+- No custom hunk mutation engine and no auto-staging.
 
 ## Personal-Use Implementation Policy
 
@@ -960,9 +830,9 @@ Do not spend effort supporting older Emacs versions unless the user asks later.
 For the intended workflow, require these packages rather than treating them as optional UX enhancements:
 
 ```text
-posframe    ; ask/comment/last-response popups
-magit       ; staging, unstaging, status, diff workflows
-diff-hl     ; in-buffer Git change highlighting and hunk navigation
+posframe      ; ask/comment/last-response popups
+magit         ; Git diff source, staging, unstaging, status, diff workflows
+markdown-mode ; transcript and popup rendering
 ```
 
 Optional/later:
@@ -996,7 +866,7 @@ Workspace is the Git repository root when present. If no Git repository is prese
 
 `faltoo-review-unstaged` opens only unstaged working-tree files.
 
-`faltoo-review-mode` applies only to files in the current review set, not the entire repository.
+`faltoo-review-mode` applies only to generated buffers for files in the current review set, not to the real source buffers.
 
 ### Ask Context
 
@@ -1027,14 +897,7 @@ Comments also use `posframe` input.
 
 Lines/ranges with pending Faltoo comments must be visibly marked in source buffers.
 
-Future highlight goal:
-
-- added lines
-- removed lines
-- staged lines
-- review-comment lines
-
-Use `diff-hl` as the base Git highlighting package and integrate/extend highlighting later once the working plugin exists.
+Generated review buffers show added/removed rows with Magit diff faces. Pending comment overlays are applied independently and map to the same canonical source path in generated and real source buffers.
 
 ### Transcript
 

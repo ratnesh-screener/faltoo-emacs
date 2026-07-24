@@ -21,16 +21,6 @@
 (defun magit-refresh (&rest _args) nil)
 (provide 'magit)
 
-(defvar diff-hl-highlight-function nil)
-(define-minor-mode diff-hl-mode "")
-(defun diff-hl-update () nil)
-(defun diff-hl-remove-overlays (&rest _args) nil)
-(defun diff-hl-stage-current-hunk () nil)
-(defun diff-hl-revert-hunk () nil)
-(defun diff-hl-next-hunk () nil)
-(defun diff-hl-previous-hunk () nil)
-(defun diff-hl-show-hunk () nil)
-(provide 'diff-hl)
 
 (require 'faltoo)
 
@@ -75,6 +65,14 @@
       (lambda ()
         (dotimes (_ 200)
           (faltoo-ask--context)))))))
+
+(ert-deftest faltoo-performance-large-review-row-merge-stays-interactive ()
+  "Scenario: Building a large full-file review remains linear and interactive."
+  (let ((lines (cl-loop for index below 20000 collect (format "line %d" index))))
+    (faltoo-perf--should-finish-under
+     0.1
+     (lambda ()
+       (should (= (length (faltoo-review--rows lines nil)) 20000))))))
 
 (ert-deftest faltoo-performance-comment-refresh-for-many-comments-stays-interactive ()
   "Scenario: Refreshing many pending comment overlays stays interactive."

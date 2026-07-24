@@ -6,7 +6,6 @@ This is a personal-use plugin optimized for the author's workflow. It targets GN
 
 - `posframe`
 - `magit`
-- `diff-hl`
 - `markdown-mode`
 
 ## Load
@@ -28,7 +27,7 @@ For review, open a Git repo with unstaged changes, then run:
 M-x faltoo-review-unstaged
 ```
 
-This opens changed files as normal source buffers, enables `faltoo-review-mode`, makes them read-only, and enables `diff-hl` indicators.
+This opens one generated read-only review buffer at a time. Each buffer keeps the file's major mode, shows the complete working-tree file, inserts removed Git rows inline, and uses Magit-style green/red line faces.
 
 ## Keybindings
 
@@ -54,20 +53,19 @@ m     show pending comments summary
 d     delete pending comment at point
 s     submit pending review comments
 h     open transcript
-r     reload Faltoo plugin code
-g     Magit status
+r     refresh generated review buffers and Git state
+g     top of review buffer
+G     bottom of review buffer
 D     Magit diff for current file
 ]     next Git hunk
 [     previous Git hunk
 =     show Git hunk
-n     next Faltoo comment
-p     previous Faltoo comment
-N     next review file
-P     previous review file
+n     next review file
+p     previous review file
+N     next Faltoo comment
+P     previous Faltoo comment
 S     stage current file
 U     unstage current file
-H s   stage current hunk
-H r   revert current hunk
 ```
 
 In Ask/last-response posframes:
@@ -186,8 +184,8 @@ Ask and comment popups use centered `posframe` windows in `markdown-mode` with l
 
 Pending review-comment lines are highlighted directly.
 
-## Full-line Git highlights
+## Full-file Git review
 
-Inside `faltoo-review-mode`, `diff-hl` is configured buffer-locally and redrawn to highlight full changed lines instead of only the gutter.
+`faltoo-review-mode` uses generated read-only buffers rather than modifying the real source buffers. The full working-tree file remains visible, removed rows are inserted inline, and added/removed rows inherit Magit's theme-aware diff faces. Ask and review comments map back to the real source file, so comments created from either buffer share one workspace queue and survive stopping review.
 
-Review buffers also show a header line like `Faltoo Review Faltoo[1/N]` so the review state is visible even if the modeline hides minor modes.
+Review buffers show a header line like `Faltoo Review Faltoo[1/N]` so the active file is always visible.

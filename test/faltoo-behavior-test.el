@@ -27,16 +27,6 @@
 (defun magit-refresh (&rest _args) nil)
 (provide 'magit)
 
-(defvar diff-hl-highlight-function nil)
-(define-minor-mode diff-hl-mode "")
-(defun diff-hl-update () nil)
-(defun diff-hl-remove-overlays (&rest _args) nil)
-(defun diff-hl-stage-current-hunk () nil)
-(defun diff-hl-revert-hunk () nil)
-(defun diff-hl-next-hunk () nil)
-(defun diff-hl-previous-hunk () nil)
-(defun diff-hl-show-hunk () nil)
-(provide 'diff-hl)
 
 (require 'faltoo)
 
@@ -3450,138 +3440,304 @@ hello
     (should (equal (alist-get 'filename (aref (alist-get 'comments captured-payload) 0))
                    "faltoo.el"))))
 
-(ert-deftest faltoo-diff-hl-highlight-line-removes-gutter-marker-and-extends-line ()
-  "Scenario: Git change highlights are rendered as full source lines."
-  (with-temp-buffer
-    ;; Given diff-hl hands Faltoo a gutter-style overlay.
-    (insert "changed line\nnext line\n")
-    (let ((overlay (make-overlay (point-min) (point-min))))
-      (overlay-put overlay 'before-string "gutter")
-
-      ;; When Faltoo applies its diff highlighter.
-      (faltoo-diff-hl-highlight-line overlay 'insert nil)
-
-      ;; Then the gutter marker is removed and the whole line is highlighted.
-      (should-not (overlay-get overlay 'before-string))
-      (should (= (overlay-start overlay) (point-min)))
-      (should (= (overlay-end overlay) (save-excursion (goto-char (point-min)) (line-beginning-position 2))))
-      (should (eq (overlay-get overlay 'face) 'faltoo-diff-insert-line-face)))))
-
-(ert-deftest faltoo-review-mode-refreshes-diff-hl-after-installing-full-line-highlighter ()
-  "Scenario: Entering review mode redraws existing gutter highlights as full lines."
+(ert-deftest faltoo-review-buffer-name-follows-the-reviewed-file-repository ()
+  "Scenario: Review buffer identity does not depend on the currently selected repo."
   (faltoo-test--with-temp-git-file
    '("one")
-   (lambda (_file _root)
-     (let (removed updated)
-       ;; Given diff-hl may already have gutter overlays from global diff-hl-mode.
-       (cl-letf (((symbol-function 'diff-hl-remove-overlays)
-                  (lambda (&rest _args) (setq removed t)))
-                 ((symbol-function 'diff-hl-update)
-                  (lambda () (setq updated t))))
+   (lambda (file _root)
+     (let ((default-directory (file-name-as-directory (make-temp-file "faltoo-other" t))))
+       (unwind-protect
+           (should (equal (faltoo-review-buffer-name file)
+                          "*Faltoo Review: sample.py*"))
+         (delete-directory default-directory t))))))
 
-         ;; When enabling review mode.
-         (faltoo-review-mode 1))
+(ert-deftest faltoo-review-reads-the-complete-git-patch ()
+  "Scenario: Review rendering consumes every line emitted by Git."
+  (let ((patch "diff --git a/sample.py b/sample.py
+@@ -1 +1 @@
+-old
++new
+"))
+    ;; Given Magit inserts a complete multi-line patch.
+    (cl-letf (((symbol-function 'magit-git-insert)
+               (lambda (&rest _args)
+                 (insert patch)
+                 0)))
 
-       ;; Then Faltoo redraws diff-hl after installing its full-line highlighter.
-       (should (eq diff-hl-highlight-function #'faltoo-diff-hl-highlight-line))
-       (should removed)
-       (should updated)))))
+      ;; Then Faltoo returns the complete patch instead of Git's first line.
+      (should (equal (faltoo-review--patch "sample.py") patch)))))
+
+(ert-deftest faltoo-review-buffer-renders-full-file-with-inline-deletions ()
+  "Scenario: Review buffers show removed and added rows inside the complete file."
+  (faltoo-test--with-temp-git-file
+   '("new value" "unchanged")
+   (lambda (file _root)
+     ;; Given Git reports the first working-tree line as a replacement.
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args)
+                  "@@ -1 +1 @@
+-old value
++new value")))
+
+       ;; When Faltoo builds the generated review buffer.
+       (let ((buf (faltoo-review-buffer file)))
+
+         ;; Then it contains the full file with the removed row inserted.
+         (with-current-buffer buf
+           (should buffer-read-only)
+           (should (equal (buffer-string) "old value
+new value
+unchanged
+"))
+           (font-lock-ensure)
+           (goto-char (point-min))
+           (should (eq (get-text-property (point) 'faltoo-review-line-type) 'delete))
+           (should (eq (get-char-property (point) 'face) 'faltoo-diff-delete-line-face))
+           (forward-line 1)
+           (should (eq (get-text-property (point) 'faltoo-review-line-type) 'insert))
+           (should (eq (get-char-property (point) 'face) 'faltoo-diff-insert-line-face))))))))
+
+(ert-deftest faltoo-review-buffer-uses-source-file-for-comment-identity ()
+  "Scenario: Generated and ordinary source buffers share one file comment list."
+  (faltoo-test--with-temp-git-file
+   '("changed")
+   (lambda (file _root)
+     ;; Given a generated review buffer represents the source file.
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args) "@@ -1 +1 @@
+-old
++changed")))
+       (let ((buf (faltoo-review-buffer file)))
+
+         ;; Then file identity remains the real source path for comment lookup.
+         (with-current-buffer buf
+           (should (equal (faltoo-current-file) (file-truename file)))))))))
+
+(ert-deftest faltoo-review-comments-survive-generated-buffer-session ()
+  "Scenario: Review comments remain attached to the source file after review stops."
+  (faltoo-test--with-temp-git-file
+   '("changed" "unchanged")
+   (lambda (file root)
+     ;; Given a generated review buffer contains a replacement row.
+     (setq faltoo-comments (make-hash-table :test #'equal)
+           faltoo-review-files (list (file-truename file))
+           faltoo-current-review-index 0)
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args) "@@ -1 +1 @@
+-old
++changed")))
+       (let ((review (faltoo-review-buffer file)))
+        (switch-to-buffer review)
+        (goto-char (point-min))
+        (forward-line 1)
+
+        ;; When a comment is saved on the added row and review is stopped.
+        (faltoo-test--without-popup-display
+         (lambda ()
+           (faltoo-comment)
+           (with-current-buffer "*Faltoo Comment*"
+             (goto-char (point-max))
+             (insert "keep this comment")
+             (faltoo-comment-save))))
+        (let ((comment (car (faltoo-comments--list root))))
+          (should (equal (faltoo-comment-path comment) (file-truename file)))
+          (should (= (faltoo-comment-start comment) 1))
+          (faltoo-review-stop)
+
+          ;; Then the same workspace queue and source-file highlight remain.
+          (should (eq comment (car (faltoo-comments--list root))))
+          (should (eq (faltoo-comment-source-buffer comment) (get-file-buffer file)))
+          (should (overlay-buffer (faltoo-comment-overlay comment)))))))))
 
 (ert-deftest faltoo-review-mode-keybindings-use-plain-keys-in-read-only-review-buffers ()
-  "Scenario: Review buffers use direct single-key commands because code is read-only."
-  ;; Given review-mode keybindings are active.
-
-  ;; Then common review actions do not require the global Faltoo prefix.
+  "Scenario: Generated review buffers use direct single-key commands."
   (should (eq (lookup-key faltoo-review-mode-map (kbd "a")) #'faltoo-ask))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "c")) #'faltoo-comment))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "d")) #'faltoo-delete-current-comment))
-  (should (eq (lookup-key faltoo-review-mode-map (kbd "m")) #'faltoo-comments-summary))
-  (should-not (lookup-key faltoo-review-mode-map (kbd "k")))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "]")) #'faltoo-next-change))
-  (should (eq (lookup-key faltoo-review-mode-map (kbd "H s")) #'faltoo-stage-current-hunk))
-
-  ;; And the review-local keymap does not duplicate C-c f commands.
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "g")) #'beginning-of-buffer))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "G")) #'end-of-buffer))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "n")) #'faltoo-review-next-file))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "p")) #'faltoo-review-prev-file))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "N")) #'faltoo-next-comment))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "P")) #'faltoo-prev-comment))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "S")) #'faltoo-stage-current-file))
   (should-not (commandp (lookup-key faltoo-review-mode-map (kbd "C-c f d")))))
 
-;;; Review mode specs
-
-(ert-deftest faltoo-review-mode-makes-review-buffer-read-only ()
-  "Scenario: Review mode makes source buffers read-only."
+(ert-deftest faltoo-review-change-navigation-wraps-between-hunks ()
+  "Scenario: Change navigation moves between generated hunks and wraps at edges."
   (faltoo-test--with-temp-git-file
-   '("one")
-   (lambda (_file _root)
-     ;; When enabling review mode.
-     (faltoo-review-mode 1)
+   '("first" "context" "second" "context")
+   (lambda (file _root)
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args)
+                  "@@ -1 +1 @@
+-old first
++first
+@@ -3 +3 @@
+-old second
++second")))
+       (with-current-buffer (faltoo-review-buffer file)
+         (goto-char (point-min))
+         (faltoo-next-change)
+         (should (= (line-number-at-pos) 4))
+         (faltoo-next-change)
+         (should (= (line-number-at-pos) 1))
+         (faltoo-prev-change)
+         (should (= (line-number-at-pos) 4)))))))
 
-     ;; Then the source buffer is a read-only review buffer.
-     (should faltoo-review-mode)
-     (should buffer-read-only))))
 
-(ert-deftest faltoo-review-mode-shows-visible-review-header ()
-  "Scenario: Review mode shows file index outside the modeline."
+(ert-deftest faltoo-review-buffer-is-read-only-and-shows-file-index ()
+  "Scenario: Generated review buffers are read-only and identify their review position."
   (faltoo-test--with-temp-git-file
    '("one")
    (lambda (file _root)
-     ;; Given the current file is the only review file.
      (setq faltoo-review-files (list (file-truename file)))
+     (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) "")))
+       (with-current-buffer (faltoo-review-buffer file)
+         (should faltoo-review-mode)
+         (should buffer-read-only)
+         (should (string-match-p "Faltoo.*1/1" header-line-format)))))))
 
-     ;; When enabling review mode.
-     (faltoo-review-mode 1)
-
-     ;; Then a visible header line shows Faltoo[1/1].
-     (should header-line-format)
-     (should (string-match-p "Faltoo.*1/1" header-line-format)))))
-
-(ert-deftest faltoo-review-mode-uses-full-line-diff-highlighting ()
-  "Scenario: Review mode asks diff-hl for full-line highlights."
-  (faltoo-test--with-temp-git-file
-   '("one")
-   (lambda (_file _root)
-     ;; When enabling review mode.
-     (faltoo-review-mode 1)
-
-     ;; Then diff-hl uses Faltoo's full-line highlighter, not gutter-only marks.
-     (should (eq diff-hl-highlight-function #'faltoo-diff-hl-highlight-line)))))
-
-(ert-deftest faltoo-review-stop-restores-review-buffer-ui-state ()
-  "Scenario: Stopping review mode removes read-only state, header, and review highlighting."
+(ert-deftest faltoo-review-stop-closes-generated-buffer-and-restores-source ()
+  "Scenario: Stopping review closes generated UI without changing the source buffer."
   (faltoo-test--with-temp-git-file
    '("one")
    (lambda (file _root)
-     ;; Given a file is under review.
      (setq faltoo-review-files (list (file-truename file)))
-     (faltoo-review-mode 1)
-     (should buffer-read-only)
-     (should header-line-format)
-     (should diff-hl-mode)
+     (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) "")))
+       (let ((review (faltoo-review-buffer file)))
+         (switch-to-buffer review)
+         (faltoo-review-stop)
+         (should-not (buffer-live-p review))
+         (should (equal buffer-file-name file))
+         (should-not buffer-read-only))))))
 
-     ;; When stopping the review session.
-     (faltoo-review-stop)
-
-     ;; Then the source buffer is fully back to normal editing UI.
-     (should-not faltoo-review-mode)
-     (should-not buffer-read-only)
-     (should-not header-line-format)
-     (should-not diff-hl-mode))))
-
-(ert-deftest faltoo-review-stop-restores-existing-diff-hl-state ()
-  "Scenario: Stopping review mode restores pre-existing diff-hl buffer settings."
+(ert-deftest faltoo-source-and-review-comments-share-one-file-queue ()
+  "Scenario: A source comment is reused when editing the same line in review."
   (faltoo-test--with-temp-git-file
-   '("one")
-   (lambda (file _root)
-     ;; Given diff-hl was already enabled before Faltoo review mode.
-     (setq faltoo-review-files (list (file-truename file)))
-     (setq-local diff-hl-highlight-function #'ignore)
-     (diff-hl-mode 1)
+   '("changed")
+   (lambda (file root)
+     (setq faltoo-comments (make-hash-table :test #'equal)
+           faltoo-review-files (list (file-truename file)))
+     (faltoo-test--without-popup-display
+      (lambda ()
+        (faltoo-comment)
+        (with-current-buffer "*Faltoo Comment*"
+          (goto-char (point-max))
+          (insert "source note")
+          (faltoo-comment-save))))
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args) "@@ -1 +1 @@\n-old\n+changed")))
+       (let ((review (faltoo-review-buffer file)))
+         (with-current-buffer review
+           (let ((overlay (faltoo-comment-overlay (car (faltoo-comments--list root)))))
+             (should (= (line-number-at-pos (overlay-start overlay)) 2)))
+           (goto-char (point-min))
+           (forward-line 1)
+           (faltoo-test--without-popup-display
+            (lambda ()
+              (faltoo-comment)
+              (with-current-buffer "*Faltoo Comment*"
+                (should (string-match-p "source note" (buffer-string)))))))
+         (should (= (faltoo-comments-count root) 1)))))))
 
-     ;; When review mode is enabled and then stopped.
-     (faltoo-review-mode 1)
-     (faltoo-review-stop)
+(ert-deftest faltoo-review-comments-distinguish-consecutive-deleted-rows ()
+  "Scenario: Consecutive deleted rows can hold separate pending comments."
+  (faltoo-test--with-temp-git-file
+   '("survivor")
+   (lambda (file root)
+     (setq faltoo-comments (make-hash-table :test #'equal)
+           faltoo-review-files (list (file-truename file)))
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args) "@@ -1,2 +0,0 @@
+-old one
+-old two")))
+       (with-current-buffer (faltoo-review-buffer file)
+         (dotimes (index 2)
+           (goto-char (point-min))
+           (forward-line index)
+           (faltoo-test--without-popup-display
+            (lambda ()
+              (faltoo-comment)
+              (with-current-buffer "*Faltoo Comment*"
+                (goto-char (point-max))
+                (insert (format "deleted note %d" index))
+                (faltoo-comment-save)))))
+         (should (= (faltoo-comments-count root) 2)))))))
 
-     ;; Then Faltoo removes only its review UI and restores the previous diff-hl setup.
-     (should-not faltoo-review-mode)
-     (should diff-hl-mode)
-     (should (eq diff-hl-highlight-function #'ignore)))))
+(ert-deftest faltoo-review-comment-payload-keeps-diff-and-source-line-numbers ()
+  "Scenario: Generated review comments submit both visible and source line coordinates."
+  (faltoo-test--with-temp-git-file
+   '("changed")
+   (lambda (file root)
+     (setq faltoo-comments (make-hash-table :test #'equal)
+           faltoo-review-files (list (file-truename file)))
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args) "@@ -1 +1 @@
+-old
++changed")))
+       (with-current-buffer (faltoo-review-buffer file)
+         (goto-char (point-min))
+         (forward-line 1)
+         (faltoo-test--without-popup-display
+          (lambda ()
+            (faltoo-comment)
+            (with-current-buffer "*Faltoo Comment*"
+              (goto-char (point-max))
+              (insert "coordinate note")
+              (faltoo-comment-save))))
+         (let* ((comment (car (faltoo-comments--list root)))
+                (payload (car (faltoo-comments--payload (list comment)))))
+           (should (= (alist-get 'line_number_start payload) 2))
+           (should (= (alist-get 'file_line_number_start payload) 1))))))))
+
+(ert-deftest faltoo-review-comment-can-be-deleted-from-its-generated-row ()
+  "Scenario: Comment deletion works at the highlighted generated review row."
+  (faltoo-test--with-temp-git-file
+   '("changed")
+   (lambda (file root)
+     (setq faltoo-comments (make-hash-table :test #'equal)
+           faltoo-review-files (list (file-truename file)))
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args) "@@ -1 +1 @@
+-old
++changed")))
+       (with-current-buffer (faltoo-review-buffer file)
+         (goto-char (point-min))
+         (forward-line 1)
+         (faltoo-test--without-popup-display
+          (lambda ()
+            (faltoo-comment)
+            (with-current-buffer "*Faltoo Comment*"
+              (goto-char (point-max))
+              (insert "remove me")
+              (faltoo-comment-save))))
+         (faltoo-delete-current-comment)
+         (should (= (faltoo-comments-count root) 0)))))))
+
+(ert-deftest faltoo-review-comment-highlight-follows-the-selected-generated-row ()
+  "Scenario: A comment on an added row highlights that row rather than its deleted neighbour."
+  (faltoo-test--with-temp-git-file
+   '("changed")
+   (lambda (file root)
+     (setq faltoo-comments (make-hash-table :test #'equal)
+           faltoo-review-files (list (file-truename file)))
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args) "@@ -1 +1 @@\n-old\n+changed")))
+       (let ((review (faltoo-review-buffer file)))
+         (with-current-buffer review
+           (goto-char (point-min))
+           (forward-line 1)
+           (faltoo-test--without-popup-display
+            (lambda ()
+              (faltoo-comment)
+              (with-current-buffer "*Faltoo Comment*"
+                (goto-char (point-max))
+                (insert "added row note")
+                (faltoo-comment-save))))
+           (let ((overlay (faltoo-comment-overlay (car (faltoo-comments--list root)))))
+             (should (= (line-number-at-pos (overlay-start overlay)) 2)))))))))
 
 ;;; Quit guard specs
 

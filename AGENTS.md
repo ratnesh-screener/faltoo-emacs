@@ -10,7 +10,7 @@
 - Avoid excessive defensive programming; this codebase controls most call paths.
 - Fix root causes with higher-level architecture changes, not localized band-aid handlers.
 - Preserve the code-first workflow: source buffers are primary; transcript is secondary/history.
-- Dependencies are acceptable and expected. Required packages are `posframe`, `magit`, `diff-hl`, and `markdown-mode`.
+- Dependencies are acceptable and expected. Required packages are `posframe`, `magit`, and `markdown-mode`.
 - Target the latest stable Emacs in use for this project, currently GNU Emacs 30.2.
 
 ## Product Direction
@@ -19,10 +19,10 @@ Faltoo Emacs is a code-first Emacs integration for FaltooBot/FaltooChat.
 
 Primary workflow:
 
-1. Open unstaged files as normal source buffers.
-2. Enable `faltoo-review-mode` only for review-set files.
-3. Keep code at the forefront: normal major mode, xref/LSP/navigation, full-file context.
-4. Use `diff-hl` for full-line Git change highlights inside source buffers.
+1. Open unstaged files one at a time in generated read-only review buffers.
+2. Keep the source major mode and full-file context while inserting removed Git rows inline.
+3. Keep code at the forefront with the source major mode and full-file context; generated review buffers do not promise LSP parity with real file buffers.
+4. Use Magit's theme-aware diff faces and Git operations.
 5. Use `posframe` for code-local Ask and review-comment input.
 6. Use Magit for staging/unstaging/status/diff operations.
 7. Use per-workspace transcript buffers named like `*Faltoo: repo-name*` as history, not the main interaction surface.
@@ -51,7 +51,7 @@ faltoo-compose.el      Shared popup layout helpers: titles, metadata, sections, 
 faltoo-faces.el        Faces for popups, review comments, full-line diff highlights.
 faltoo-ask.el          Source-buffer Ask UI and last-response popup.
 faltoo-comments.el     Pending review-comment model, posframe input, overlays, navigation, submit payload.
-faltoo-review.el       Review mode, review set, diff-hl integration, Magit wrappers, review file nav.
+faltoo-review.el       Generated full-file review buffers, inline Git rows, Magit wrappers, review navigation.
 faltoo-chat.el         Per-workspace transcript/history rendering.
 faltoo-tree.el         Special-mode transcript inspector for messages.json, row details, token summary, pruning.
 faltoo-quit.el         Quit guard for running requests / pending comments.
@@ -62,7 +62,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 
 - Keep stream handling centralized in `faltoo-request.el`. Do not duplicate stream routing in Ask/comments.
 - Keep posframe display primitives in `faltoo-ui.el`; keep layout formatting in `faltoo-compose.el`.
-- Keep source-buffer review behavior in `faltoo-review.el`.
+- Keep generated full-file review behavior in `faltoo-review.el`.
 - Keep pending-comment state and overlays in `faltoo-comments.el`.
 - Keep bridge subprocess details in `faltoo-bridge.el`.
 - If a UI behavior applies to both Ask and comments, implement it once in `faltoo-ui.el` or `faltoo-compose.el`.
@@ -93,8 +93,9 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
 - `C-c /` runs built-in session commands (`/reset`, `/resume`, `/name`, `/tree`, `/status`); `C-c p` inserts saved prompt templates. Typed slash text submits as a normal prompt.
 - Pending review comments are scoped per workspace. Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup. Transcript selections/current lines can also be queued as pending comments with the same `C-c f c` / `C-c f s` batch flow.
-- Review buffers are read-only, use direct single-key review bindings, and show a header line with `Faltoo[1/N]`.
-- `diff-hl` is configured buffer-locally in review buffers for full-line highlights.
+- Review buffers are generated, read-only, use direct single-key bindings, and show `Faltoo[1/N]`.
+- Review buffers retain the source major mode, insert removed rows inline, and use Magit diff faces.
+- Review/source comments share one workspace queue keyed by canonical source path and survive stopping review.
 - Faltoo never auto-stages assistant edits.
 
 ## Testing
@@ -128,7 +129,7 @@ Good test names:
 ```elisp
 faltoo-ask-uses-active-region-when-present
 faltoo-popup-show-creates-focusable-bordered-posframe
-faltoo-review-mode-uses-full-line-diff-highlighting
+faltoo-review-buffer-renders-full-file-with-inline-deletions
 ```
 
 ## Manual Test Flow
@@ -150,11 +151,11 @@ C-c C-p/n jump previous/next user message in the repo transcript
 
 Expected visual behavior:
 
-- Review source buffer is read-only.
+- Generated review buffer is read-only; the real source buffer remains editable.
 - Header line shows `Faltoo Review Faltoo[1/N]`.
 - Git changes are highlighted as full lines.
 - Ask/comment posframes are focusable, editable, and bordered.
-- Pending comment lines are highlighted and marked with `●`.
+- Pending comment lines are highlighted with the review-comment face.
 
 ## Git / Commit Notes
 

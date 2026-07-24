@@ -76,19 +76,27 @@ The result is (BEG END START-LINE END-LINE CODE)."
              (line-beg (save-excursion (goto-char beg) (line-beginning-position)))
              (line-end (save-excursion (goto-char end) (line-end-position))))
         (list line-beg line-end
-              (line-number-at-pos line-beg)
-              (line-number-at-pos end)
+              (or (get-text-property line-beg 'faltoo-review-file-line)
+                  (line-number-at-pos line-beg))
+              (or (get-text-property (save-excursion (goto-char end) (line-beginning-position))
+                                     'faltoo-review-file-line)
+                  (line-number-at-pos end))
               (buffer-substring-no-properties line-beg line-end)))
     (let ((beg (line-beginning-position))
           (end (line-end-position)))
-      (list beg end (line-number-at-pos) (line-number-at-pos)
+      (list beg end
+            (or (get-text-property beg 'faltoo-review-file-line) (line-number-at-pos))
+            (or (get-text-property beg 'faltoo-review-file-line) (line-number-at-pos))
             (buffer-substring-no-properties beg end)))))
 
 (defun faltoo-current-file ()
-  "Return the current buffer file or signal an error."
-  (unless buffer-file-name
-    (user-error "Current buffer is not visiting a file"))
-  (file-truename buffer-file-name))
+  "Return the source file represented by the current buffer."
+  (let ((file (or (and (boundp 'faltoo-review-source-file)
+                       faltoo-review-source-file)
+                  buffer-file-name)))
+    (unless file
+      (user-error "Current buffer is not visiting a file"))
+    (file-truename file)))
 
 (defun faltoo-current-language ()
   "Return the Markdown fence language for the current buffer."

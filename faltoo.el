@@ -1,6 +1,6 @@
 ;;; faltoo.el --- Code-first Faltoo integration -*- lexical-binding: t; -*-
 
-;; Package-Requires: ((emacs "30.2") (posframe "1.4.4") (magit "4.0.0") (diff-hl "1.9.0") (markdown-mode "2.7"))
+;; Package-Requires: ((emacs "30.2") (posframe "1.4.4") (magit "4.0.0") (markdown-mode "2.7"))
 
 (require 'faltoo-core)
 (require 'faltoo-bridge)

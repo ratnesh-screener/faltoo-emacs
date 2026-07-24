@@ -108,16 +108,12 @@
   "Muted face for tree preview text.")
 
 (defface faltoo-diff-insert-line-face
-  '((t :extend t :background "#12381f"))
-  "Face for inserted Git lines in Faltoo review buffers.")
-
-(defface faltoo-diff-change-line-face
-  '((t :extend t :background "#39330f"))
-  "Face for changed Git lines in Faltoo review buffers.")
+  '((t :inherit magit-diff-added-highlight :extend t))
+  "Theme-aware face for inserted Git lines in Faltoo review buffers.")
 
 (defface faltoo-diff-delete-line-face
-  '((t :extend t :background "#3a1717"))
-  "Face for deleted Git lines in Faltoo review buffers.")
+  '((t :inherit magit-diff-removed-highlight :extend t))
+  "Theme-aware face for deleted Git lines in Faltoo review buffers.")
 
 (provide 'faltoo-faces)
 ;;; faltoo-faces.el ends here
