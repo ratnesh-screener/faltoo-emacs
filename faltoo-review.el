@@ -80,12 +80,13 @@
   "Parse zero-context Git PATCH into review hunks."
   (let (hunks)
     (with-temp-buffer
-      (insert (or patch ""))
+      (insert patch)
       (goto-char (point-min))
       (while (re-search-forward
-              "^@@ -[0-9]+\\(?:,[0-9]+\\)? +\\+\\([0-9]+\\)\\(?:,[0-9]+\\)? @@"
+              "^@@ -[0-9]+\\(?:,[0-9]+\\)? +\\+\\([0-9]+\\)\\(?:,\\([0-9]+\\)\\)? @@"
               nil t)
         (let ((new-start (string-to-number (match-string 1)))
+              (new-count (if (match-string 2) (string-to-number (match-string 2)) 1))
               lines)
           (forward-line 1)
           (while (and (not (eobp)) (not (looking-at "^@@ ")))
@@ -97,79 +98,64 @@
                                       (1+ (line-beginning-position)) (line-end-position)))
                         lines)))
             (forward-line 1))
-          (push (list new-start (nreverse lines)) hunks))))
+          (push (list new-start new-count (nreverse lines)) hunks))))
     (nreverse hunks)))
-
-(defun faltoo-review--rows (source-lines hunks)
-  "Merge SOURCE-LINES and HUNKS into full-file review rows."
-  (let ((cursor 1)
-        (remaining source-lines)
-        (hunk-index 0)
-        rows)
-    (dolist (hunk hunks)
-      (while (< cursor (car hunk))
-        (push (list 'context (pop remaining) nil) rows)
-        (setq cursor (1+ cursor)))
-      (dolist (line (cadr hunk))
-        (push (list (car line) (cadr line) hunk-index) rows)
-        (unless (eq (car line) 'delete)
-          (pop remaining)
-          (setq cursor (1+ cursor))))
-      (setq hunk-index (1+ hunk-index)))
-    (dolist (line remaining)
-      (push (list 'context line nil) rows))
-    (nreverse rows)))
 
 (defun faltoo-review-refresh-buffer ()
   "Regenerate the current review buffer from its source file and Git diff."
   (let* ((file faltoo-review-source-file)
          (workspace (faltoo-workspace))
          (relative (file-relative-name file workspace))
-         (content (if (file-exists-p file)
-                      (with-temp-buffer
-                        (insert-file-contents file)
-                        (buffer-string))
-                    ""))
-         (source-lines (if (string-empty-p content)
-                           nil
-                         (split-string (string-remove-suffix "\n" content) "\n")))
-         (rows (faltoo-review--rows
-                source-lines
-                (faltoo-review--hunks
-                 (let ((default-directory workspace))
-                   (faltoo-review--patch relative)))))
-         (total-lines (max 1 (cl-count-if (lambda (row) (not (eq (car row) 'delete))) rows)))
-         (file-line 0)
-         last-hunk
-         (inhibit-read-only t))
+         (hunks (let ((default-directory workspace))
+                  (faltoo-review--hunks (faltoo-review--patch relative))))
+         (inhibit-read-only t)
+         markers)
     (remove-overlays (point-min) (point-max) 'faltoo-review-diff t)
     (erase-buffer)
-    (setq faltoo-review-hunk-positions nil)
-    (dolist (row rows)
-      (let* ((type (car row))
-             (hunk (nth 2 row))
-             (start (point))
-             (mapped-line (if (eq type 'delete)
-                              (min total-lines (1+ file-line))
-                            (setq file-line (1+ file-line))))
-             (face (pcase type
-                     ('insert 'faltoo-diff-insert-line-face)
-                     ('delete 'faltoo-diff-delete-line-face))))
-        (insert (cadr row) "\n")
-        (add-text-properties
-         start (point)
-         (list 'faltoo-review-line-type type
-               'faltoo-review-file-line mapped-line
-               'faltoo-review-hunk hunk
-               'rear-nonsticky t))
-        (when face
-          (let ((overlay (make-overlay start (point))))
-            (overlay-put overlay 'face face)
-            (overlay-put overlay 'faltoo-review-diff t)))
-        (when (and hunk (not (equal hunk last-hunk)))
-          (push start faltoo-review-hunk-positions))
-        (setq last-hunk hunk)))
-    (setq faltoo-review-hunk-positions (nreverse faltoo-review-hunk-positions))
+    (when (file-exists-p file)
+      (insert-file-contents file))
+    (goto-char (point-min))
+    (let ((line 1))
+      (while (< (point) (point-max))
+        (let ((start (point)))
+          (forward-line 1)
+          (add-text-properties
+           start (point)
+           (list 'faltoo-review-line-type 'context
+                 'faltoo-review-file-line line
+                 'rear-nonsticky t)))
+        (setq line (1+ line)))
+      (let ((total-lines (max 1 (1- line)))
+            (hunk-index (1- (length hunks))))
+        (dolist (hunk (reverse hunks))
+          (goto-char (point-min))
+          (forward-line (if (zerop (cadr hunk)) (car hunk) (max 0 (1- (car hunk)))))
+          (unless (bolp) (insert "\n"))
+          (push (copy-marker (point)) markers)
+          (dolist (row (nth 2 hunk))
+            (let ((type (car row))
+                  (start (point)))
+              (if (eq type 'delete)
+                  (insert (cadr row) "\n")
+                (forward-line 1))
+              (add-text-properties
+               start (point)
+               (list 'faltoo-review-line-type type
+                     'faltoo-review-file-line
+                     (if (eq type 'delete)
+                         (min total-lines (max 1 (car hunk)))
+                       (get-text-property start 'faltoo-review-file-line))
+                     'faltoo-review-hunk hunk-index
+                     'rear-nonsticky t))
+              (let ((overlay (make-overlay start (point))))
+                (overlay-put overlay 'face
+                             (if (eq type 'delete)
+                                 'faltoo-diff-delete-line-face
+                               'faltoo-diff-insert-line-face))
+                (overlay-put overlay 'faltoo-review-diff t))))
+          (setq hunk-index (1- hunk-index)))))
+    (setq faltoo-review-hunk-positions (mapcar #'marker-position markers))
+    (mapc (lambda (marker) (set-marker marker nil)) markers)
     (set-buffer-modified-p nil)
     (goto-char (point-min))))
 

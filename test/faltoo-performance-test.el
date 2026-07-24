@@ -66,13 +66,17 @@
         (dotimes (_ 200)
           (faltoo-ask--context)))))))
 
-(ert-deftest faltoo-performance-large-review-row-merge-stays-interactive ()
-  "Scenario: Building a large full-file review remains linear and interactive."
-  (let ((lines (cl-loop for index below 20000 collect (format "line %d" index))))
-    (faltoo-perf--should-finish-under
-     0.1
-     (lambda ()
-       (should (= (length (faltoo-review--rows lines nil)) 20000))))))
+(ert-deftest faltoo-performance-large-review-first-render-stays-interactive ()
+  "Scenario: Building a large full-file review stays interactive."
+  (faltoo-perf--with-temp-git-file
+   20000
+   (lambda (file _root)
+     (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) "")))
+       (faltoo-perf--should-finish-under
+        0.2
+        (lambda ()
+          (let ((review (faltoo-review-buffer file)))
+            (kill-buffer review))))))))
 
 (ert-deftest faltoo-performance-returning-to-loaded-review-buffer-is-instant ()
   "Scenario: Repeated review file navigation reuses already-rendered buffers."

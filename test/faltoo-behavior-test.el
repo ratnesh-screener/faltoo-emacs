@@ -3487,8 +3487,7 @@ hello
            (should buffer-read-only)
            (should (equal (buffer-string) "old value
 new value
-unchanged
-"))
+unchanged"))
            (font-lock-ensure)
            (goto-char (point-min))
            (should (eq (get-text-property (point) 'faltoo-review-line-type) 'delete))
@@ -3496,6 +3495,38 @@ unchanged
            (forward-line 1)
            (should (eq (get-text-property (point) 'faltoo-review-line-type) 'insert))
            (should (eq (get-char-property (point) 'face) 'faltoo-diff-insert-line-face))))))))
+
+(ert-deftest faltoo-review-buffer-inserts-the-source-file-in-one-pass ()
+  "Scenario: First review rendering does not rebuild an unchanged file line by line."
+  (faltoo-test--with-temp-git-file
+   (cl-loop for index below 100 collect (format "line %d" index))
+   (lambda (file _root)
+     (let ((insert-calls 0)
+           (original-insert (symbol-function 'insert)))
+       (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) ""))
+                 ((symbol-function 'insert)
+                  (lambda (&rest args)
+                    (cl-incf insert-calls)
+                    (apply original-insert args))))
+         (faltoo-review-buffer file)
+         (should (< insert-calls 5)))))))
+
+(ert-deftest faltoo-review-buffer-places-end-of-file-deletions-after-current-lines ()
+  "Scenario: A removed final line appears at the end of the full-file review."
+  (faltoo-test--with-temp-git-file
+   '("one" "two")
+   (lambda (file _root)
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (&rest _args) "@@ -3 +2,0 @@
+-old three")))
+       (with-current-buffer (faltoo-review-buffer file)
+         (should (equal (buffer-string) "one
+two
+old three
+"))
+         (goto-char (point-min))
+         (forward-line 2)
+         (should (eq (get-text-property (point) 'faltoo-review-line-type) 'delete)))))))
 
 (ert-deftest faltoo-review-buffer-reuses-rendered-file-until-refresh ()
   "Scenario: Returning to a reviewed file does not regenerate its buffer."
