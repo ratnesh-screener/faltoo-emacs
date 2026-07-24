@@ -74,6 +74,27 @@
      (lambda ()
        (should (= (length (faltoo-review--rows lines nil)) 20000))))))
 
+(ert-deftest faltoo-performance-returning-to-loaded-review-buffer-is-instant ()
+  "Scenario: Repeated review file navigation reuses already-rendered buffers."
+  (faltoo-perf--with-temp-git-file
+   10000
+   (lambda (file _root)
+     (let ((patch-calls 0))
+       (cl-letf (((symbol-function 'faltoo-review--patch)
+                  (lambda (&rest _args)
+                    (cl-incf patch-calls)
+                    "")))
+         (let ((review (faltoo-review-buffer file)))
+           (unwind-protect
+               (progn
+                 (faltoo-perf--should-finish-under
+                  0.1
+                  (lambda ()
+                    (dotimes (_ 100)
+                      (faltoo-review-buffer file))))
+                 (should (= patch-calls 1)))
+             (kill-buffer review))))))))
+
 (ert-deftest faltoo-performance-comment-refresh-for-many-comments-stays-interactive ()
   "Scenario: Refreshing many pending comment overlays stays interactive."
   (faltoo-perf--with-temp-git-file

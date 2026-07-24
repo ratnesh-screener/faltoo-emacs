@@ -774,7 +774,7 @@ Faltoo parses a zero-context working-tree diff from Magit/Git and merges it with
 
 Generated rows carry source-line and hunk properties. Ask/comments use source-line properties for payloads, while overlays can stay on the exact generated rows selected by the user.
 
-Change navigation is implemented over those hunk properties and wraps between hunks. File navigation keeps the one-file-at-a-time review flow.
+Change navigation is implemented over those hunk properties and wraps between hunks. File navigation keeps the one-file-at-a-time review flow. Generated buffers are cached after first visit; only explicit refresh or workspace reload regenerates them.
 
 ### Magit Role
 

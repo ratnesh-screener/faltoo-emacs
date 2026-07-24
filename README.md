@@ -188,4 +188,4 @@ Pending review-comment lines are highlighted directly.
 
 `faltoo-review-mode` uses generated read-only buffers rather than modifying the real source buffers. The full working-tree file remains visible, removed rows are inserted inline, and added/removed rows inherit Magit's theme-aware diff faces. Ask and review comments map back to the real source file, so comments created from either buffer share one workspace queue and survive stopping review.
 
-Review buffers show a header line like `Faltoo Review Faltoo[1/N]` so the active file is always visible.
+Review buffers show a header line like `Faltoo Review Faltoo[1/N]` so the active file is always visible. Visited files are reused when navigating; press `r` when you want to regenerate them from disk and Git.

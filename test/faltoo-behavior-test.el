@@ -3497,6 +3497,29 @@ unchanged
            (should (eq (get-text-property (point) 'faltoo-review-line-type) 'insert))
            (should (eq (get-char-property (point) 'face) 'faltoo-diff-insert-line-face))))))))
 
+(ert-deftest faltoo-review-buffer-reuses-rendered-file-until-refresh ()
+  "Scenario: Returning to a reviewed file does not regenerate its buffer."
+  (faltoo-test--with-temp-git-file
+   '("one" "two")
+   (lambda (file _root)
+     (let ((patch-calls 0))
+       (cl-letf (((symbol-function 'faltoo-review--patch)
+                  (lambda (&rest _args)
+                    (cl-incf patch-calls)
+                    "")))
+         ;; Given the file already has a generated review buffer.
+         (let ((first (faltoo-review-buffer file)))
+           (with-current-buffer first (forward-line 1))
+
+           ;; When the same file is opened again.
+           (let ((second (faltoo-review-buffer file)))
+
+             ;; Then Faltoo reuses it without reading Git or resetting point.
+             (should (eq second first))
+             (should (= patch-calls 1))
+             (with-current-buffer second
+               (should (= (line-number-at-pos) 2))))))))))
+
 (ert-deftest faltoo-review-buffer-uses-source-file-for-comment-identity ()
   "Scenario: Generated and ordinary source buffers share one file comment list."
   (faltoo-test--with-temp-git-file

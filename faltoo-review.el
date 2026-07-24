@@ -175,28 +175,30 @@
 
 (defun faltoo-review--attach-comments (file buffer)
   "Attach pending comments for FILE to generated review BUFFER."
-  (let* ((workspace (faltoo-comments--workspace))
-         (comments (cl-remove-if-not
-                    (lambda (comment) (string= file (faltoo-comment-path comment)))
-                    (faltoo-comments--list workspace))))
-    (faltoo-comments--delete-overlays comments)
-    (dolist (comment comments)
-      (setf (faltoo-comment-source-buffer comment) buffer))
-    (faltoo-comments-refresh workspace)))
+  (dolist (comment (faltoo-comments--list (faltoo-comments--workspace)))
+    (when (and (string= file (faltoo-comment-path comment))
+               (not (eq buffer (faltoo-comment-source-buffer comment))))
+      (faltoo-comments--delete-overlays (list comment))
+      (setf (faltoo-comment-source-buffer comment) buffer)
+      (with-current-buffer buffer
+        (faltoo-comments--mark comment)))))
 
 (defun faltoo-review-buffer (file)
   "Return the generated full-file review buffer for FILE."
   (let* ((file (file-truename file))
-         (source (find-file-noselect file))
-         (mode (buffer-local-value 'major-mode source))
-         (buf (get-buffer-create (faltoo-review-buffer-name file))))
-    (with-current-buffer buf
-      (unless (eq major-mode mode)
-        (funcall mode))
-      (setq default-directory (file-name-directory file)
-            faltoo-review-source-file file)
-      (faltoo-review-refresh-buffer)
-      (faltoo-review-mode 1))
+         (name (faltoo-review-buffer-name file))
+         (buf (get-buffer name)))
+    (unless (and buf (equal (buffer-local-value 'faltoo-review-source-file buf) file))
+      (when buf (kill-buffer buf))
+      (let* ((source (find-file-noselect file))
+             (mode (buffer-local-value 'major-mode source)))
+        (setq buf (get-buffer-create name))
+        (with-current-buffer buf
+          (funcall mode)
+          (setq default-directory (file-name-directory file)
+                faltoo-review-source-file file)
+          (faltoo-review-refresh-buffer)
+          (faltoo-review-mode 1))))
     (faltoo-review--attach-comments file buf)
     buf))
 
