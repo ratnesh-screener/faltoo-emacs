@@ -45,10 +45,21 @@
 "))
 
 (defun faltoo-request--tool-summary (text)
-  (let ((summary (car (split-string text faltoo-request--shell-command-separator t))))
-    (faltoo-request--clip-lines
-     (string-trim
-      (replace-regexp-in-string "\\*\\*" "" summary)))))
+  (let* ((summary (string-trim
+                   (replace-regexp-in-string
+                    "\\*\\*" ""
+                    (car (split-string text faltoo-request--shell-command-separator t)))))
+         (lines (split-string summary "\n"))
+         (tool (car lines))
+         (spec (pcase tool
+                 ("load_skill" '("Load Skill" skill_name))
+                 ("load_image" '("Load Image" image_path)))))
+    (if spec
+        (format "%s: %s" (car spec)
+                (alist-get (cadr spec)
+                           (json-parse-string (string-join (cdr lines) "\n")
+                                              :object-type 'alist)))
+      (faltoo-request--clip-lines summary))))
 
 (defun faltoo-request-ensure-idle (&optional workspace)
   "Signal when another Faltoo request is already running for WORKSPACE."

@@ -55,7 +55,16 @@ def _session_payload(session: Session) -> dict[str, str]:
 
 
 def _tool_summary(text: str) -> str:
-    return text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)[0].replace("**", "").strip()
+    summary = text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)[0].replace("**", "").strip()
+    tool, _, arguments = summary.partition("\n")
+    spec = {
+        "load_skill": ("Load Skill", "skill_name"),
+        "load_image": ("Load Image", "image_path"),
+    }.get(tool)
+    if spec:
+        label, key = spec
+        return f"{label}: {json.loads(arguments)[key]}"
+    return summary
 
 
 def _hook_feedback_text(text: str) -> bool:

@@ -323,6 +323,33 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
 
 
 
+    def test_messages_summarize_skill_and_image_tools(self):
+        """Scenario: Reloaded skill and image tools show useful one-line summaries."""
+        bridge = load_bridge()
+        cases = (
+            ('load_skill\n{"skill_name": "browser-use"}', "Load Skill: browser-use"),
+            (
+                'load_image\n{"image_path": "workspace-inbox-first.png"}',
+                "Load Image: workspace-inbox-first.png",
+            ),
+        )
+
+        for tool_text, expected in cases:
+            with self.subTest(tool_text=tool_text):
+                bridge.get_item_text = lambda _item, text=tool_text: (text, "tool")
+                bridge.get_messages = lambda _session: {
+                    "messages": [{"type": "function_call"}],
+                    "workspace": "/tmp/project",
+                }
+                out = io.StringIO()
+
+                with redirect_stdout(out):
+                    result = bridge.messages(Path("/tmp/project"), 100, None)
+
+                self.assertEqual(result, 0)
+                payload = json.loads(out.getvalue())
+                self.assertEqual(payload["messages"][0]["text"], expected)
+
     def test_messages_remove_markdown_emphasis_from_tool_summaries(self):
         """Scenario: Reloaded tool summaries match the minimal live rendering."""
         bridge = load_bridge()

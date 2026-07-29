@@ -2613,6 +2613,24 @@ Keep the flow minimal.")
   (with-current-buffer (faltoo-test--chat-buffer-name)
     (should (string-match-p "> first block\n> second block\n\nfinal answer" (buffer-string)))))
 
+(ert-deftest faltoo-request-summarizes-skill-and-image-tools ()
+  "Scenario: Skill and image tools show their useful argument in one line."
+  (dolist (case '(("load_skill
+{\"skill_name\": \"browser-use\"}" "Load Skill: browser-use")
+                  ("load_image
+{\"image_path\": \"workspace-inbox-first.png\"}"
+                   "Load Image: workspace-inbox-first.png")))
+    (faltoo-test--kill-chat-buffer)
+    (faltoo-chat-start-stream "Assistant · answering")
+
+    (faltoo-request--route-event
+     `((classes . "tool") (text . ,(car case)))
+     (faltoo-workspace) nil nil)
+
+    (with-current-buffer (faltoo-test--chat-buffer-name)
+      (should (string-match-p (regexp-quote (cadr case)) (buffer-string)))
+      (should-not (string-match-p "skill_name\|image_path" (buffer-string))))))
+
 (ert-deftest faltoo-request-renders-only-truncated-tool-summary ()
   "Scenario: Tool streams show FaltooChat-style summaries, not full command bodies."
   (faltoo-test--kill-chat-buffer)
