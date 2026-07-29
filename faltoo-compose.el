@@ -11,6 +11,26 @@
 
 (declare-function faltoo-chat-refresh "faltoo-chat")
 
+(defun faltoo-compose-tool-summary (text)
+  "Return the compact transcript summary for tool TEXT."
+  (let* ((summary (string-trim
+                   (replace-regexp-in-string
+                    "\\*\\*" ""
+                    (car (split-string text "\n\n<!-- shell-command -->\n\n" t)))))
+         (lines (split-string summary "\n"))
+         (spec (pcase (car lines)
+                 ("load_skill" '("Load Skill" skill_name))
+                 ("load_image" '("Load Image" image_path)))))
+    (cond
+     (spec
+      (format "%s: %s" (car spec)
+              (alist-get (cadr spec)
+                         (json-parse-string (string-join (cdr lines) "\n")
+                                            :object-type 'alist))))
+     ((> (length lines) 5)
+      (string-join (append (cl-subseq lines 0 4) '("...")) "\n"))
+     (t summary))))
+
 (defun faltoo-compose-insert-title (title)
   "Insert Markdown popup TITLE."
   (insert "# " title "\n"))

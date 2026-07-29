@@ -7,6 +7,7 @@
 (require 'faltoo-chat)
 (require 'faltoo-ui)
 (require 'faltoo-faces)
+(require 'faltoo-compose)
 
 (defvar faltoo-request-start-times (make-hash-table :test #'equal))
 (defvar faltoo-request-rate-limits (make-hash-table :test #'equal))
@@ -20,17 +21,10 @@
 (defun faltoo-request--event-text (event)
   (or (alist-get 'text event) ""))
 
-(defconst faltoo-request--shell-command-separator "\n\n<!-- shell-command -->\n\n")
 (defconst faltoo-request--hook-feedback-separator "────────────────")
 
 (defun faltoo-request--event-class (event)
   (or (alist-get 'classes event) (alist-get 'type event) ""))
-
-(defun faltoo-request--clip-lines (text)
-  (let ((lines (split-string text "\n")))
-    (if (<= (length lines) 5)
-        text
-      (string-join (append (seq-take lines 4) '("...")) "\n"))))
 
 (defun faltoo-request--hook-feedback-p (text)
   (let ((trimmed (string-trim-left text)))
@@ -43,23 +37,6 @@
                      faltoo-request--hook-feedback-separator)
                "
 "))
-
-(defun faltoo-request--tool-summary (text)
-  (let* ((summary (string-trim
-                   (replace-regexp-in-string
-                    "\\*\\*" ""
-                    (car (split-string text faltoo-request--shell-command-separator t)))))
-         (lines (split-string summary "\n"))
-         (tool (car lines))
-         (spec (pcase tool
-                 ("load_skill" '("Load Skill" skill_name))
-                 ("load_image" '("Load Image" image_path)))))
-    (if spec
-        (format "%s: %s" (car spec)
-                (alist-get (cadr spec)
-                           (json-parse-string (string-join (cdr lines) "\n")
-                                              :object-type 'alist)))
-      (faltoo-request--clip-lines summary))))
 
 (defun faltoo-request-ensure-idle (&optional workspace)
   "Signal when another Faltoo request is already running for WORKSPACE."
@@ -145,7 +122,7 @@
               (when popup-buffer
                 (faltoo-popup-append-stream-block popup-buffer feedback 'faltoo-chat-hook-feedback-face))
               (faltoo-chat-append-stream-block feedback 'faltoo-chat-hook-feedback-face workspace))
-          (let ((summary (faltoo-request--tool-summary text)))
+          (let ((summary (faltoo-compose-tool-summary text)))
             (when popup-buffer
               (faltoo-popup-append-stream-block popup-buffer summary 'faltoo-chat-tool-face))
             (faltoo-chat-append-stream-block summary 'faltoo-chat-tool-face workspace)))))

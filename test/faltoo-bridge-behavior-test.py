@@ -323,18 +323,15 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
 
 
 
-    def test_messages_summarize_skill_and_image_tools(self):
-        """Scenario: Reloaded skill and image tools show useful one-line summaries."""
+    def test_messages_preserve_raw_skill_and_image_tools_for_emacs_rendering(self):
+        """Scenario: Reloaded tools reach the shared Emacs formatter unchanged."""
         bridge = load_bridge()
         cases = (
-            ('load_skill\n{"skill_name": "browser-use"}', "Load Skill: browser-use"),
-            (
-                'load_image\n{"image_path": "workspace-inbox-first.png"}',
-                "Load Image: workspace-inbox-first.png",
-            ),
+            'load_skill\n{"skill_name": "browser-use"}',
+            'load_image\n{"image_path": "workspace-inbox-first.png"}',
         )
 
-        for tool_text, expected in cases:
+        for tool_text in cases:
             with self.subTest(tool_text=tool_text):
                 bridge.get_item_text = lambda _item, text=tool_text: (text, "tool")
                 bridge.get_messages = lambda _session: {
@@ -348,10 +345,10 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(result, 0)
                 payload = json.loads(out.getvalue())
-                self.assertEqual(payload["messages"][0]["text"], expected)
+                self.assertEqual(payload["messages"][0]["text"], tool_text)
 
-    def test_messages_remove_markdown_emphasis_from_tool_summaries(self):
-        """Scenario: Reloaded tool summaries match the minimal live rendering."""
+    def test_messages_preserve_raw_tool_text_for_emacs_rendering(self):
+        """Scenario: Reloaded tool text reaches the shared Emacs formatter unchanged."""
         bridge = load_bridge()
 
         # Given a persisted tool call uses FaltooBot's bold Markdown label.
@@ -369,12 +366,12 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         with redirect_stdout(out):
             result = bridge.messages(Path("/tmp/project"), 100, None)
 
-        # Then the loaded summary has the same plain label as the live stream.
+        # Then Emacs receives the original text and applies the shared formatter.
         self.assertEqual(result, 0)
         payload = json.loads(out.getvalue())
         self.assertEqual(
             payload["messages"][0]["text"],
-            "Shell: Collect final code references and status",
+            "**Shell:** Collect final code references and status",
         )
 
     def test_messages_marks_persisted_hook_feedback_with_distinct_role(self):

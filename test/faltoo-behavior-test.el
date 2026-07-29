@@ -1770,6 +1770,11 @@ Keep the flow minimal.")
           (faltoo-request--route-event
            '((classes . "tool") (text . "Web search: relevant API")) workspace nil nil)
           (faltoo-request--route-event
+           '((classes . "tool")
+             (text . "load_skill
+{\"skill_name\": \"browser-use\"}"))
+           workspace nil nil)
+          (faltoo-request--route-event
            '((classes . "answer") (text . "The tools confirm the current flow."))
            workspace nil nil)
           (faltoo-request--route-event
@@ -1792,6 +1797,9 @@ Keep the flow minimal.")
                   (text . "Reasoning summary: check the architecture."))
                  ((role . "tool") (class . "tool") (text . "Shell: inspect repository"))
                  ((role . "tool") (class . "tool") (text . "Web search: relevant API"))
+                 ((role . "tool") (class . "tool")
+                  (text . "load_skill
+{\"skill_name\": \"browser-use\"}"))
                  ((role . "assistant") (class . "answer")
                   (text . "The tools confirm the current flow."))
                  ((role . "hook-feedback") (class . "hook-feedback") (text . ,feedback))

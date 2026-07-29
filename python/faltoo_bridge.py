@@ -10,7 +10,6 @@ import sys
 import traceback
 from typing import Any
 
-SHELL_COMMAND_SEPARATOR = "\n\n<!-- shell-command -->\n\n"
 
 from faltoobot.faltoochat.git import get_unstaged_files, is_git_workspace  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.review_api import Review  # ty: ignore[unresolved-import]
@@ -52,19 +51,6 @@ def _session_payload(session: Session) -> dict[str, str]:
         "workspace": str(messages["workspace"]),
         "messages_path": str(session.messages_path),
     }
-
-
-def _tool_summary(text: str) -> str:
-    summary = text.split(SHELL_COMMAND_SEPARATOR, maxsplit=1)[0].replace("**", "").strip()
-    tool, _, arguments = summary.partition("\n")
-    spec = {
-        "load_skill": ("Load Skill", "skill_name"),
-        "load_image": ("Load Image", "image_path"),
-    }.get(tool)
-    if spec:
-        label, key = spec
-        return f"{label}: {json.loads(arguments)[key]}"
-    return summary
 
 
 def _hook_feedback_text(text: str) -> bool:
@@ -151,7 +137,7 @@ def messages(workspace: Path, limit: int, turns: int | None) -> int:
             {
                 "role": role,
                 "class": classes,
-                "text": _tool_summary(text) if classes == "tool" else text.strip(),
+                "text": text.strip(),
             }
         )
 

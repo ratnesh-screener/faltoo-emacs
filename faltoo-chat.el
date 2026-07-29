@@ -134,8 +134,9 @@
          (text (or (alist-get 'text message) "")))
     (cond
      ((member role-key '("tool" "hook-feedback"))
-      (when (string= role-key "hook-feedback")
-        (setq text (faltoo-chat--format-hook-feedback text)))
+      (setq text (if (string= role-key "hook-feedback")
+                     (faltoo-chat--format-hook-feedback text)
+                   (faltoo-compose-tool-summary text)))
       (unless (or (bobp) (looking-back "\n" nil))
         (insert "\n"))
       (setq start (point))
