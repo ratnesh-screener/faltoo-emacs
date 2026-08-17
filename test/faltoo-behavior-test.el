@@ -25,6 +25,8 @@
 (defun magit-status (&rest _args) nil)
 (defun magit-diff-working-tree (&rest _args) nil)
 (defun magit-refresh (&rest _args) nil)
+(defface magit-diff-added-highlight '((t :background "#123456")) "")
+(defface magit-diff-removed-highlight '((t :background "#654321")) "")
 (provide 'magit)
 
 
@@ -3551,10 +3553,43 @@ unchanged"))
            (font-lock-ensure)
            (goto-char (point-min))
            (should (eq (get-text-property (point) 'faltoo-review-line-type) 'delete))
-           (should (eq (get-char-property (point) 'face) 'faltoo-diff-delete-line-face))
+           (should (equal (get-text-property (point) 'font-lock-face)
+                          (faltoo-review--line-background-face 'delete nil)))
            (forward-line 1)
            (should (eq (get-text-property (point) 'faltoo-review-line-type) 'insert))
-           (should (eq (get-char-property (point) 'face) 'faltoo-diff-insert-line-face))))))))
+           (should (equal (get-text-property (point) 'font-lock-face)
+                          (faltoo-review--line-background-face 'insert nil)))
+           (should-not (cl-find-if (lambda (overlay)
+                                     (overlay-get overlay 'faltoo-review-diff))
+                                   (overlays-in (point-min) (point-max))))))))))
+
+(ert-deftest faltoo-review-diff-background-preserves-source-syntax-faces ()
+  "Scenario: Git line backgrounds do not replace source syntax highlighting."
+  (faltoo-test--with-temp-git-file
+   '("def new_value():" "    return 1")
+   (lambda (file _root)
+     (let ((original-face-background (symbol-function 'face-background)))
+       (cl-letf (((symbol-function 'faltoo-review--patch)
+                  (lambda (&rest _args)
+                    "@@ -1 +1 @@
+-def old_value():
++def new_value():"))
+                 ((symbol-function 'face-background)
+                  (lambda (face &rest args)
+                    (pcase face
+                      ('magit-diff-added-highlight "#123456")
+                      ('magit-diff-removed-highlight "#654321")
+                      (_ (apply original-face-background face args))))))
+         (with-current-buffer (faltoo-review-buffer file)
+           (font-lock-ensure)
+           (goto-char (point-min))
+           (forward-line 1)
+           (should (eq (get-text-property (point) 'face)
+                       'font-lock-keyword-face))
+           (should (equal (get-text-property (point) 'font-lock-face)
+                          '(:background "#123456" :extend t)))
+           (should-not (plist-member (get-text-property (point) 'font-lock-face)
+                                     :foreground))))))))
 
 (ert-deftest faltoo-review-buffer-inserts-the-source-file-in-one-pass ()
   "Scenario: First review rendering does not rebuild an unchanged file line by line."
@@ -3675,8 +3710,54 @@ old three
   (should (eq (lookup-key faltoo-review-mode-map (kbd "p")) #'faltoo-review-prev-file))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "N")) #'faltoo-next-comment))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "P")) #'faltoo-prev-comment))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "s")) #'faltoo-stage-current-hunk))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "u")) #'faltoo-unstage-current-hunk))
   (should (eq (lookup-key faltoo-review-mode-map (kbd "S")) #'faltoo-stage-current-file))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "U")) #'faltoo-unstage-current-file))
   (should-not (commandp (lookup-key faltoo-review-mode-map (kbd "C-c f d")))))
+
+(ert-deftest faltoo-review-hunk-staging-round-trips-index-state-and-faces ()
+  "Scenario: Review hunks can be staged blue and unstaged back to diff colors."
+  (faltoo-test--with-temp-git-file
+   '("new value")
+   (lambda (file _root)
+     (let ((patch "diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1 +1 @@
+-old value
++new value
+")
+           calls)
+       (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) patch))
+                 ((symbol-function 'magit-run-git-with-input)
+                  (lambda (&rest args)
+                    (push (cons args (buffer-string)) calls)
+                    0)))
+         (with-current-buffer (faltoo-review-buffer file)
+           (goto-char (point-min))
+
+           (faltoo-stage-current-hunk)
+
+           (should (equal (caar calls) '("apply" "--cached" "--unidiff-zero" "-")))
+           (should (equal (cdar calls) patch))
+           (should (equal (get-text-property (point) 'font-lock-face)
+                          (faltoo-review--line-background-face 'delete t)))
+           (should (get-text-property (point) 'faltoo-review-hunk-staged))
+           (forward-line 1)
+           (should (equal (get-text-property (point) 'font-lock-face)
+                          (faltoo-review--line-background-face 'insert t)))
+
+           (faltoo-unstage-current-hunk)
+
+           (should (equal (caar calls)
+                          '("apply" "--cached" "--reverse" "--unidiff-zero" "-")))
+           (should-not (get-text-property (point) 'faltoo-review-hunk-staged))
+           (should (equal (get-text-property (point) 'font-lock-face)
+                          (faltoo-review--line-background-face 'insert nil)))
+           (forward-line -1)
+           (should (equal (get-text-property (point) 'font-lock-face)
+                          (faltoo-review--line-background-face 'delete nil)))))))))
 
 (ert-deftest faltoo-review-change-navigation-wraps-between-hunks ()
   "Scenario: Change navigation moves between generated hunks and wraps at edges."

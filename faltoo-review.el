@@ -2,6 +2,7 @@
 
 (require 'cl-lib)
 (require 'magit)
+(require 'text-property-search)
 (require 'faltoo-faces)
 (require 'faltoo-core)
 (require 'faltoo-bridge)
@@ -9,6 +10,7 @@
 (require 'faltoo-ask)
 
 (declare-function magit-git-insert "magit-git")
+(declare-function magit-run-git-with-input "magit-process")
 
 (defvar-local faltoo-review-source-file nil)
 (defvar-local faltoo-review-hunk-positions nil)
@@ -26,10 +28,10 @@
     (define-key map (kbd "l") #'faltoo-show-last-response)
     (define-key map (kbd "c") #'faltoo-comment)
     (define-key map (kbd "C") #'faltoo-file-comment)
-    (define-key map (kbd "s") #'faltoo-submit-review-comments)
+    (define-key map (kbd "s") #'faltoo-stage-current-hunk)
     (define-key map (kbd "h") #'faltoo-chat)
     (define-key map (kbd "r") #'faltoo-vc-refresh)
-    (define-key map (kbd "u") #'faltoo-review-unstaged)
+    (define-key map (kbd "u") #'faltoo-unstage-current-hunk)
     (define-key map (kbd "x") #'faltoo-review-stop)
     (define-key map (kbd "g") #'beginning-of-buffer)
     (define-key map (kbd "G") #'end-of-buffer)
@@ -77,17 +79,20 @@
       " Faltoo")))
 
 (defun faltoo-review--hunks (patch)
-  "Parse zero-context Git PATCH into review hunks."
-  (let (hunks)
+  "Parse zero-context Git PATCH into review hunks and applicable patches."
+  (let (file-header hunks)
     (with-temp-buffer
       (insert patch)
       (goto-char (point-min))
       (while (re-search-forward
               "^@@ -[0-9]+\\(?:,[0-9]+\\)? +\\+\\([0-9]+\\)\\(?:,\\([0-9]+\\)\\)? @@"
               nil t)
-        (let ((new-start (string-to-number (match-string 1)))
+        (let ((hunk-start (line-beginning-position))
+              (new-start (string-to-number (match-string 1)))
               (new-count (if (match-string 2) (string-to-number (match-string 2)) 1))
               lines)
+          (unless file-header
+            (setq file-header (buffer-substring-no-properties (point-min) hunk-start)))
           (forward-line 1)
           (while (and (not (eobp)) (not (looking-at "^@@ ")))
             (pcase (char-after)
@@ -98,8 +103,23 @@
                                       (1+ (line-beginning-position)) (line-end-position)))
                         lines)))
             (forward-line 1))
-          (push (list new-start new-count (nreverse lines)) hunks))))
+          (push (list new-start new-count (nreverse lines)
+                      (concat file-header
+                              (buffer-substring-no-properties hunk-start (point))))
+                hunks))))
     (nreverse hunks)))
+
+(defun faltoo-review--line-background-face (type staged)
+  "Return the theme-aware background face for a review line."
+  (list :background
+        (face-background
+         (if staged
+             'highlight
+           (if (eq type 'delete)
+               'magit-diff-removed-highlight
+             'magit-diff-added-highlight))
+         nil t)
+        :extend t))
 
 (defun faltoo-review-refresh-buffer ()
   "Regenerate the current review buffer from its source file and Git diff."
@@ -110,7 +130,6 @@
                   (faltoo-review--hunks (faltoo-review--patch relative))))
          (inhibit-read-only t)
          markers)
-    (remove-overlays (point-min) (point-max) 'faltoo-review-diff t)
     (erase-buffer)
     (when (file-exists-p file)
       (insert-file-contents file))
@@ -146,13 +165,10 @@
                          (min total-lines (max 1 (car hunk)))
                        (get-text-property start 'faltoo-review-file-line))
                      'faltoo-review-hunk hunk-index
-                     'rear-nonsticky t))
-              (let ((overlay (make-overlay start (point))))
-                (overlay-put overlay 'face
-                             (if (eq type 'delete)
-                                 'faltoo-diff-delete-line-face
-                               'faltoo-diff-insert-line-face))
-                (overlay-put overlay 'faltoo-review-diff t))))
+                     'faltoo-review-hunk-patch (nth 3 hunk)
+                     'faltoo-review-hunk-staged nil
+                     'font-lock-face (faltoo-review--line-background-face type nil)
+                     'rear-nonsticky t))))
           (setq hunk-index (1- hunk-index)))))
     (setq faltoo-review-hunk-positions (mapcar #'marker-position markers))
     (mapc (lambda (marker) (set-marker marker nil)) markers)
@@ -252,6 +268,59 @@
   (magit-refresh)
   (faltoo-comments-refresh)
   (force-mode-line-update t))
+
+(defun faltoo-review--set-hunk-staged (hunk staged)
+  "Mark HUNK as STAGED and update its base line faces."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (goto-char (point-min))
+      (while-let ((match (text-property-search-forward 'faltoo-review-hunk hunk t)))
+        (let ((beg (prop-match-beginning match))
+              (end (prop-match-end match)))
+          (put-text-property beg end 'faltoo-review-hunk-staged staged)
+          (save-excursion
+            (goto-char beg)
+            (while (< (point) end)
+              (let ((next (next-single-property-change
+                           (point) 'faltoo-review-line-type nil end)))
+                (put-text-property
+                 (point) next 'font-lock-face
+                 (faltoo-review--line-background-face
+                  (get-text-property (point) 'faltoo-review-line-type)
+                  staged))
+                (goto-char next)))))))
+    (set-buffer-modified-p nil)))
+
+(defun faltoo-review--apply-current-hunk (reverse)
+  "Apply the current review hunk to the index, reversing when REVERSE."
+  (let ((hunk (get-text-property (point) 'faltoo-review-hunk))
+        (patch (get-text-property (point) 'faltoo-review-hunk-patch))
+        (staged (get-text-property (point) 'faltoo-review-hunk-staged)))
+    (unless hunk (user-error "No Git hunk at point"))
+    (when (eq staged (not reverse))
+      (user-error (if reverse "Hunk is not staged" "Hunk is already staged")))
+    (let ((default-directory (faltoo-workspace)))
+      (with-temp-buffer
+        (insert patch)
+        (unless (zerop (if reverse
+                           (magit-run-git-with-input
+                            "apply" "--cached" "--reverse" "--unidiff-zero" "-")
+                         (magit-run-git-with-input
+                          "apply" "--cached" "--unidiff-zero" "-")))
+          (user-error "Could not %s hunk" (if reverse "unstage" "stage")))))
+    (faltoo-review--set-hunk-staged hunk (not reverse))
+    (magit-refresh)
+    (message "%s hunk" (if reverse "Unstaged" "Staged"))))
+
+(defun faltoo-stage-current-hunk ()
+  "Stage the review hunk at point and render it in blue."
+  (interactive)
+  (faltoo-review--apply-current-hunk nil))
+
+(defun faltoo-unstage-current-hunk ()
+  "Unstage the review hunk at point and restore its diff colors."
+  (interactive)
+  (faltoo-review--apply-current-hunk t))
 
 (defun faltoo-stage-current-file ()
   "Stage the reviewed source file through Magit."

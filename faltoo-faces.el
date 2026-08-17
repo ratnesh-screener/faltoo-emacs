@@ -107,13 +107,5 @@
   '((t :inherit shadow))
   "Muted face for tree preview text.")
 
-(defface faltoo-diff-insert-line-face
-  '((t :inherit magit-diff-added-highlight :extend t))
-  "Theme-aware face for inserted Git lines in Faltoo review buffers.")
-
-(defface faltoo-diff-delete-line-face
-  '((t :inherit magit-diff-removed-highlight :extend t))
-  "Theme-aware face for deleted Git lines in Faltoo review buffers.")
-
 (provide 'faltoo-faces)
 ;;; faltoo-faces.el ends here

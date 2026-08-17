@@ -51,7 +51,9 @@ c     add review comment on line/region
 C     add file-level review comment
 m     show pending comments summary
 d     delete pending comment at point
-s     submit pending review comments
+s     stage current hunk
+u     unstage current hunk
+C-c f s   submit pending review comments
 h     open transcript
 r     refresh generated review buffers and Git state
 g     top of review buffer
@@ -186,6 +188,6 @@ Pending review-comment lines are highlighted directly.
 
 ## Full-file Git review
 
-`faltoo-review-mode` uses generated read-only buffers rather than modifying the real source buffers. The full working-tree file remains visible, removed rows are inserted inline, and added/removed rows inherit Magit's theme-aware diff faces. Ask and review comments map back to the real source file, so comments created from either buffer share one workspace queue and survive stopping review.
+`faltoo-review-mode` uses generated read-only buffers rather than modifying the real source buffers. The full working-tree file remains visible, removed rows are inserted inline, and added/removed rows use Magit's theme-aware diff backgrounds while retaining normal source syntax colors. Ask and review comments map back to the real source file, so comments created from either buffer share one workspace queue and survive stopping review.
 
 Review buffers show a header line like `Faltoo Review Faltoo[1/N]` so the active file is always visible. Visited files are reused when navigating; press `r` when you want to regenerate them from disk and Git.

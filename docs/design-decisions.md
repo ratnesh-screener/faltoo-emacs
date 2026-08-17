@@ -20,7 +20,7 @@ Non-goals for the first implementation:
 - Recreating Neovim floating modals exactly.
 - Implementing Faltoo as a generic LLM provider backend.
 - Depending on a terminal/vterm wrapper for FaltooBot.
-- Building hunk staging, patch accept/reject, or Ediff workflows in the MVP.
+- Building line staging, patch accept/reject, or Ediff workflows in the MVP.
 
 ## Relationship to Existing Emacs LLM Packages
 
@@ -723,11 +723,13 @@ C-c f p   faltoo-prev-comment
 Inside `faltoo-review-mode`, use direct single-key bindings because review buffers are read-only:
 
 ```text
-a/c/s     ask, comment, submit comments
+a/c       ask, comment
+C-c f s   submit comments
 ]/[/=     next hunk, previous hunk, show hunk
 g/G       top/bottom of review buffer
 n/p       next/previous review file
 N/P       next/previous pending comment
+s/u       stage/unstage current hunk
 S/U       stage/unstage current file
 D         Magit current-file diff
 ```
@@ -769,10 +771,11 @@ Decision: Faltoo owns full-file review presentation and pending comments; Magit 
 Faltoo parses a zero-context working-tree diff from Magit/Git and merges it with the current file contents. The generated review buffer shows:
 
 - unchanged lines as normal source text;
-- added lines with `magit-diff-added-highlight` inheritance;
-- removed lines inserted inline with `magit-diff-removed-highlight` inheritance.
+- added lines with the background from `magit-diff-added-highlight`;
+- removed lines inserted inline with the background from `magit-diff-removed-highlight`;
+- staged hunk lines with the theme-aware `highlight` background.
 
-Generated rows carry source-line and hunk properties. Ask/comments use source-line properties for payloads, while overlays can stay on the exact generated rows selected by the user.
+Generated rows carry source-line, hunk, and raw patch properties. Base Git colors use background-only `font-lock-face` text properties derived from Magit, preserving the source major mode's syntax foregrounds while region and pending-comment overlays remain visible above them. Ask/comments use source-line properties for payloads, while overlays stay on the exact generated rows selected by the user.
 
 Change navigation is implemented over those hunk properties and wraps between hunks. File navigation keeps the one-file-at-a-time review flow. Generated buffers are cached after first visit; only explicit refresh or workspace reload regenerates them.
 
@@ -787,9 +790,9 @@ faltoo-magit-status
 faltoo-magit-diff-current-file
 ```
 
-Faltoo does not implement patch application or auto-stage assistant edits. Hunk staging/reverting remains a Magit operation rather than custom review-buffer plumbing.
+Faltoo stages or unstages the current generated hunk by sending its raw zero-context patch through Magit's Git process wrapper. Staged rows remain in the generated snapshot with a blue face until an explicit refresh. Faltoo does not implement line staging or auto-stage assistant edits.
 
-After staging, unstaging, refresh, or assistant edits, regenerate open review buffers from disk and refresh pending-comment overlays. Keep the review set until the user stops or starts a new review.
+Explicit refresh and assistant edits regenerate open review buffers from disk and refresh pending-comment overlays. Keep the review set until the user stops or starts a new review.
 
 ### Implemented Scope
 
@@ -798,8 +801,9 @@ After staging, unstaging, refresh, or assistant edits, regenerate open review bu
 - Wrapped file and hunk navigation.
 - Ask/comment support mapped to canonical source files.
 - Workspace-scoped comments shared between source and review buffers.
-- File-level stage/unstage and Magit status/diff commands.
-- No custom hunk mutation engine and no auto-staging.
+- Hunk stage/unstage with blue staged-row feedback.
+- File-level stage/unstage through `S`/`U`.
+- Magit status/diff commands and no auto-staging.
 
 ## Personal-Use Implementation Policy
 
