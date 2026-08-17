@@ -591,7 +591,8 @@
       (write-region (concat (faltoo-tree--json faltoo-tree-payload) "\n") nil faltoo-tree-path)
       (faltoo-tree-refresh)
       (when (fboundp 'faltoo-chat-refresh)
-        (faltoo-chat-refresh faltoo-tree-workspace)))))
+        (faltoo-chat-refresh faltoo-tree-workspace)
+        (goto-char (point-max))))))
 
 (provide 'faltoo-tree)
 ;;; faltoo-tree.el ends here

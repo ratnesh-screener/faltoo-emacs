@@ -879,6 +879,40 @@
             (should (equal (alist-get 'content (car messages)) "keep"))))
       (delete-file messages-file))))
 
+(ert-deftest faltoo-tree-prune-scrolls-refreshed-transcript-to-bottom ()
+  "Scenario: Trimming from the tree leaves the refreshed transcript at its prompt."
+  (let ((messages-file (make-temp-file "faltoo-tree" nil ".json"))
+        (tree-buffer (generate-new-buffer " *faltoo-tree-prune*"))
+        (chat-buffer (generate-new-buffer " *faltoo-chat-prune*")))
+    (unwind-protect
+        (save-window-excursion
+          (write-region
+           (json-serialize
+            '((messages . [((type . "message") (role . "user") (content . "keep"))
+                            ((type . "message") (role . "assistant") (content . "remove"))])))
+           nil messages-file nil 'silent)
+          (switch-to-buffer tree-buffer)
+          (faltoo-tree-mode)
+          (setq faltoo-tree-path messages-file)
+          (faltoo-tree-refresh)
+          (faltoo-tree--goto-id 1)
+          (with-current-buffer chat-buffer
+            (insert "old transcript position\nnew prompt")
+            (goto-char (point-min)))
+
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _args) t))
+                    ((symbol-function 'faltoo-chat-refresh)
+                     (lambda (&rest _args)
+                       (pop-to-buffer chat-buffer)
+                       (goto-char (point-min)))))
+            (faltoo-tree-prune-from-row))
+
+          (should (eq (current-buffer) chat-buffer))
+          (should (= (point) (point-max))))
+      (when (buffer-live-p tree-buffer) (kill-buffer tree-buffer))
+      (when (buffer-live-p chat-buffer) (kill-buffer chat-buffer))
+      (delete-file messages-file))))
+
 (ert-deftest faltoo-tree-open-raw-from-tree-jumps-to-selected-message ()
   "Scenario: Opening raw transcript from the tree lands on the selected message object."
   (let ((messages-file (make-temp-file "faltoo-tree" nil ".json")))
