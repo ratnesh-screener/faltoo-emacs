@@ -33,7 +33,7 @@ class Session:
         self.messages_path = workspace / session_id / "messages.json"
 
 
-def install_faltoobot_stubs() -> None:
+def install_faltoobot_stubs(*, hook_api: bool = True) -> None:
     """Given FaltooBot dependencies are represented by lightweight test doubles."""
     modules = {
         "faltoobot": types.ModuleType("faltoobot"),
@@ -86,11 +86,13 @@ def install_faltoobot_stubs() -> None:
 
     modules["faltoobot.sessions"].append_user_turn = append_user_turn
     modules["faltoobot.sessions"].get_answer_streaming = get_answer_streaming
+    if hook_api:
+        modules["faltoobot.sessions"].get_answer_streaming_with_hooks = get_answer_streaming
     sys.modules.update(modules)
 
 
-def load_bridge():
-    install_faltoobot_stubs()
+def load_bridge(*, hook_api: bool = True):
+    install_faltoobot_stubs(hook_api=hook_api)
     path = Path(__file__).resolve().parents[1] / "python" / "faltoo_bridge.py"
     spec = importlib.util.spec_from_file_location("faltoo_bridge_under_test", path)
     module = importlib.util.module_from_spec(spec)
@@ -285,6 +287,39 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
 
         # Then the bridge sends the literal prompt text.
         self.assertEqual(captured_questions, ["/commit"])
+
+    def test_bridge_supports_released_streaming_api_before_the_split(self):
+        """Scenario: Released FaltooBot keeps its original hook-aware stream entry point."""
+        bridge = load_bridge(hook_api=False)
+
+        self.assertIs(bridge.get_answer_streaming_with_hooks, bridge.get_answer_streaming)
+
+    async def test_answer_stream_selects_hook_aware_api_from_config(self):
+        """Scenario: Hook-enabled configs use FaltooBot's hook-aware response stream."""
+        for hook_enabled, expected in ((False, "raw"), (True, "hooks")):
+            with self.subTest(hook_enabled=hook_enabled):
+                bridge = load_bridge()
+                calls = []
+
+                async def raw_stream(_session):
+                    calls.append("raw")
+                    if False:
+                        yield None
+
+                async def hook_stream(_session):
+                    calls.append("hooks")
+                    if False:
+                        yield None
+
+                bridge.build_config = lambda: types.SimpleNamespace(
+                    hook_enabled=hook_enabled
+                )
+                bridge.get_answer_streaming = raw_stream
+                bridge.get_answer_streaming_with_hooks = hook_stream
+
+                await bridge._stream_answer({}, lambda *_args: None)
+
+                self.assertEqual(calls, [expected])
 
     async def test_answer_stream_preserves_whitespace_only_chunks(self):
         """Scenario: Newline-only assistant chunks keep Markdown code fences intact."""

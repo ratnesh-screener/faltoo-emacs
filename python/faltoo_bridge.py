@@ -29,6 +29,12 @@ from faltoobot.sessions import (  # ty: ignore[unresolved-import]
     set_session_name,
 )
 
+try:
+    from faltoobot.sessions import get_answer_streaming_with_hooks  # ty: ignore[unresolved-import]
+except ImportError:
+    # Released FaltooBot versions ran hooks inside get_answer_streaming.
+    get_answer_streaming_with_hooks = get_answer_streaming
+
 
 def _workspace(workspace: Path) -> Path:
     return workspace.expanduser().resolve()
@@ -448,7 +454,12 @@ def _emit_complete(request_id: str, ok: bool) -> None:
 
 async def _stream_answer(session: Session, emit=None) -> None:
     emit = emit or _emit
-    async for event in get_answer_streaming(session):
+    stream = (
+        get_answer_streaming_with_hooks(session)
+        if getattr(build_config(), "hook_enabled", False)
+        else get_answer_streaming(session)
+    )
+    async for event in stream:
         is_new, classes, text = get_event_text(event)
         # Some stream events only update state and have no visible text.
         # Newline-only answer chunks are visible and keep Markdown fences intact.
