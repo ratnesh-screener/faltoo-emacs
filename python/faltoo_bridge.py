@@ -20,7 +20,7 @@ from faltoobot.config import build_config, config_status_text  # ty: ignore[unre
 from faltoobot.sessions import (  # ty: ignore[unresolved-import]
     Session,
     append_user_turn,
-    get_answer_streaming,
+    stream_answer,
     get_dir_chat_key,
     get_last_usage,
     get_messages,
@@ -28,12 +28,6 @@ from faltoobot.sessions import (  # ty: ignore[unresolved-import]
     list_sessions,
     set_session_name,
 )
-
-try:
-    from faltoobot.sessions import get_answer_streaming_with_hooks  # ty: ignore[unresolved-import]
-except ImportError:
-    # Released FaltooBot versions ran hooks inside get_answer_streaming.
-    get_answer_streaming_with_hooks = get_answer_streaming
 
 
 def _workspace(workspace: Path) -> Path:
@@ -454,12 +448,7 @@ def _emit_complete(request_id: str, ok: bool) -> None:
 
 async def _stream_answer(session: Session, emit=None) -> None:
     emit = emit or _emit
-    stream = (
-        get_answer_streaming_with_hooks(session)
-        if getattr(build_config(), "hook_enabled", False)
-        else get_answer_streaming(session)
-    )
-    async for event in stream:
+    async for event in stream_answer(session):
         is_new, classes, text = get_event_text(event)
         # Some stream events only update state and have no visible text.
         # Newline-only answer chunks are visible and keep Markdown fences intact.

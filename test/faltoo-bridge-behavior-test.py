@@ -33,7 +33,7 @@ class Session:
         self.messages_path = workspace / session_id / "messages.json"
 
 
-def install_faltoobot_stubs(*, hook_api: bool = True) -> None:
+def install_faltoobot_stubs() -> None:
     """Given FaltooBot dependencies are represented by lightweight test doubles."""
     modules = {
         "faltoobot": types.ModuleType("faltoobot"),
@@ -80,19 +80,17 @@ def install_faltoobot_stubs(*, hook_api: bool = True) -> None:
     async def append_user_turn(_session, question):
         return None
 
-    async def get_answer_streaming(_session):
+    async def stream_answer(_session):
         if False:
             yield None
 
     modules["faltoobot.sessions"].append_user_turn = append_user_turn
-    modules["faltoobot.sessions"].get_answer_streaming = get_answer_streaming
-    if hook_api:
-        modules["faltoobot.sessions"].get_answer_streaming_with_hooks = get_answer_streaming
+    modules["faltoobot.sessions"].stream_answer = stream_answer
     sys.modules.update(modules)
 
 
-def load_bridge(*, hook_api: bool = True):
-    install_faltoobot_stubs(hook_api=hook_api)
+def load_bridge():
+    install_faltoobot_stubs()
     path = Path(__file__).resolve().parents[1] / "python" / "faltoo_bridge.py"
     spec = importlib.util.spec_from_file_location("faltoo_bridge_under_test", path)
     module = importlib.util.module_from_spec(spec)
@@ -161,7 +159,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             yield "chunk"
 
         bridge.append_user_turn = append_user_turn
-        bridge.get_answer_streaming = answer_stream
+        bridge.stream_answer = answer_stream
         bridge.get_event_text = lambda _event: (False, "answer", "hello")
 
         # When the daemon handles an append-message request.
@@ -244,7 +242,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
                 yield None
 
         bridge.append_user_turn = append_user_turn
-        bridge.get_answer_streaming = empty_answer_stream
+        bridge.stream_answer = empty_answer_stream
 
         await bridge.append_review(
             Path("/tmp/faltoo-workspace"),
@@ -280,7 +278,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
                 yield None
 
         bridge.append_user_turn = append_user_turn
-        bridge.get_answer_streaming = empty_answer_stream
+        bridge.stream_answer = empty_answer_stream
 
         # When the user manually submits /commit instead of choosing C-c /.
         await bridge.append_message(Path("/tmp/faltoo-workspace"), " /commit ")
@@ -288,38 +286,21 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         # Then the bridge sends the literal prompt text.
         self.assertEqual(captured_questions, ["/commit"])
 
-    def test_bridge_supports_released_streaming_api_before_the_split(self):
-        """Scenario: Released FaltooBot keeps its original hook-aware stream entry point."""
-        bridge = load_bridge(hook_api=False)
+    async def test_answer_stream_delegates_stream_policy_to_faltoobot(self):
+        """Scenario: The bridge consumes FaltooBot's configured answer stream."""
+        bridge = load_bridge()
+        calls = []
 
-        self.assertIs(bridge.get_answer_streaming_with_hooks, bridge.get_answer_streaming)
+        async def answer_stream(session):
+            calls.append(session)
+            if False:
+                yield None
 
-    async def test_answer_stream_selects_hook_aware_api_from_config(self):
-        """Scenario: Hook-enabled configs use FaltooBot's hook-aware response stream."""
-        for hook_enabled, expected in ((False, "raw"), (True, "hooks")):
-            with self.subTest(hook_enabled=hook_enabled):
-                bridge = load_bridge()
-                calls = []
+        bridge.stream_answer = answer_stream
 
-                async def raw_stream(_session):
-                    calls.append("raw")
-                    if False:
-                        yield None
+        await bridge._stream_answer("session", lambda *_args: None)
 
-                async def hook_stream(_session):
-                    calls.append("hooks")
-                    if False:
-                        yield None
-
-                bridge.build_config = lambda: types.SimpleNamespace(
-                    hook_enabled=hook_enabled
-                )
-                bridge.get_answer_streaming = raw_stream
-                bridge.get_answer_streaming_with_hooks = hook_stream
-
-                await bridge._stream_answer({}, lambda *_args: None)
-
-                self.assertEqual(calls, [expected])
+        self.assertEqual(calls, ["session"])
 
     async def test_answer_stream_preserves_whitespace_only_chunks(self):
         """Scenario: Newline-only assistant chunks keep Markdown code fences intact."""
@@ -341,7 +322,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             for event in events:
                 yield event
 
-        bridge.get_answer_streaming = answer_stream
+        bridge.stream_answer = answer_stream
 
         # When the bridge streams the answer.
         await bridge._stream_answer({})
@@ -453,7 +434,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         async def answer_stream(_session):
             yield event
 
-        bridge.get_answer_streaming = answer_stream
+        bridge.stream_answer = answer_stream
 
         # When the bridge streams the event to Emacs.
         await bridge._stream_answer({})
@@ -480,7 +461,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         async def answer_stream(_session):
             yield object()
 
-        bridge.get_answer_streaming = answer_stream
+        bridge.stream_answer = answer_stream
 
         # When the bridge streams that event to Emacs.
         await bridge._stream_answer({})
