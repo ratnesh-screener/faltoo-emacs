@@ -20,7 +20,7 @@ from faltoobot.config import build_config, config_status_text  # ty: ignore[unre
 from faltoobot.sessions import (  # ty: ignore[unresolved-import]
     Session,
     append_user_turn,
-    stream_answer,
+    get_answer_streaming,
     get_dir_chat_key,
     get_last_usage,
     get_messages,
@@ -448,7 +448,7 @@ def _emit_complete(request_id: str, ok: bool) -> None:
 
 async def _stream_answer(session: Session, emit=None) -> None:
     emit = emit or _emit
-    async for event in stream_answer(session):
+    async for event in get_answer_streaming(session):
         is_new, classes, text = get_event_text(event)
         # Some stream events only update state and have no visible text.
         # Newline-only answer chunks are visible and keep Markdown fences intact.

@@ -80,12 +80,12 @@ def install_faltoobot_stubs() -> None:
     async def append_user_turn(_session, question):
         return None
 
-    async def stream_answer(_session):
+    async def get_answer_streaming(_session):
         if False:
             yield None
 
     modules["faltoobot.sessions"].append_user_turn = append_user_turn
-    modules["faltoobot.sessions"].stream_answer = stream_answer
+    modules["faltoobot.sessions"].get_answer_streaming = get_answer_streaming
     sys.modules.update(modules)
 
 
@@ -159,7 +159,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             yield "chunk"
 
         bridge.append_user_turn = append_user_turn
-        bridge.stream_answer = answer_stream
+        bridge.get_answer_streaming = answer_stream
         bridge.get_event_text = lambda _event: (False, "answer", "hello")
 
         # When the daemon handles an append-message request.
@@ -242,7 +242,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
                 yield None
 
         bridge.append_user_turn = append_user_turn
-        bridge.stream_answer = empty_answer_stream
+        bridge.get_answer_streaming = empty_answer_stream
 
         await bridge.append_review(
             Path("/tmp/faltoo-workspace"),
@@ -278,7 +278,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
                 yield None
 
         bridge.append_user_turn = append_user_turn
-        bridge.stream_answer = empty_answer_stream
+        bridge.get_answer_streaming = empty_answer_stream
 
         # When the user manually submits /commit instead of choosing C-c /.
         await bridge.append_message(Path("/tmp/faltoo-workspace"), " /commit ")
@@ -296,7 +296,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             if False:
                 yield None
 
-        bridge.stream_answer = answer_stream
+        bridge.get_answer_streaming = answer_stream
 
         await bridge._stream_answer("session", lambda *_args: None)
 
@@ -322,7 +322,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             for event in events:
                 yield event
 
-        bridge.stream_answer = answer_stream
+        bridge.get_answer_streaming = answer_stream
 
         # When the bridge streams the answer.
         await bridge._stream_answer({})
@@ -434,7 +434,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         async def answer_stream(_session):
             yield event
 
-        bridge.stream_answer = answer_stream
+        bridge.get_answer_streaming = answer_stream
 
         # When the bridge streams the event to Emacs.
         await bridge._stream_answer({})
@@ -461,7 +461,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         async def answer_stream(_session):
             yield object()
 
-        bridge.stream_answer = answer_stream
+        bridge.get_answer_streaming = answer_stream
 
         # When the bridge streams that event to Emacs.
         await bridge._stream_answer({})
