@@ -170,6 +170,8 @@ This is opened with `C-c f i` and anchored at `faltoo-generic-chat-directory`. I
 
 Repo transcript buffers set `default-directory` to the workspace root, so chat sends, file references, slash commands, and refreshes use the same FaltooBot workspace/session as source-buffer commands from that workspace. The workspace is the Git root when present, otherwise the current folder. Running-request state is scoped by workspace: one repo/folder or generic chat can be answering while another workspace accepts a new prompt.
 
+`C-c f o` selects a directory and opens its transcript directly. A selected directory inside Git resolves to the repository root; outside Git, the directory itself is the workspace.
+
 When a streamed assistant response completes, the finalized assistant heading stays clean and a quoted footer records elapsed wall-clock time, e.g. `> Assistant took: 20.0s`. If the Codex stream includes a `codex.rate_limits` event, store the latest formatted `Remaining limit: ...` text per workspace and append it to the same assistant footer. This is not a separate LLM call or standalone quota endpoint in the current FaltooBot path; it is metadata delivered by the Codex response stream.
 
 ### Transcript Format

@@ -39,6 +39,7 @@ C-c f x   stop review session
 C-c f q   cancel running Faltoo answer stream for this repo
 C-c f h   open current repo transcript
 C-c f i   open generic repo-independent chat
+C-c f o   choose a folder and open its workspace transcript
 C-c f b   switch this chat's Faltoo core: release/local/custom
 ```
 

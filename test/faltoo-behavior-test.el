@@ -164,6 +164,26 @@
 
 (ert-deftest faltoo-generic-chat-opens-repo-independent-transcript ()
   "Scenario: Generic chat uses a fixed non-Git workspace instead of the current repo."
+(ert-deftest faltoo-chat-directory-opens-selected-git-workspace ()
+  "Scenario: Directory selection opens its repository transcript without visiting a file."
+  (let* ((root (file-name-as-directory (make-temp-file "faltoo-chat-directory" t)))
+         (nested (expand-file-name "src/" root))
+         captured-workspace)
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name ".git" root))
+          (make-directory nested)
+          ;; Given directory completion selects a folder inside a Git repository.
+          (cl-letf (((symbol-function 'read-directory-name) (lambda (&rest _args) nested))
+                    ((symbol-function 'faltoo-chat-refresh)
+                     (lambda (workspace) (setq captured-workspace workspace))))
+            ;; When opening a transcript by directory.
+            (call-interactively #'faltoo-chat-directory))
+
+          ;; Then the repository-root transcript is opened directly.
+          (should (equal captured-workspace (file-truename root))))
+      (delete-directory root t))))
+
   (let* ((root (file-name-as-directory (make-temp-file "faltoo-generic" t)))
          (workspace (expand-file-name "quick-chat/" root))
          (faltoo-generic-chat-directory workspace)
@@ -634,6 +654,11 @@
 
 (ert-deftest faltoo-main-prefix-b-selects-faltoobot-command ()
   "Scenario: The main Faltoo prefix switches between released and local core."
+(ert-deftest faltoo-main-prefix-o-opens-directory-transcript ()
+  "Scenario: The main Faltoo prefix opens a transcript selected by directory."
+  ;; Then C-c f o opens directory selection.
+  (should (eq (lookup-key faltoo-command-map (kbd "o")) #'faltoo-chat-directory)))
+
   ;; Then C-c f b opens Faltoo core command selection.
   (should (eq (lookup-key faltoo-command-map (kbd "b")) #'faltoo-select-faltoobot-command)))
 
@@ -2763,6 +2788,28 @@ Keep the flow minimal.")
 
 (ert-deftest faltoo-reload-loads-plugin-files-in-place ()
   "Scenario: Faltoo code can be reloaded without restarting Emacs."
+(ert-deftest faltoo-reload-restores-main-prefix-bindings ()
+  "Scenario: Reload reapplies every main-prefix binding to the existing keymap."
+  (let ((chat-binding (lookup-key faltoo-command-map (kbd "h")))
+        (directory-binding (lookup-key faltoo-command-map (kbd "o"))))
+    (unwind-protect
+        (progn
+          ;; Given bindings were changed after the keymap was first created.
+          (define-key faltoo-command-map (kbd "h") nil)
+          (define-key faltoo-command-map (kbd "o") nil)
+          (define-key faltoo-command-map (kbd "z") #'ignore)
+
+          ;; When the entrypoint is loaded again.
+          (load-file (expand-file-name "faltoo.el" faltoo-root))
+
+          ;; Then all declared bindings are restored, not only recent additions.
+          (should (eq (lookup-key faltoo-command-map (kbd "h")) #'faltoo-chat))
+          (should (eq (lookup-key faltoo-command-map (kbd "o")) #'faltoo-chat-directory))
+          (should-not (lookup-key faltoo-command-map (kbd "z"))))
+      (define-key faltoo-command-map (kbd "h") chat-binding)
+      (define-key faltoo-command-map (kbd "o") directory-binding)
+      (define-key faltoo-command-map (kbd "z") nil))))
+
   (let (loaded)
     ;; Given load-file is observed.
     (cl-letf (((symbol-function 'load-file)

@@ -234,6 +234,12 @@
   (interactive)
   (faltoo-chat-refresh (faltoo-generic-chat-workspace)))
 
+(defun faltoo-chat-directory (directory)
+  "Open the Faltoo transcript for DIRECTORY's workspace."
+  (interactive (list (read-directory-name "Faltoo workspace: " nil nil t)))
+  (let ((default-directory (file-name-as-directory directory)))
+    (faltoo-chat-refresh (faltoo-git-root))))
+
 (defun faltoo-chat-prev-user-message ()
   "Jump to the previous persisted user message heading in the transcript."
   (interactive)

@@ -80,6 +80,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - In normal source buffers, `C-c f l` shows latest assistant response in posframe.
 - `C-c f h` opens the current Git repo's transcript/history.
 - `C-c f i` opens generic `*Faltoo Chat*`, anchored at `faltoo-generic-chat-directory`, for quick questions outside the current repo/session.
+- `C-c f o` chooses a folder and opens its Git-root or folder-scoped transcript without first visiting a file.
 - `C-c f b` switches the current chat/workspace Faltoo core command between release/local/custom for testing local FaltooBot changes. Local-core answering status is shown as `Faltoo-beta:answering`.
 - In normal source buffers, `C-c f x` stops current review session.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
