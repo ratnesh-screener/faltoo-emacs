@@ -96,7 +96,7 @@
                   (lambda ()
                     (dotimes (_ 100)
                       (faltoo-review-buffer file))))
-                 (should (= patch-calls 1)))
+                 (should (= patch-calls 2)))
              (kill-buffer review))))))))
 
 (ert-deftest faltoo-performance-comment-refresh-for-many-comments-stays-interactive ()

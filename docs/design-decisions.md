@@ -416,6 +416,7 @@ Review is code-first but uses generated buffers so removed lines can appear inli
 - renders the complete working-tree file;
 - inserts removed Git rows before the corresponding added/current rows;
 - uses theme-aware Magit diff faces for added and removed rows;
+- includes already staged hunks in blue, remapping their index coordinates through later working-tree edits;
 - maps Ask/comment line ranges and file identity back to the real source file.
 
 The real source buffer remains untouched and editable. Pending comments are keyed by workspace and canonical source path, so comments created from the source or generated review buffer share one queue and survive `faltoo-review-stop`.
@@ -731,7 +732,7 @@ C-c f s   submit comments
 g/G       top/bottom of review buffer
 n/p       next/previous review file
 N/P       next/previous pending comment
-s/u       stage/unstage current hunk
+s/u       stage/unstage current hunk or selected hunks
 S/U       stage/unstage current file
 D         Magit current-file diff
 ```
@@ -770,14 +771,14 @@ Decision: Faltoo owns full-file review presentation and pending comments; Magit 
 
 ### Review Presentation
 
-Faltoo parses a zero-context working-tree diff from Magit/Git and merges it with the current file contents. The generated review buffer shows:
+Faltoo parses zero-context staged and unstaged diffs from Magit/Git and merges them with the current file contents. The generated review buffer shows:
 
 - unchanged lines as normal source text;
-- added lines with the background from `magit-diff-added-highlight`;
-- removed lines inserted inline with the background from `magit-diff-removed-highlight`;
-- staged hunk lines with the theme-aware `highlight` background.
+- added lines with the brighter background from `magit-diff-added-highlight`;
+- removed lines inserted inline with the background from `magit-diff-removed`;
+- staged hunk lines with the muted theme-aware `magit-diff-file-heading-selection` background.
 
-Generated rows carry source-line, hunk, and raw patch properties. Base Git colors use background-only `font-lock-face` text properties derived from Magit, preserving the source major mode's syntax foregrounds while region and pending-comment overlays remain visible above them. Ask/comments use source-line properties for payloads, while overlays stay on the exact generated rows selected by the user.
+Generated rows carry source-line, hunk, and raw patch properties. Base Git colors use low-priority background-only overlays derived from Magit, preserving the source major mode's syntax foregrounds while region and pending-comment overlays remain visible above them. Ask/comments use source-line properties for payloads, while overlays stay on the exact generated rows selected by the user.
 
 Change navigation is implemented over those hunk properties and wraps between hunks. File navigation keeps the one-file-at-a-time review flow. Generated buffers are cached after first visit; only explicit refresh or workspace reload regenerates them.
 
@@ -792,7 +793,7 @@ faltoo-magit-status
 faltoo-magit-diff-current-file
 ```
 
-Faltoo stages or unstages the current generated hunk by sending its raw zero-context patch through Magit's Git process wrapper. Staged rows remain in the generated snapshot with a blue face until an explicit refresh. Faltoo does not implement line staging or auto-stage assistant edits.
+Faltoo stages or unstages the current generated hunk, or every hunk touched by an active region, by sending one combined zero-context patch through Magit's Git process wrapper. Staged rows remain in the generated snapshot with a blue face until an explicit refresh. Faltoo does not implement line staging or auto-stage assistant edits.
 
 Explicit refresh and assistant edits regenerate open review buffers from disk and refresh pending-comment overlays. Keep the review set until the user stops or starts a new review.
 

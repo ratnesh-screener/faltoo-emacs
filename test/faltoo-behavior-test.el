@@ -25,18 +25,20 @@
 (defun magit-status (&rest _args) nil)
 (defun magit-diff-working-tree (&rest _args) nil)
 (defun magit-refresh (&rest _args) nil)
-(defface magit-diff-added-highlight '((t :background "#123456")) "")
-(defface magit-diff-removed-highlight '((t :background "#654321")) "")
+(defface magit-diff-added '((t :background "#123456")) "")
+(defface magit-diff-added-highlight '((t :background "#246824")) "")
+(defface magit-diff-file-heading-selection '((t :background "#224466")) "")
+(defface magit-diff-removed '((t :background "#654321")) "")
 (provide 'magit)
 
 
 (require 'faltoo)
 
-(defun faltoo-test--with-temp-git-file (lines body)
-  "Create a temporary Git-backed file containing LINES, then call BODY."
+(defun faltoo-test--with-temp-git-file (lines body &optional filename)
+  "Create a temporary Git-backed FILENAME with LINES, then call BODY."
   (let* ((root (file-name-as-directory (make-temp-file "faltoo-test" t)))
          (default-directory root)
-         (file (expand-file-name "sample.py" root)))
+         (file (expand-file-name (or filename "sample.py") root)))
     (unwind-protect
         (progn
           (make-directory (expand-file-name ".git" root))
@@ -162,8 +164,6 @@
         (kill-buffer (faltoo-chat-buffer-name-for root)))
       (delete-directory root t))))
 
-(ert-deftest faltoo-generic-chat-opens-repo-independent-transcript ()
-  "Scenario: Generic chat uses a fixed non-Git workspace instead of the current repo."
 (ert-deftest faltoo-chat-directory-opens-selected-git-workspace ()
   "Scenario: Directory selection opens its repository transcript without visiting a file."
   (let* ((root (file-name-as-directory (make-temp-file "faltoo-chat-directory" t)))
@@ -184,6 +184,8 @@
           (should (equal captured-workspace (file-truename root))))
       (delete-directory root t))))
 
+(ert-deftest faltoo-generic-chat-opens-repo-independent-transcript ()
+  "Scenario: Generic chat uses a fixed non-Git workspace instead of the current repo."
   (let* ((root (file-name-as-directory (make-temp-file "faltoo-generic" t)))
          (workspace (expand-file-name "quick-chat/" root))
          (faltoo-generic-chat-directory workspace)
@@ -652,13 +654,13 @@
   ;; Then C-c f i opens generic chat.
   (should (eq (lookup-key faltoo-command-map (kbd "i")) #'faltoo-generic-chat)))
 
-(ert-deftest faltoo-main-prefix-b-selects-faltoobot-command ()
-  "Scenario: The main Faltoo prefix switches between released and local core."
 (ert-deftest faltoo-main-prefix-o-opens-directory-transcript ()
   "Scenario: The main Faltoo prefix opens a transcript selected by directory."
   ;; Then C-c f o opens directory selection.
   (should (eq (lookup-key faltoo-command-map (kbd "o")) #'faltoo-chat-directory)))
 
+(ert-deftest faltoo-main-prefix-b-selects-faltoobot-command ()
+  "Scenario: The main Faltoo prefix switches between released and local core."
   ;; Then C-c f b opens Faltoo core command selection.
   (should (eq (lookup-key faltoo-command-map (kbd "b")) #'faltoo-select-faltoobot-command)))
 
@@ -2786,8 +2788,6 @@ Keep the flow minimal.")
 ;;; Reload specs
 
 
-(ert-deftest faltoo-reload-loads-plugin-files-in-place ()
-  "Scenario: Faltoo code can be reloaded without restarting Emacs."
 (ert-deftest faltoo-reload-restores-main-prefix-bindings ()
   "Scenario: Reload reapplies every main-prefix binding to the existing keymap."
   (let ((chat-binding (lookup-key faltoo-command-map (kbd "h")))
@@ -2810,6 +2810,8 @@ Keep the flow minimal.")
       (define-key faltoo-command-map (kbd "o") directory-binding)
       (define-key faltoo-command-map (kbd "z") nil))))
 
+(ert-deftest faltoo-reload-loads-plugin-files-in-place ()
+  "Scenario: Faltoo code can be reloaded without restarting Emacs."
   (let (loaded)
     ;; Given load-file is observed.
     (cl-letf (((symbol-function 'load-file)
@@ -3541,15 +3543,20 @@ hello
 @@ -1 +1 @@
 -old
 +new
-"))
+")
+        calls)
     ;; Given Magit inserts a complete multi-line patch.
     (cl-letf (((symbol-function 'magit-git-insert)
-               (lambda (&rest _args)
+               (lambda (&rest args)
+                 (push args calls)
                  (insert patch)
                  0)))
 
-      ;; Then Faltoo returns the complete patch instead of Git's first line.
-      (should (equal (faltoo-review--patch "sample.py") patch)))))
+      ;; Then Faltoo returns complete unstaged and staged patches.
+      (should (equal (faltoo-review--patch "sample.py") patch))
+      (should (equal (faltoo-review--patch "sample.py" t) patch))
+      (should-not (member "--cached" (cadr calls)))
+      (should (member "--cached" (car calls))))))
 
 (ert-deftest faltoo-review-buffer-renders-full-file-with-inline-deletions ()
   "Scenario: Review buffers show removed and added rows inside the complete file."
@@ -3558,10 +3565,11 @@ hello
    (lambda (file _root)
      ;; Given Git reports the first working-tree line as a replacement.
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args)
-                  "@@ -1 +1 @@
+                (lambda (_relative &optional cached)
+                  (if cached ""
+                    "@@ -1 +1 @@
 -old value
-+new value")))
++new value"))))
 
        ;; When Faltoo builds the generated review buffer.
        (let ((buf (faltoo-review-buffer file)))
@@ -3575,15 +3583,74 @@ unchanged"))
            (font-lock-ensure)
            (goto-char (point-min))
            (should (eq (get-text-property (point) 'faltoo-review-line-type) 'delete))
-           (should (equal (get-text-property (point) 'font-lock-face)
-                          (faltoo-review--line-background-face 'delete nil)))
+           (should (equal
+                    (overlay-get
+                     (cl-find-if (lambda (overlay)
+                                   (overlay-get overlay 'faltoo-review-diff))
+                                 (overlays-at (point)))
+                     'face)
+                    (faltoo-review--line-background-face 'delete nil)))
            (forward-line 1)
            (should (eq (get-text-property (point) 'faltoo-review-line-type) 'insert))
-           (should (equal (get-text-property (point) 'font-lock-face)
-                          (faltoo-review--line-background-face 'insert nil)))
-           (should-not (cl-find-if (lambda (overlay)
-                                     (overlay-get overlay 'faltoo-review-diff))
-                                   (overlays-in (point-min) (point-max))))))))))
+           (should (equal
+                    (overlay-get
+                     (cl-find-if (lambda (overlay)
+                                   (overlay-get overlay 'faltoo-review-diff))
+                                 (overlays-at (point)))
+                     'face)
+                    (faltoo-review--line-background-face 'insert nil)))))))))
+
+(ert-deftest faltoo-review-buffer-includes-already-staged-hunks ()
+  "Scenario: Review buffers show staged hunks after unstaged line shifts."
+  (faltoo-test--with-temp-git-file
+   '("unstaged insertion" "context" "staged value")
+   (lambda (file _root)
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (_relative &optional cached)
+                  (if cached
+                      "@@ -2 +2 @@
+-old staged
++staged value"
+                    "@@ -0,0 +1 @@
++unstaged insertion"))))
+       (with-current-buffer (faltoo-review-buffer file)
+         (should (equal (buffer-string)
+                        "unstaged insertion
+context
+old staged
+staged value"))
+         (goto-char (point-min))
+         (should-not (get-text-property (point) 'faltoo-review-hunk-staged))
+         (forward-line 2)
+         (should (get-text-property (point) 'faltoo-review-hunk-staged))
+         (forward-line 1)
+         (should (get-text-property (point) 'faltoo-review-hunk-staged)))))))
+
+(ert-deftest faltoo-review-buffer-keeps-staged-snapshot-before-later-edits ()
+  "Scenario: A partially staged line shows both staged and working snapshots."
+  (faltoo-test--with-temp-git-file
+   '("working")
+   (lambda (file _root)
+     (cl-letf (((symbol-function 'faltoo-review--patch)
+                (lambda (_relative &optional cached)
+                  (if cached
+                      "@@ -1 +1 @@
+-old
++staged"
+                    "@@ -1 +1 @@
+-staged
++working"))))
+       (with-current-buffer (faltoo-review-buffer file)
+         (should (equal (buffer-string) "old
+staged
+staged
+working"))
+         (goto-char (point-min))
+         (should (get-text-property (point) 'faltoo-review-hunk-staged))
+         (forward-line 1)
+         (should (get-text-property (point) 'faltoo-review-hunk-staged))
+         (forward-line 1)
+         (should-not (get-text-property (point) 'faltoo-review-hunk-staged)))))))
 
 (ert-deftest faltoo-review-diff-background-preserves-source-syntax-faces ()
   "Scenario: Git line backgrounds do not replace source syntax highlighting."
@@ -3592,15 +3659,16 @@ unchanged"))
    (lambda (file _root)
      (let ((original-face-background (symbol-function 'face-background)))
        (cl-letf (((symbol-function 'faltoo-review--patch)
-                  (lambda (&rest _args)
-                    "@@ -1 +1 @@
+                  (lambda (_relative &optional cached)
+                    (if cached ""
+                      "@@ -1 +1 @@
 -def old_value():
-+def new_value():"))
++def new_value():")))
                  ((symbol-function 'face-background)
                   (lambda (face &rest args)
                     (pcase face
-                      ('magit-diff-added-highlight "#123456")
-                      ('magit-diff-removed-highlight "#654321")
+                      ('magit-diff-added-highlight "#246824")
+                      ('magit-diff-removed "#654321")
                       (_ (apply original-face-background face args))))))
          (with-current-buffer (faltoo-review-buffer file)
            (font-lock-ensure)
@@ -3608,10 +3676,52 @@ unchanged"))
            (forward-line 1)
            (should (eq (get-text-property (point) 'face)
                        'font-lock-keyword-face))
-           (should (equal (get-text-property (point) 'font-lock-face)
-                          '(:background "#123456" :extend t)))
-           (should-not (plist-member (get-text-property (point) 'font-lock-face)
-                                     :foreground))))))))
+           (let* ((overlay (cl-find-if
+                            (lambda (candidate)
+                              (overlay-get candidate 'faltoo-review-diff))
+                            (overlays-at (point))))
+                  (face (overlay-get overlay 'face)))
+             (should (equal face '(:background "#246824" :extend t)))
+             (should-not (plist-member face :foreground))
+             (should (< (overlay-get overlay 'priority) 0)))))))))
+
+(ert-deftest faltoo-review-html-lines-show-theme-aware-diff-backgrounds ()
+  "Scenario: HTML syntax faces retain visible Git line backgrounds."
+  (faltoo-test--with-temp-git-file
+   '("<div class=\"new\">new</div>")
+   (lambda (file _root)
+     (let ((original-face-background (symbol-function 'face-background)))
+       (cl-letf (((symbol-function 'faltoo-review--patch)
+                  (lambda (_relative &optional cached)
+                    (if cached ""
+                      "@@ -1 +1 @@
+-<div class=\"old\">old</div>
++<div class=\"new\">new</div>")))
+                 ((symbol-function 'face-background)
+                  (lambda (face &rest args)
+                    (pcase face
+                      ('magit-diff-added-highlight "#336633")
+                      ('magit-diff-removed "#552222")
+                      (_ (apply original-face-background face args))))))
+         (with-current-buffer (faltoo-review-buffer file)
+           (font-lock-ensure)
+           (goto-char (point-min))
+           (let ((removed (cl-find-if
+                           (lambda (overlay) (overlay-get overlay 'faltoo-review-diff))
+                           (overlays-at (point)))))
+             (should (equal (overlay-get removed 'face)
+                            '(:background "#552222" :extend t))))
+           (forward-line 1)
+           (let ((added (cl-find-if
+                         (lambda (overlay) (overlay-get overlay 'faltoo-review-diff))
+                         (overlays-at (point)))))
+             (should (equal (overlay-get added 'face)
+                            '(:background "#336633" :extend t)))
+             (should (< (overlay-get added 'priority) 0)))
+           (forward-char 1)
+           (should (eq (get-text-property (point) 'face)
+                       'font-lock-function-name-face))))))
+   "sample.html"))
 
 (ert-deftest faltoo-review-buffer-inserts-the-source-file-in-one-pass ()
   "Scenario: First review rendering does not rebuild an unchanged file line by line."
@@ -3634,8 +3744,9 @@ unchanged"))
    '("one" "two")
    (lambda (file _root)
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args) "@@ -3 +2,0 @@
--old three")))
+                (lambda (_relative &optional cached)
+                  (if cached "" "@@ -3 +2,0 @@
+-old three"))))
        (with-current-buffer (faltoo-review-buffer file)
          (should (equal (buffer-string) "one
 two
@@ -3664,7 +3775,7 @@ old three
 
              ;; Then Faltoo reuses it without reading Git or resetting point.
              (should (eq second first))
-             (should (= patch-calls 1))
+             (should (= patch-calls 2))
              (with-current-buffer second
                (should (= (line-number-at-pos) 2))))))))))
 
@@ -3675,9 +3786,10 @@ old three
    (lambda (file _root)
      ;; Given a generated review buffer represents the source file.
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args) "@@ -1 +1 @@
+                (lambda (_relative &optional cached)
+                  (if cached "" "@@ -1 +1 @@
 -old
-+changed")))
++changed"))))
        (let ((buf (faltoo-review-buffer file)))
 
          ;; Then file identity remains the real source path for comment lookup.
@@ -3694,9 +3806,10 @@ old three
            faltoo-review-files (list (file-truename file))
            faltoo-current-review-index 0)
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args) "@@ -1 +1 @@
+                (lambda (_relative &optional cached)
+                  (if cached "" "@@ -1 +1 @@
 -old
-+changed")))
++changed"))))
        (let ((review (faltoo-review-buffer file)))
         (switch-to-buffer review)
         (goto-char (point-min))
@@ -3738,6 +3851,65 @@ old three
   (should (eq (lookup-key faltoo-review-mode-map (kbd "U")) #'faltoo-unstage-current-file))
   (should-not (commandp (lookup-key faltoo-review-mode-map (kbd "C-c f d")))))
 
+(ert-deftest faltoo-review-selection-stages-and-unstages-all-selected-hunks ()
+  "Scenario: Staging commands apply every hunk touched by the region."
+  (pcase-dolist (`(,command ,initially-staged ,expected-staged ,expected-command)
+                  '((faltoo-stage-current-hunk nil t
+                     ("apply" "--cached" "--unidiff-zero" "-"))
+                    (faltoo-unstage-current-hunk t nil
+                     ("apply" "--cached" "--reverse" "--unidiff-zero" "-"))))
+    (faltoo-test--with-temp-git-file
+       '("first" "context" "second")
+       (lambda (file _root)
+         (let ((patch "diff --git a/sample.py b/sample.py
+--- a/sample.py
++++ b/sample.py
+@@ -1 +1 @@
+-old first
++first
+@@ -3 +3 @@
+-old second
++second
+")
+               calls)
+           (cl-letf (((symbol-function 'faltoo-review--patch)
+                      (lambda (_relative &optional cached)
+                        (if (eq cached initially-staged) patch "")))
+                     ((symbol-function 'magit-run-git-with-input)
+                      (lambda (&rest args)
+                        (push (cons args (buffer-string)) calls)
+                        0)))
+             (with-current-buffer (faltoo-review-buffer file)
+               (goto-char (point-min))
+               (set-mark (point))
+               (goto-char (point-max))
+               (activate-mark)
+
+               (funcall command)
+
+               (should (= (length calls) 1))
+               (should (equal (caar calls) expected-command))
+               (should (equal (cdar calls) patch))
+               (goto-char (point-min))
+               (should (eq (get-text-property
+                            (point) 'faltoo-review-hunk-staged)
+                           expected-staged))
+               (goto-char (point-max))
+               (forward-line -1)
+               (should (eq (get-text-property
+                            (point) 'faltoo-review-hunk-staged)
+                           expected-staged)))))))))
+
+(ert-deftest faltoo-review-staged-background-mutes-the-theme-blue ()
+  "Scenario: Staged rows use a subdued version of the theme's blue background."
+  (cl-letf (((symbol-function 'color-darken-name)
+             (lambda (color percent)
+               (should (equal color "#224466"))
+               (should (= percent 40))
+               "#16293d")))
+    (should (equal (faltoo-review--line-background-face 'insert t)
+                   '(:background "#16293d" :extend t)))))
+
 (ert-deftest faltoo-review-hunk-staging-round-trips-index-state-and-faces ()
   "Scenario: Review hunks can be staged blue and unstaged back to diff colors."
   (faltoo-test--with-temp-git-file
@@ -3751,7 +3923,8 @@ old three
 +new value
 ")
            calls)
-       (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) patch))
+       (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (_relative &optional cached)
+                    (if cached "" patch)))
                  ((symbol-function 'magit-run-git-with-input)
                   (lambda (&rest args)
                     (push (cons args (buffer-string)) calls)
@@ -3763,23 +3936,43 @@ old three
 
            (should (equal (caar calls) '("apply" "--cached" "--unidiff-zero" "-")))
            (should (equal (cdar calls) patch))
-           (should (equal (get-text-property (point) 'font-lock-face)
-                          (faltoo-review--line-background-face 'delete t)))
+           (should (equal
+                    (overlay-get
+                     (cl-find-if (lambda (overlay)
+                                   (overlay-get overlay 'faltoo-review-diff))
+                                 (overlays-at (point)))
+                     'face)
+                    (faltoo-review--line-background-face 'delete t)))
            (should (get-text-property (point) 'faltoo-review-hunk-staged))
            (forward-line 1)
-           (should (equal (get-text-property (point) 'font-lock-face)
-                          (faltoo-review--line-background-face 'insert t)))
+           (should (equal
+                    (overlay-get
+                     (cl-find-if (lambda (overlay)
+                                   (overlay-get overlay 'faltoo-review-diff))
+                                 (overlays-at (point)))
+                     'face)
+                    (faltoo-review--line-background-face 'insert t)))
 
            (faltoo-unstage-current-hunk)
 
            (should (equal (caar calls)
                           '("apply" "--cached" "--reverse" "--unidiff-zero" "-")))
            (should-not (get-text-property (point) 'faltoo-review-hunk-staged))
-           (should (equal (get-text-property (point) 'font-lock-face)
-                          (faltoo-review--line-background-face 'insert nil)))
+           (should (equal
+                    (overlay-get
+                     (cl-find-if (lambda (overlay)
+                                   (overlay-get overlay 'faltoo-review-diff))
+                                 (overlays-at (point)))
+                     'face)
+                    (faltoo-review--line-background-face 'insert nil)))
            (forward-line -1)
-           (should (equal (get-text-property (point) 'font-lock-face)
-                          (faltoo-review--line-background-face 'delete nil)))))))))
+           (should (equal
+                    (overlay-get
+                     (cl-find-if (lambda (overlay)
+                                   (overlay-get overlay 'faltoo-review-diff))
+                                 (overlays-at (point)))
+                     'face)
+                    (faltoo-review--line-background-face 'delete nil)))))))))
 
 (ert-deftest faltoo-review-change-navigation-wraps-between-hunks ()
   "Scenario: Change navigation moves between generated hunks and wraps at edges."
@@ -3787,13 +3980,14 @@ old three
    '("first" "context" "second" "context")
    (lambda (file _root)
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args)
-                  "@@ -1 +1 @@
+                (lambda (_relative &optional cached)
+                  (if cached ""
+                    "@@ -1 +1 @@
 -old first
 +first
 @@ -3 +3 @@
 -old second
-+second")))
++second"))))
        (with-current-buffer (faltoo-review-buffer file)
          (goto-char (point-min))
          (faltoo-next-change)
@@ -3845,7 +4039,8 @@ old three
           (insert "source note")
           (faltoo-comment-save))))
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args) "@@ -1 +1 @@\n-old\n+changed")))
+                (lambda (_relative &optional cached)
+                  (if cached "" "@@ -1 +1 @@\n-old\n+changed"))))
        (let ((review (faltoo-review-buffer file)))
          (with-current-buffer review
            (let ((overlay (faltoo-comment-overlay (car (faltoo-comments--list root)))))
@@ -3867,9 +4062,10 @@ old three
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file)))
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args) "@@ -1,2 +0,0 @@
+                (lambda (_relative &optional cached)
+                  (if cached "" "@@ -1,2 +0,0 @@
 -old one
--old two")))
+-old two"))))
        (with-current-buffer (faltoo-review-buffer file)
          (dotimes (index 2)
            (goto-char (point-min))
@@ -3891,9 +4087,10 @@ old three
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file)))
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args) "@@ -1 +1 @@
+                (lambda (_relative &optional cached)
+                  (if cached "" "@@ -1 +1 @@
 -old
-+changed")))
++changed"))))
        (with-current-buffer (faltoo-review-buffer file)
          (goto-char (point-min))
          (forward-line 1)
@@ -3917,9 +4114,10 @@ old three
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file)))
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args) "@@ -1 +1 @@
+                (lambda (_relative &optional cached)
+                  (if cached "" "@@ -1 +1 @@
 -old
-+changed")))
++changed"))))
        (with-current-buffer (faltoo-review-buffer file)
          (goto-char (point-min))
          (forward-line 1)
@@ -3941,7 +4139,8 @@ old three
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file)))
      (cl-letf (((symbol-function 'faltoo-review--patch)
-                (lambda (&rest _args) "@@ -1 +1 @@\n-old\n+changed")))
+                (lambda (_relative &optional cached)
+                  (if cached "" "@@ -1 +1 @@\n-old\n+changed"))))
        (let ((review (faltoo-review-buffer file)))
          (with-current-buffer review
            (goto-char (point-min))

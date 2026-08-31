@@ -27,7 +27,7 @@ For review, open a Git repo with unstaged changes, then run:
 M-x faltoo-review-unstaged
 ```
 
-This opens one generated read-only review buffer at a time. Each buffer keeps the file's major mode, shows the complete working-tree file, inserts removed Git rows inline, and uses Magit-style green/red line faces.
+This opens one generated read-only review buffer at a time. Each buffer keeps the file's major mode, shows the complete working-tree file, inserts removed Git rows inline, and includes existing staged hunks in muted blue alongside unstaged green/red rows.
 
 ## Keybindings
 
@@ -52,8 +52,8 @@ c     add review comment on line/region
 C     add file-level review comment
 m     show pending comments summary
 d     delete pending comment at point
-s     stage current hunk
-u     unstage current hunk
+s     stage current hunk or selected hunks
+u     unstage current hunk or selected hunks
 C-c f s   submit pending review comments
 h     open transcript
 r     refresh generated review buffers and Git state
