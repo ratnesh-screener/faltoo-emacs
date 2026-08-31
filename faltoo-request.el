@@ -26,11 +26,6 @@
 (defun faltoo-request--event-class (event)
   (or (alist-get 'classes event) (alist-get 'type event) ""))
 
-(defun faltoo-request--hook-feedback-p (text)
-  (let ((trimmed (string-trim-left text)))
-    (or (string-prefix-p "## Post-response hook feedback" trimmed)
-        (string-prefix-p "Post-Response Hook Feedback:" trimmed))))
-
 (defun faltoo-request--hook-feedback-block (text)
   (string-join (list faltoo-request--hook-feedback-separator
                      (string-trim text)
@@ -114,18 +109,17 @@
       (faltoo-request--flush-answer workspace)
       (when (and on-submitted (string-prefix-p "Submitted" text))
         (funcall on-submitted))
-      (let ((hook-feedback (or (string= class "hook-feedback")
-                               (faltoo-request--hook-feedback-p text))))
-        (faltoo-set-status (if hook-feedback "Post-response hook feedback" text))
-        (if hook-feedback
-            (let ((feedback (faltoo-request--hook-feedback-block text)))
-              (when popup-buffer
-                (faltoo-popup-append-stream-block popup-buffer feedback 'faltoo-chat-hook-feedback-face))
-              (faltoo-chat-append-stream-block feedback 'faltoo-chat-hook-feedback-face workspace))
-          (let ((summary (faltoo-compose-tool-summary text)))
+      (if (string= class "hook-feedback")
+          (let ((feedback (faltoo-request--hook-feedback-block text)))
+            (faltoo-set-status "Post-response hook feedback")
             (when popup-buffer
-              (faltoo-popup-append-stream-block popup-buffer summary 'faltoo-chat-tool-face))
-            (faltoo-chat-append-stream-block summary 'faltoo-chat-tool-face workspace)))))
+              (faltoo-popup-append-stream-block popup-buffer feedback 'faltoo-chat-hook-feedback-face))
+            (faltoo-chat-append-stream-block feedback 'faltoo-chat-hook-feedback-face workspace))
+        (let ((summary (faltoo-compose-tool-summary text)))
+          (faltoo-set-status text)
+          (when popup-buffer
+            (faltoo-popup-append-stream-block popup-buffer summary 'faltoo-chat-tool-face))
+          (faltoo-chat-append-stream-block summary 'faltoo-chat-tool-face workspace))))
      ((string= class "done")
       (faltoo-request--flush-answer workspace)
       (faltoo-set-status text)))))

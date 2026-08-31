@@ -156,7 +156,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             captured_questions.append(question)
 
         async def answer_stream(_session):
-            yield "chunk"
+            yield types.SimpleNamespace(type="response.output_text.delta")
 
         bridge.append_user_turn = append_user_turn
         bridge.get_answer_streaming = answer_stream
@@ -306,14 +306,17 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         """Scenario: Newline-only assistant chunks keep Markdown code fences intact."""
         bridge = load_bridge()
         emitted = []
-        events = ["language", "newline", "body"]
+        events = [
+            types.SimpleNamespace(type="response.output_text.delta", name=name)
+            for name in ("language", "newline", "body")
+        ]
 
         # Given the model streams a newline as its own answer chunk.
         bridge.get_event_text = lambda event: {
             "language": (False, "answer", "```text"),
             "newline": (False, "answer", "\n"),
             "body": (False, "answer", "M faltoo.el"),
-        }[event]
+        }[event.name]
         bridge._emit = lambda _is_new, classes, text: emitted.append(
             {"classes": classes, "text": text}
         )
@@ -401,7 +404,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
                 {
                     "type": "message",
                     "role": "developer",
-                    "content": "## Post-response hook feedback\n\n### Refactor Code\n\nHook notes",
+                    "content": 'This is the post-response hook feedback from "Refactor Code" agent.\n\nHook notes',
                 }
             ],
             "workspace": "/tmp/project",
@@ -425,7 +428,9 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         emitted = []
 
         # Given FaltooBot streams dedicated hook feedback events.
-        event = types.SimpleNamespace(type="faltoobot.post_response_hook.feedback")
+        event = types.SimpleNamespace(
+            type="faltoobot.post_response_hook", status="feedback"
+        )
         bridge.get_event_text = lambda _event: (True, "tool", "Hook feedback body")
         bridge._emit = lambda is_new, classes, text: emitted.append(
             {"is_new": is_new, "classes": classes, "text": text}
@@ -443,6 +448,31 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(emitted[0]["classes"], "hook-feedback")
         self.assertEqual(emitted[0]["text"], "Hook feedback body")
 
+    async def test_non_feedback_hook_event_remains_a_compact_tool_event(self):
+        """Scenario: Hook lifecycle events keep normal compact tool rendering."""
+        bridge = load_bridge()
+        emitted = []
+        event = types.SimpleNamespace(
+            type="faltoobot.post_response_hook", status="running"
+        )
+        bridge.get_event_text = lambda _event: (
+            True,
+            "tool",
+            "Running post-response hook: Refactor Code",
+        )
+        bridge._emit = lambda is_new, classes, text: emitted.append(
+            {"is_new": is_new, "classes": classes, "text": text}
+        )
+
+        async def answer_stream(_session):
+            yield event
+
+        bridge.get_answer_streaming = answer_stream
+
+        await bridge._stream_answer({})
+
+        self.assertEqual(emitted[0]["classes"], "tool")
+
     async def test_codex_rate_limit_event_gets_distinct_stream_class(self):
         """Scenario: Codex remaining-limit events are distinguishable from tool calls."""
         bridge = load_bridge()
@@ -459,7 +489,7 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         )
 
         async def answer_stream(_session):
-            yield object()
+            yield types.SimpleNamespace(type="codex.rate_limits")
 
         bridge.get_answer_streaming = answer_stream
 

@@ -1639,16 +1639,14 @@
 (ert-deftest faltoo-chat-render-shows-persisted-hook-feedback-with-dedicated-face ()
   "Scenario: Persisted post-response hook feedback keeps its distinct styling after transcript refresh."
   (let ((buf (faltoo-chat-render '(((role . "hook-feedback")
-                                    (text . "## Post-response hook feedback
-
-### Refactor Code
+                                    (text . "## Refactor Code hook feedback
 
 Hook notes"))))))
     ;; Given hook feedback was loaded from messages.json.
 
     ;; Then it is quoted and highlighted differently from regular tool blocks.
     (with-current-buffer buf
-      (should (string-match-p "> ## Post-response hook feedback" (buffer-string)))
+      (should (string-match-p "> ## Refactor Code hook feedback" (buffer-string)))
       (goto-char (point-min))
       (search-forward "Refactor Code")
       (should (cl-some (lambda (overlay)
@@ -1777,9 +1775,7 @@ Hook notes"))))))
 (ert-deftest faltoo-chat-reloaded-transcript-matches-live-response-grouping ()
   "Scenario: Reloaded responses group every event like the equivalent live stream."
   (let* ((workspace (file-name-as-directory (make-temp-file "faltoo-chat-render" t)))
-         (feedback "## Post-response hook feedback
-
-### Refactor Code
+         (feedback "## Refactor Code hook feedback
 
 Keep the flow minimal.")
          live loaded)
@@ -2694,27 +2690,6 @@ Keep the flow minimal.")
 
 
 
-(ert-deftest faltoo-request-renders-legacy-live-hook-feedback-prefix-with-dedicated-face ()
-  "Scenario: Live hook feedback status text keeps distinct styling before bridge reload."
-  (faltoo-test--kill-chat-buffer)
-  ;; Given a chat stream is active.
-  (faltoo-chat-start-stream "Assistant · answering")
-
-  ;; When an old daemon emits hook feedback as a generic tool block.
-  (faltoo-request--route-event
-   '((classes . "tool") (text . "Post-Response Hook Feedback: Refactor Code
-
-Hook notes"))
-   (faltoo-workspace) nil nil)
-
-  ;; Then it still uses the hook feedback face.
-  (with-current-buffer (faltoo-test--chat-buffer-name)
-    (goto-char (point-min))
-    (search-forward "Refactor Code")
-    (should (cl-some (lambda (overlay)
-                       (eq (overlay-get overlay 'face) 'faltoo-chat-hook-feedback-face))
-                     (overlays-at (point))))))
-
 (ert-deftest faltoo-request-renders-hook-feedback-class-with-dedicated-face ()
   "Scenario: Hook feedback stream events use a distinct face without content sniffing."
   (faltoo-test--kill-chat-buffer)
@@ -2747,13 +2722,13 @@ Hook notes"))
 
   ;; When the feedback is routed into the transcript.
   (faltoo-request--route-event
-   '((classes . "tool")
-     (text . "## Post-response hook feedback\n\n### Refactor Code\n\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6"))
+   '((classes . "hook-feedback")
+     (text . "## Refactor Code hook feedback\n\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6"))
    (faltoo-workspace) nil nil)
 
   ;; Then the full Markdown is quoted, untruncated, and wrapped as its own block.
   (with-current-buffer (faltoo-test--chat-buffer-name)
-    (should (string-match-p "> ────────────────\n> ## Post-response hook feedback" (buffer-string)))
+    (should (string-match-p "> ────────────────\n> ## Refactor Code hook feedback" (buffer-string)))
     (should (string-match-p "> line 6\n> ────────────────" (buffer-string)))
     (goto-char (point-min))
     (search-forward "Refactor Code")
@@ -2772,15 +2747,15 @@ Hook notes"))
 
   ;; When hook feedback arrives and follow-up assistant text starts.
   (faltoo-request--route-event
-   '((classes . "tool")
-     (text . "## Post-response hook feedback\n\n### Refactor Code\n\nFull feedback."))
+   '((classes . "hook-feedback")
+     (text . "## Refactor Code hook feedback\n\nFull feedback."))
    (faltoo-workspace) nil nil)
   (faltoo-request--route-event '((classes . "answer") (text . "Hook fired and returned feedback.")) (faltoo-workspace) nil nil)
   (faltoo-request--flush-answer (faltoo-workspace))
 
   ;; Then the hook feedback is separated from both assistant sections.
   (with-current-buffer (faltoo-test--chat-buffer-name)
-    (should (string-match-p "Previous answer\.\n\n> ────────────────\n> ## Post-response hook feedback" (buffer-string)))
+    (should (string-match-p "Previous answer\.\n\n> ────────────────\n> ## Refactor Code hook feedback" (buffer-string)))
     (should (string-match-p "> Full feedback\.\n> ────────────────\n\nHook fired" (buffer-string)))))
 
 ;;; Reload specs

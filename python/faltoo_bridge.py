@@ -54,7 +54,11 @@ def _session_payload(session: Session) -> dict[str, str]:
 
 
 def _hook_feedback_text(text: str) -> bool:
-    return text.lstrip().startswith("## Post-response hook feedback")
+    first_line = text.lstrip().partition("\n")[0]
+    return (
+        first_line.startswith('This is the post-response hook feedback from "')
+        and first_line.endswith('" agent.')
+    )
 
 
 def _message_role(classes: str, text: str) -> str:
@@ -454,7 +458,10 @@ async def _stream_answer(session: Session, emit=None) -> None:
         # Newline-only answer chunks are visible and keep Markdown fences intact.
         if text == "":
             continue
-        if getattr(event, "type", "") == "faltoobot.post_response_hook.feedback":
+        if (
+            event.type == "faltoobot.post_response_hook"
+            and event.status == "feedback"
+        ):
             classes = "hook-feedback"
         elif classes == "tool" and text.startswith("Remaining limit"):
             classes = "rate-limit"
