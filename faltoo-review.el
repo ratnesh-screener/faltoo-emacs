@@ -265,20 +265,45 @@ Read the staged patch when CACHED is non-nil."
     (faltoo-review--attach-comments file buf)
     buf))
 
+(defun faltoo-review--close-files (files workspace)
+  "Close generated review buffers for FILES while preserving WORKSPACE comments."
+  (dolist (comment (faltoo-comments--list workspace))
+    (when (member (faltoo-comment-path comment) files)
+      (faltoo-comments--delete-overlays (list comment))
+      (setf (faltoo-comment-source-buffer comment)
+            (find-file-noselect (faltoo-comment-path comment)))))
+  (dolist (file files)
+    (when-let ((buffer (get-buffer (faltoo-review-buffer-name file))))
+      (kill-buffer buffer))))
+
 (defun faltoo-review-unstaged ()
   "Open unstaged files as generated full-file review buffers."
   (interactive)
-  (let ((workspace (faltoo-reset-workspace)))
-    (setq faltoo-review-files (mapcar #'file-truename (faltoo-bridge-unstaged-files workspace))
-          faltoo-current-review-index 0))
-  (unless faltoo-review-files
-    (user-error "No unstaged files"))
-  (faltoo-review-refresh-all)
-  (let ((buffer (faltoo-review-buffer (car faltoo-review-files))))
-    (if (derived-mode-p 'faltoo-chat-mode)
-        (pop-to-buffer buffer #'display-buffer-pop-up-window)
-      (switch-to-buffer buffer)))
-  (message "Faltoo reviewing %d unstaged file(s)" (length faltoo-review-files)))
+  (let* ((old-files faltoo-review-files)
+         (old-workspace faltoo-review-workspace)
+         (workspace (faltoo-reset-workspace))
+         (new-files (mapcar #'file-truename
+                            (faltoo-bridge-unstaged-files workspace)))
+         (removed-files (if (equal old-workspace workspace)
+                            (cl-set-difference old-files new-files :test #'string=)
+                          old-files)))
+    (setq faltoo-review-files new-files
+          faltoo-review-workspace (and new-files workspace)
+          faltoo-current-review-index 0)
+    (when removed-files
+      (faltoo-review--close-files removed-files old-workspace))
+    (unless faltoo-review-files
+      (when removed-files
+        (faltoo-comments-refresh old-workspace))
+      (user-error "No unstaged files"))
+    (when (and removed-files (not (equal old-workspace workspace)))
+      (faltoo-comments-refresh old-workspace))
+    (faltoo-review-refresh-all)
+    (let ((buffer (faltoo-review-buffer (car faltoo-review-files))))
+      (if (derived-mode-p 'faltoo-chat-mode)
+          (pop-to-buffer buffer #'display-buffer-pop-up-window)
+        (switch-to-buffer buffer)))
+    (message "Faltoo reviewing %d unstaged file(s)" (length faltoo-review-files))))
 
 (defun faltoo-review--switch (delta)
   (unless faltoo-review-files
@@ -306,16 +331,10 @@ Read the staged patch when CACHED is non-nil."
   "Stop review, close generated buffers, and preserve pending comments."
   (interactive)
   (let ((source (and faltoo-review-source-file (find-file-noselect faltoo-review-source-file)))
-        (workspace (faltoo-comments--workspace)))
-    (faltoo-comments--delete-overlays (faltoo-comments--list workspace))
-    (dolist (comment (faltoo-comments--list workspace))
-      (when (member (faltoo-comment-path comment) faltoo-review-files)
-        (setf (faltoo-comment-source-buffer comment)
-              (find-file-noselect (faltoo-comment-path comment)))))
-    (dolist (file faltoo-review-files)
-      (when-let ((buf (get-buffer (faltoo-review-buffer-name file))))
-        (kill-buffer buf)))
+        (workspace faltoo-review-workspace))
+    (faltoo-review--close-files faltoo-review-files workspace)
     (setq faltoo-review-files nil
+          faltoo-review-workspace nil
           faltoo-current-review-index 0)
     (when source
       (switch-to-buffer source))
@@ -327,7 +346,7 @@ Read the staged patch when CACHED is non-nil."
   (interactive)
   (faltoo-review-refresh-buffer)
   (magit-refresh)
-  (faltoo-comments-refresh (faltoo-workspace))
+  (faltoo-comments-refresh faltoo-review-workspace)
   (force-mode-line-update t))
 
 (defun faltoo-review-refresh-all ()
@@ -338,7 +357,7 @@ Read the staged patch when CACHED is non-nil."
       (with-current-buffer buf
         (faltoo-review-refresh-buffer))))
   (magit-refresh)
-  (faltoo-comments-refresh (faltoo-workspace))
+  (faltoo-comments-refresh faltoo-review-workspace)
   (force-mode-line-update t))
 
 (defun faltoo-review--set-hunk-staged (hunk staged)
