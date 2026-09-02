@@ -56,7 +56,8 @@ s     stage current hunk or selected hunks
 u     unstage current hunk or selected hunks
 C-c f s   submit pending review comments
 h     open transcript
-r     refresh generated review buffers and Git state
+r     refresh current review buffer and Git state
+R     refresh every loaded review buffer and Git state
 g     top of review buffer
 G     bottom of review buffer
 D     Magit diff for current file

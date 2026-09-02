@@ -3879,6 +3879,51 @@ old three
   (should (eq (lookup-key faltoo-review-mode-map (kbd "U")) #'faltoo-unstage-current-file))
   (should-not (commandp (lookup-key faltoo-review-mode-map (kbd "C-c f d")))))
 
+(ert-deftest faltoo-review-refresh-bindings-separate-current-and-all-buffers ()
+  "Scenario: Review mode exposes separate current-file and all-buffer refresh commands."
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "r")) #'faltoo-vc-refresh))
+  (should (eq (lookup-key faltoo-review-mode-map (kbd "R")) #'faltoo-review-refresh-all)))
+
+(ert-deftest faltoo-review-refresh-command-rebuilds-the-intended-review-buffers ()
+  "Scenario: Lowercase refresh rebuilds one buffer and uppercase refresh rebuilds all."
+  (pcase-dolist (`(,command ,expected)
+                  '((faltoo-vc-refresh ("*Faltoo Review: first.py*"))
+                    (faltoo-review-refresh-all
+                     ("*Faltoo Review: first.py*" "*Faltoo Review: second.py*"))))
+    (let ((first (get-buffer-create "*Faltoo Review: first.py*"))
+          (second (get-buffer-create "*Faltoo Review: second.py*"))
+          (faltoo-review-files '("/repo/first.py" "/repo/second.py"))
+          refreshed)
+      (unwind-protect
+          (cl-letf (((symbol-function 'faltoo-review-buffer-name)
+                     (lambda (file) (format "*Faltoo Review: %s*" (file-name-nondirectory file))))
+                    ((symbol-function 'faltoo-review-refresh-buffer)
+                     (lambda () (push (buffer-name) refreshed)))
+                    ((symbol-function 'magit-refresh) #'ignore)
+                    ((symbol-function 'faltoo-comments-refresh) #'ignore))
+            (with-current-buffer first
+              (funcall command))
+            (should (equal (sort refreshed #'string<) expected)))
+        (kill-buffer first)
+        (kill-buffer second)))))
+
+(ert-deftest faltoo-review-unstaged-refreshes-loaded-review-buffers ()
+  "Scenario: Starting review again refreshes every loaded buffer in its new review set."
+  (let ((review-buffer (get-buffer-create "*Faltoo Review Test*")) refreshed)
+    (unwind-protect
+        (cl-letf (((symbol-function 'faltoo-reset-workspace) (lambda () "/repo/"))
+                  ((symbol-function 'faltoo-bridge-unstaged-files)
+                   (lambda (_workspace) '("/repo/sample.py")))
+                  ((symbol-function 'file-truename) #'identity)
+                  ((symbol-function 'faltoo-review-refresh-all) (lambda () (setq refreshed t)))
+                  ((symbol-function 'faltoo-review-buffer) (lambda (_file) review-buffer))
+                  ((symbol-function 'switch-to-buffer) #'ignore)
+                  ((symbol-function 'message) #'ignore))
+          (with-temp-buffer
+            (faltoo-review-unstaged))
+          (should refreshed))
+      (kill-buffer review-buffer))))
+
 (ert-deftest faltoo-review-selection-stages-and-unstages-all-selected-hunks ()
   "Scenario: Staging commands apply every hunk touched by the region."
   (pcase-dolist (`(,command ,initially-staged ,expected-staged ,expected-command)

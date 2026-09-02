@@ -734,6 +734,7 @@ n/p       next/previous review file
 N/P       next/previous pending comment
 s/u       stage/unstage current hunk or selected hunks
 S/U       stage/unstage current file
+r/R       refresh current/all loaded review buffers
 D         Magit current-file diff
 ```
 
@@ -780,7 +781,7 @@ Faltoo parses zero-context staged and unstaged diffs from Magit/Git and merges t
 
 Generated rows carry source-line, hunk, and raw patch properties. Base Git colors use low-priority background-only overlays derived from Magit, preserving the source major mode's syntax foregrounds while region and pending-comment overlays remain visible above them. Ask/comments use source-line properties for payloads, while overlays stay on the exact generated rows selected by the user.
 
-Change navigation is implemented over those hunk properties and wraps between hunks. File navigation keeps the one-file-at-a-time review flow. Generated buffers are cached after first visit; only explicit refresh or workspace reload regenerates them.
+Change navigation is implemented over those hunk properties and wraps between hunks. File navigation keeps the one-file-at-a-time review flow. Generated buffers are cached after first visit. `r` regenerates the current buffer, while `R` or restarting review with `C-c f u` regenerates every loaded buffer in the review set.
 
 ### Magit Role
 
@@ -795,7 +796,7 @@ faltoo-magit-diff-current-file
 
 Faltoo stages or unstages the current generated hunk, or every hunk touched by an active region, by sending one combined zero-context patch through Magit's Git process wrapper. Staged rows remain in the generated snapshot with a blue face until an explicit refresh. Faltoo does not implement line staging or auto-stage assistant edits.
 
-Only explicit refresh regenerates open review buffers from disk. Assistant completion reloads unmodified source buffers and refreshes pending-comment overlays only in the related workspace. Keep the review set until the user stops or starts a new review.
+Only `r`, `R`, `C-c f u`, and Git actions regenerate review buffers from disk. Assistant completion reloads unmodified source buffers and refreshes pending-comment overlays only in the related workspace. Keep the review set until the user stops or starts a new review.
 
 ### Implemented Scope
 

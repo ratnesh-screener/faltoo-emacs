@@ -96,7 +96,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Pending review comments are scoped per workspace. Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup. Transcript selections/current lines can also be queued as pending comments with the same `C-c f c` / `C-c f s` batch flow.
 - Review buffers are generated, read-only, use direct single-key bindings, and show `Faltoo[1/N]`.
 - Review buffers retain the source major mode, insert removed rows inline, and include already staged hunks for each opened review file.
-- Request completion reloads unmodified source buffers and comment overlays only for that workspace; generated review buffers refresh only on explicit `r`/Git actions.
+- Request completion reloads unmodified source buffers and comment overlays only for that workspace; generated review buffers refresh through `r` for the current file, `R`/`C-c f u` for all loaded review buffers, or Git actions.
 - Review Git colors use low-priority background-only overlays derived from Magit so source syntax colors, selection, and pending-comment overlays remain visible.
 - In review buffers, `s`/`u` stage/unstage the current hunk or every hunk in the active region, while `S`/`U` stage/unstage the whole file; staged snapshot rows use a muted theme-aware blue background.
 - Review/source comments share one workspace queue keyed by canonical source path and survive stopping review.

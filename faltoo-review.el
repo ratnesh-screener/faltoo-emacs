@@ -36,6 +36,7 @@ Read the staged patch when CACHED is non-nil."
     (define-key map (kbd "s") #'faltoo-stage-current-hunk)
     (define-key map (kbd "h") #'faltoo-chat)
     (define-key map (kbd "r") #'faltoo-vc-refresh)
+    (define-key map (kbd "R") #'faltoo-review-refresh-all)
     (define-key map (kbd "u") #'faltoo-unstage-current-hunk)
     (define-key map (kbd "x") #'faltoo-review-stop)
     (define-key map (kbd "g") #'beginning-of-buffer)
@@ -264,7 +265,6 @@ Read the staged patch when CACHED is non-nil."
     (faltoo-review--attach-comments file buf)
     buf))
 
-
 (defun faltoo-review-unstaged ()
   "Open unstaged files as generated full-file review buffers."
   (interactive)
@@ -273,6 +273,7 @@ Read the staged patch when CACHED is non-nil."
           faltoo-current-review-index 0))
   (unless faltoo-review-files
     (user-error "No unstaged files"))
+  (faltoo-review-refresh-all)
   (let ((buffer (faltoo-review-buffer (car faltoo-review-files))))
     (if (derived-mode-p 'faltoo-chat-mode)
         (pop-to-buffer buffer #'display-buffer-pop-up-window)
@@ -322,14 +323,22 @@ Read the staged patch when CACHED is non-nil."
     (message "Faltoo review stopped")))
 
 (defun faltoo-vc-refresh ()
-  "Regenerate active review buffers and refresh Magit."
+  "Regenerate the current review buffer and refresh Magit."
+  (interactive)
+  (faltoo-review-refresh-buffer)
+  (magit-refresh)
+  (faltoo-comments-refresh (faltoo-workspace))
+  (force-mode-line-update t))
+
+(defun faltoo-review-refresh-all ()
+  "Regenerate every loaded buffer in the current review set."
   (interactive)
   (dolist (file faltoo-review-files)
     (when-let ((buf (get-buffer (faltoo-review-buffer-name file))))
       (with-current-buffer buf
         (faltoo-review-refresh-buffer))))
   (magit-refresh)
-  (faltoo-comments-refresh)
+  (faltoo-comments-refresh (faltoo-workspace))
   (force-mode-line-update t))
 
 (defun faltoo-review--set-hunk-staged (hunk staged)
