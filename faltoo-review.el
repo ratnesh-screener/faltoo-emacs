@@ -273,7 +273,10 @@ Read the staged patch when CACHED is non-nil."
           faltoo-current-review-index 0))
   (unless faltoo-review-files
     (user-error "No unstaged files"))
-  (switch-to-buffer (faltoo-review-buffer (car faltoo-review-files)))
+  (let ((buffer (faltoo-review-buffer (car faltoo-review-files))))
+    (if (derived-mode-p 'faltoo-chat-mode)
+        (pop-to-buffer buffer #'display-buffer-pop-up-window)
+      (switch-to-buffer buffer)))
   (message "Faltoo reviewing %d unstaged file(s)" (length faltoo-review-files)))
 
 (defun faltoo-review--switch (delta)
@@ -451,7 +454,6 @@ Read the staged patch when CACHED is non-nil."
   (interactive)
   (magit-diff-working-tree nil (list "--" (faltoo-current-file))))
 
-(add-hook 'faltoo-after-reload-review-buffers-hook #'faltoo-vc-refresh)
 
 (provide 'faltoo-review)
 ;;; faltoo-review.el ends here

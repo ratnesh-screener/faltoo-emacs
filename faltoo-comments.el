@@ -392,7 +392,7 @@
           (setq target comment))))
     (goto-char (faltoo-comments--position target nil))))
 
-(add-hook 'faltoo-after-reload-review-buffers-hook #'faltoo-comments-refresh)
+(add-hook 'faltoo-after-reload-workspace-buffers-hook #'faltoo-comments-refresh)
 
 (provide 'faltoo-comments)
 ;;; faltoo-comments.el ends here

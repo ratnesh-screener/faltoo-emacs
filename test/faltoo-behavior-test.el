@@ -3526,6 +3526,34 @@ hello
     (should (equal (alist-get 'filename (aref (alist-get 'comments captured-payload) 0))
                    "faltoo.el"))))
 
+(ert-deftest faltoo-review-from-transcript-opens-in-another-window ()
+  "Scenario: Starting review from a transcript keeps the transcript visible."
+  (let ((review-buffer (get-buffer-create "*Faltoo Review Test*"))
+        displayed-buffer display-action switched-buffer)
+    (unwind-protect
+        (with-temp-buffer
+          ;; Given the review command starts from a transcript buffer.
+          (faltoo-chat-mode)
+          (cl-letf (((symbol-function 'faltoo-reset-workspace) (lambda () "/repo/"))
+                    ((symbol-function 'faltoo-bridge-unstaged-files)
+                     (lambda (_workspace) '("/repo/sample.py")))
+                    ((symbol-function 'file-truename) #'identity)
+                    ((symbol-function 'faltoo-review-buffer) (lambda (_file) review-buffer))
+                    ((symbol-function 'pop-to-buffer)
+                     (lambda (buffer &optional action &rest _args)
+                       (setq displayed-buffer buffer
+                             display-action action)))
+                    ((symbol-function 'switch-to-buffer)
+                     (lambda (buffer &rest _args) (setq switched-buffer buffer))))
+            ;; When review starts.
+            (faltoo-review-unstaged)))
+
+      ;; Then it opens beside the transcript instead of replacing its window.
+      (should (eq displayed-buffer review-buffer))
+      (should (eq display-action #'display-buffer-pop-up-window))
+      (should-not switched-buffer)
+      (kill-buffer review-buffer))))
+
 (ert-deftest faltoo-review-buffer-name-follows-the-reviewed-file-repository ()
   "Scenario: Review buffer identity does not depend on the currently selected repo."
   (faltoo-test--with-temp-git-file
@@ -4206,21 +4234,21 @@ old three
      (should (equal (buffer-string) "local edit"))
      (should (buffer-modified-p)))))
 
-(ert-deftest faltoo-reload-workspace-buffers-refreshes-review-ui-state ()
-  "Scenario: Reloading assistant-edited review buffers refreshes overlays and diff highlights."
-  (let ((refreshed nil))
-    ;; Given a review reload hook is registered.
-    (add-hook 'faltoo-after-reload-review-buffers-hook
-              (lambda () (setq refreshed t)))
+(ert-deftest faltoo-reload-workspace-buffers-refreshes-related-comments-without-regenerating-reviews ()
+  "Scenario: Request completion refreshes related comments without rebuilding review buffers."
+  (let (comment-workspace review-refreshed)
+    ;; Given comment and review refresh callbacks are loaded.
+    (cl-letf (((symbol-function 'faltoo-comments-refresh)
+               (lambda (&optional workspace) (setq comment-workspace workspace)))
+              ((symbol-function 'faltoo-vc-refresh)
+               (lambda () (setq review-refreshed t))))
 
-    ;; When workspace buffers are reloaded after a request.
-    (unwind-protect
-        (progn
-          (faltoo-reload-workspace-buffers default-directory)
+      ;; When workspace buffers reload after a request.
+      (faltoo-reload-workspace-buffers default-directory)
 
-          ;; Then review UI refresh hooks run once at the architecture boundary.
-          (should refreshed))
-      (setq faltoo-after-reload-review-buffers-hook nil))))
+      ;; Then only comments from that workspace refresh; review buffers stay unchanged.
+      (should (equal comment-workspace default-directory))
+      (should-not review-refreshed))))
 
 
 ;;; faltoo-behavior-test.el ends here

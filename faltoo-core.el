@@ -18,8 +18,8 @@ The active workspace is always recomputed from `default-directory'.")
 (defvar faltoo-last-assistant-message "")
 (defvar faltoo-last-assistant-messages (make-hash-table :test #'equal))
 (defvar faltoo-last-rate-limits (make-hash-table :test #'equal))
-(defvar faltoo-after-reload-review-buffers-hook nil
-  "Hook run after Faltoo reloads review buffers from disk.")
+(defvar faltoo-after-reload-workspace-buffers-hook nil
+  "Hook run with the workspace after Faltoo reloads source buffers.")
 (defvar faltoo-last-non-git-workspace-message nil
   "Last non-Git workspace Faltoo reported as a folder fallback.")
 
@@ -156,7 +156,7 @@ The result is (BEG END START-LINE END-LINE CODE)."
                    (not (verify-visited-file-modtime)))
           (let ((buffer-read-only nil))
             (revert-buffer :ignore-auto :noconfirm))))))
-  (run-hooks 'faltoo-after-reload-review-buffers-hook))
+  (run-hook-with-args 'faltoo-after-reload-workspace-buffers-hook workspace))
 
 (provide 'faltoo-core)
 ;;; faltoo-core.el ends here

@@ -419,7 +419,7 @@ Review is code-first but uses generated buffers so removed lines can appear inli
 - includes already staged hunks in blue, remapping their index coordinates through later working-tree edits;
 - maps Ask/comment line ranges and file identity back to the real source file.
 
-The real source buffer remains untouched and editable. Pending comments are keyed by workspace and canonical source path, so comments created from the source or generated review buffer share one queue and survive `faltoo-review-stop`.
+The real source buffer remains untouched and editable. Starting review from a transcript opens the generated review buffer in another window so the transcript remains visible. Pending comments are keyed by workspace and canonical source path, so comments created from the source or generated review buffer share one queue and survive `faltoo-review-stop`.
 
 Review mode excludes non-file, special, Magit, process, commit, and rebase buffers. Those buffers are never converted into review buffers.
 
@@ -543,7 +543,7 @@ Behavior:
 - Stream response into the repo transcript.
 - Remove only the submitted comment objects once the bridge confirms submission.
 - Keep comments added after submission started.
-- On completion, reload review buffers and refresh comment indicators.
+- On completion, reload unmodified source buffers and refresh comment indicators only for that workspace; leave generated review buffers unchanged.
 
 ### Overlapping Submissions
 
@@ -795,7 +795,7 @@ faltoo-magit-diff-current-file
 
 Faltoo stages or unstages the current generated hunk, or every hunk touched by an active region, by sending one combined zero-context patch through Magit's Git process wrapper. Staged rows remain in the generated snapshot with a blue face until an explicit refresh. Faltoo does not implement line staging or auto-stage assistant edits.
 
-Explicit refresh and assistant edits regenerate open review buffers from disk and refresh pending-comment overlays. Keep the review set until the user stops or starts a new review.
+Only explicit refresh regenerates open review buffers from disk. Assistant completion reloads unmodified source buffers and refreshes pending-comment overlays only in the related workspace. Keep the review set until the user stops or starts a new review.
 
 ### Implemented Scope
 
