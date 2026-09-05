@@ -89,6 +89,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Faltoo workspace/session follows the current buffer's Git root when present; outside Git it falls back to the current folder and informs the user once. Popup and repo transcript buffers set `default-directory` to that workspace so sends continue in the correct session. Generic chat intentionally uses `faltoo-generic-chat-directory` instead of source-buffer workspace detection.
 - The Python bridge resolves its Python from the current workspace's command override, falling back to `faltoo-faltoobot-command`; this allows per-chat switching between released FaltooBot and the local venv command.
 - If FaltooBot config enables OpenAI websocket mode, append-message/append-review streams use one persistent daemon process per workspace; otherwise they use the one-shot bridge. Switching a workspace's Faltoo core stops that workspace daemon and clears its websocket capability cache.
+- Background notification and submission queue support only needs to work for websocket-enabled workspaces; do not add non-websocket fallback plumbing.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
 - Request cancellation is per workspace: `C-c f q` from source/review buffers through the main Faltoo prefix.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
