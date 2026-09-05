@@ -1986,6 +1986,28 @@ Keep the flow minimal.")
          (should (equal (nth 3 range) 2))
          (should (equal (nth 4 range) "one\ntwo")))))))
 
+(ert-deftest faltoo-review-selection-prefixes-added-and-removed-lines ()
+  "Scenario: Ask and comment snippets preserve visible diff meaning."
+  (with-temp-buffer
+    (insert "context
+added
+removed")
+    (goto-char (point-min))
+    (forward-line 1)
+    (add-text-properties (line-beginning-position) (line-beginning-position 2)
+                         '(faltoo-review-line-type insert))
+    (forward-line 1)
+    (add-text-properties (line-beginning-position) (line-end-position)
+                         '(faltoo-review-line-type delete))
+    (goto-char (point-min))
+    (set-mark (point))
+    (goto-char (point-max))
+    (activate-mark)
+    (should (equal (nth 4 (faltoo-current-line-range))
+                   "context
++added
+-removed"))))
+
 (ert-deftest faltoo-ask-uses-full-lines-for-active-region ()
   "Scenario: Ask expands a partial active region to complete source lines."
   (faltoo-test--with-temp-git-file

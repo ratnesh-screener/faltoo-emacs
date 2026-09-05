@@ -84,7 +84,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - `C-c f b` switches the current chat/workspace Faltoo core command between release/local/custom for testing local FaltooBot changes. Local-core answering status is shown as `Faltoo-beta:answering`.
 - In normal source buffers, `C-c f x` stops current review session.
 - Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
-- Ask/comment snippets always expand to full source lines: current line when no region, or all lines touched by the active region.
+- Ask/comment snippets always expand to full source lines: current line when no region, or all lines touched by the active region. Generated review snippets prefix added/removed rows with `+`/`-`.
 - Ask always rebuilds from the active region/current line when invoked; responses stream in the posframe and current repo transcript. Last-response popups preserve follow-up drafts across close/reopen.
 - Faltoo workspace/session follows the current buffer's Git root when present; outside Git it falls back to the current folder and informs the user once. Popup and repo transcript buffers set `default-directory` to that workspace so sends continue in the correct session. Generic chat intentionally uses `faltoo-generic-chat-directory` instead of source-buffer workspace detection.
 - The Python bridge resolves its Python from the current workspace's command override, falling back to `faltoo-faltoobot-command`; this allows per-chat switching between released FaltooBot and the local venv command.

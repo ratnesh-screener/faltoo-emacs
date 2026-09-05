@@ -779,7 +779,7 @@ Faltoo parses zero-context staged and unstaged diffs from Magit/Git and merges t
 - removed lines inserted inline with the background from `magit-diff-removed`;
 - staged hunk lines with the muted theme-aware `magit-diff-file-heading-selection` background.
 
-Generated rows carry source-line, hunk, and raw patch properties. Base Git colors use low-priority background-only overlays derived from Magit, preserving the source major mode's syntax foregrounds while region and pending-comment overlays remain visible above them. Ask/comments use source-line properties for payloads, while overlays stay on the exact generated rows selected by the user.
+Generated rows carry source-line, hunk, and raw patch properties. Base Git colors use low-priority background-only overlays derived from Magit, preserving the source major mode's syntax foregrounds while region and pending-comment overlays remain visible above them. Ask/comment snippets prefix inserted and deleted review rows with `+` and `-`, while source-line properties keep payload coordinates canonical and overlays stay on the exact generated rows selected by the user.
 
 Change navigation is implemented over those hunk properties and wraps between hunks. File navigation keeps the one-file-at-a-time review flow. Generated buffers are cached after first visit. `r` regenerates the current buffer, while `R` or restarting review with `C-c f u` regenerates every loaded buffer in the review set.
 
