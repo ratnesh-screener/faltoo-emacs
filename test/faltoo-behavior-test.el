@@ -609,6 +609,36 @@
                              (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
                            (overlays-at (point)))))))
 
+(ert-deftest faltoo-chat-render-extends-every-turn-heading-across-the-line ()
+  "Scenario: Earlier user and assistant headings retain full-line backgrounds."
+  (let ((buf (faltoo-chat-render '(((role . "user") (text . "question"))
+                                   ((role . "assistant") (text . "answer"))))))
+    (with-current-buffer buf
+      (dolist (heading-face '(("User" . faltoo-chat-user-face)
+                              ("Assistant" . faltoo-chat-assistant-face)))
+        (goto-char (point-min))
+        (search-forward (car heading-face))
+        (let ((overlay (cl-find-if
+                        (lambda (item)
+                          (eq (overlay-get item 'face) (cdr heading-face)))
+                        (overlays-at (1- (point))))))
+          (should overlay)
+          (should (= (overlay-end overlay) (1+ (line-end-position))))
+          (should (face-attribute (cdr heading-face) :extend nil)))))))
+
+(ert-deftest faltoo-chat-stream-extends-assistant-heading-across-the-line ()
+  "Scenario: The live assistant heading has the same full-line background."
+  (let ((buf (faltoo-chat-render nil)))
+    (faltoo-chat-start-stream "Assistant · answering")
+    (with-current-buffer buf
+      (goto-char faltoo-chat-stream-heading-marker)
+      (let ((overlay (cl-find-if
+                      (lambda (item)
+                        (eq (overlay-get item 'face) 'faltoo-chat-assistant-face))
+                      (overlays-at (point)))))
+        (should overlay)
+        (should (= (overlay-end overlay) (1+ (line-end-position))))))))
+
 (ert-deftest faltoo-chat-render-keeps-user-highlights-inside-user-blocks ()
   "Scenario: User highlighting does not leak into the rest of the transcript."
   (let ((buf (faltoo-chat-render '(((role . "user") (text . "question"))
@@ -1790,8 +1820,8 @@ Hook notes"))))))
   ;; Then user, assistant, and background headings inherit distinct theme faces.
   (should (equal (face-attribute 'faltoo-chat-user-face :inherit nil)
                  '(font-lock-builtin-face region)))
-  (should (eq (face-attribute 'faltoo-chat-assistant-face :inherit nil)
-              'font-lock-function-name-face))
+  (should (equal (face-attribute 'faltoo-chat-assistant-face :inherit nil)
+                 '(success region)))
   (should (eq (face-attribute 'faltoo-chat-background-face :inherit nil)
               'warning))
   (should (eq (face-attribute 'faltoo-chat-tool-face :inherit nil)
@@ -1803,7 +1833,7 @@ Hook notes"))))))
     (cl-letf (((symbol-function 'face-foreground)
                (lambda (face &rest _)
                  (alist-get face '((font-lock-builtin-face . "user-color")
-                                   (font-lock-function-name-face . "assistant-color")
+                                   (success . "assistant-color")
                                    (warning . "background-color")))))
               ((symbol-function 'set-face-attribute)
                (lambda (face _frame &rest args)
@@ -1814,6 +1844,27 @@ Hook notes"))))))
                         (faltoo-chat-background-face . "background-color")))
       (should (equal (plist-get (alist-get (car expected) attributes) :foreground)
                      (cdr expected))))))
+
+(ert-deftest faltoo-chat-assistant-heading-changes-text-not-line-color ()
+  "Scenario: Assistant headings share the user background but use distinct text."
+  (let (attributes background-faces)
+    (cl-letf (((symbol-function 'face-foreground)
+               (lambda (face &rest _)
+                 (if (eq face 'success)
+                     "assistant-text"
+                   "other-text")))
+              ((symbol-function 'face-background)
+               (lambda (face &rest _)
+                 (push face background-faces)
+                 "user-background"))
+              ((symbol-function 'set-face-attribute)
+               (lambda (face _frame &rest args)
+                 (push (cons face args) attributes))))
+      (faltoo-chat-apply-theme-faces))
+    (should (equal background-faces '(region)))
+    (let ((assistant (alist-get 'faltoo-chat-assistant-face attributes)))
+      (should (equal (plist-get assistant :foreground) "assistant-text"))
+      (should (equal (plist-get assistant :background) "user-background")))))
 
 (ert-deftest faltoo-chat-send-submits-typed-slash-text-as-prompt ()
   "Scenario: Typed slash text in the transcript is submitted as a normal prompt."

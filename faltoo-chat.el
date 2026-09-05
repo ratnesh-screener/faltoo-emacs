@@ -92,7 +92,8 @@
     (push overlay (symbol-value overlays-var))))
 
 (defun faltoo-chat--highlight-user-block (start end)
-  (faltoo-chat--highlight-block start end 'faltoo-chat-user-face 'faltoo-chat-user-overlays))
+  (faltoo-chat--highlight-block start (min (1+ end) (point-max))
+                                'faltoo-chat-user-face 'faltoo-chat-user-overlays))
 
 (defun faltoo-chat--highlight-tool-block (start end)
   (faltoo-chat--highlight-block start end 'faltoo-chat-tool-face 'faltoo-chat-tool-overlays))
@@ -101,7 +102,8 @@
   (faltoo-chat--highlight-block start end 'faltoo-chat-hook-feedback-face 'faltoo-chat-tool-overlays))
 
 (defun faltoo-chat--highlight-assistant-block (start end)
-  (faltoo-chat--highlight-block start end 'faltoo-chat-assistant-face 'faltoo-chat-assistant-overlays))
+  (faltoo-chat--highlight-block start (min (1+ end) (point-max))
+                                'faltoo-chat-assistant-face 'faltoo-chat-assistant-overlays))
 
 (defconst faltoo-chat--hook-feedback-separator "────────────────")
 
@@ -140,9 +142,9 @@
 (defun faltoo-chat--insert-assistant-heading ()
   (faltoo-chat--insert-rule)
   (let ((start (point)))
-    (insert "# Assistant")
-    (faltoo-chat--highlight-assistant-block start (point))
-    (insert "\n\n")))
+    (insert "# Assistant\n\n")
+    (faltoo-chat--highlight-assistant-block
+     start (save-excursion (goto-char start) (line-end-position)))))
 
 (defun faltoo-chat--insert-message (message &optional assistant-continuation)
   (let* ((start (point))
@@ -198,7 +200,8 @@
     (setq faltoo-chat-prompt-heading-marker (point-marker))
     (insert "# User\n\n")
     (setq faltoo-chat-prompt-marker (point-marker))
-    (faltoo-chat--highlight-user-block start (line-end-position 0))))
+    (faltoo-chat--highlight-user-block
+     start (save-excursion (goto-char start) (line-end-position)))))
 
 (defun faltoo-chat-render (messages &optional workspace)
   "Render MESSAGES into the workspace transcript with an editable prompt."
@@ -361,9 +364,9 @@
           (setq faltoo-chat-stream-heading-marker (copy-marker start)
                 faltoo-chat-stream-answer-started nil
                 faltoo-chat-stream-last-block nil)
-          (insert (format "# %s" title))
-          (faltoo-chat--highlight-assistant-block start (point))
-          (insert "\n\n"))))
+          (insert (format "# %s\n\n" title))
+          (faltoo-chat--highlight-assistant-block
+           start (save-excursion (goto-char start) (line-end-position))))))
     buf))
 
 (defun faltoo-chat-append-stream (text &optional workspace)

@@ -17,12 +17,12 @@
   "Face for pending Faltoo review comment lines.")
 
 (defface faltoo-chat-user-face
-  '((t :inherit (font-lock-builtin-face region) :weight bold))
+  '((t :inherit (font-lock-builtin-face region) :weight bold :extend t))
   "Theme-aware highlighted face for user headings in the transcript.")
 
 (defface faltoo-chat-assistant-face
-  '((t :inherit font-lock-function-name-face :weight bold))
-  "Theme-aware face for assistant headings in the Faltoo transcript.")
+  '((t :inherit (success region) :weight bold :extend t))
+  "Theme-aware highlighted face for assistant headings in the transcript.")
 
 (defface faltoo-chat-background-face
   '((t :inherit warning :weight bold))
@@ -30,15 +30,18 @@
 
 (defun faltoo-chat-apply-theme-faces (&rest _)
   "Keep transcript heading colors visible over Markdown heading faces."
-  (dolist (faces '((faltoo-chat-user-face font-lock-builtin-face
-                    (font-lock-builtin-face region))
-                   (faltoo-chat-assistant-face font-lock-function-name-face
-                    font-lock-function-name-face)
-                   (faltoo-chat-background-face warning warning)))
-    (set-face-attribute (car faces) nil
-                        :inherit (nth 2 faces)
-                        :foreground (face-foreground (cadr faces) nil t)
-                        :weight 'bold)))
+  (let ((heading-background (face-background 'region nil t)))
+    (dolist (faces `((faltoo-chat-user-face font-lock-builtin-face
+                     (font-lock-builtin-face region) ,heading-background)
+                    (faltoo-chat-assistant-face success
+                     (success region)
+                     ,heading-background)
+                    (faltoo-chat-background-face warning warning nil)))
+      (set-face-attribute (car faces) nil
+                          :inherit (nth 2 faces)
+                          :foreground (face-foreground (cadr faces) nil t)
+                          :background (or (nth 3 faces) 'unspecified)
+                          :weight 'bold :extend t))))
 
 (add-hook 'enable-theme-functions #'faltoo-chat-apply-theme-faces)
 (faltoo-chat-apply-theme-faces)
