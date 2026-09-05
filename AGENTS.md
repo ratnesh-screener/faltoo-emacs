@@ -91,10 +91,10 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - The Python bridge resolves its Python from the current workspace's command override, falling back to `faltoo-faltoobot-command`; this allows per-chat switching between released FaltooBot and the local venv command.
 - If FaltooBot config enables OpenAI websocket mode, queued `append-message` streams use one persistent daemon process per workspace; otherwise they use the one-shot bridge. Switching a workspace's Faltoo core stops that workspace daemon and clears its websocket capability cache.
 - Background notification and submission queue support only needs to work for websocket-enabled workspaces; do not add non-websocket fallback plumbing.
-- Manual prompts, finalized review batches, and background notifications share an editable FIFO buffer per workspace. `C-c f j` opens and pauses it; `C-c C-c` resumes consumption.
+- Manual prompts, finalized review batches, and background notifications share an editable FIFO buffer per workspace. `C-c f j` opens it without changing consumption state; `C-c f p` pauses it; `C-c C-c` resumes after cancellation or failure.
 - User turns enter the transcript only when consumed. Successful completion starts the next entry; cancellation or failure pauses the queue.
 - Finalizing review comments adds their generated prompt to the queue and immediately clears the pending comment objects/overlays. The editable queue text becomes the source of truth.
-- Each persistent workspace daemon polls FaltooBot notifications and emits formatted notification text into the same Emacs queue; claim/ack/requeue stays in Python.
+- Each persistent workspace daemon polls FaltooBot notifications and emits formatted notification text into the same Emacs queue; claim/ack/requeue stays in Python. Transcript rendering shows consumed notifications as `Background Update` sections with quoted metadata and no `## message` heading.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
 - Request cancellation is per workspace: `C-c f q` from source/review buffers through the main Faltoo prefix.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.

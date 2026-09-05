@@ -105,10 +105,12 @@
   (gethash (file-name-as-directory (file-truename workspace))
            faltoo-queue-paused-workspaces))
 
-(defun faltoo-queue-pause (workspace)
+(defun faltoo-queue-pause (&optional workspace)
   "Pause automatic queue consumption for WORKSPACE."
-  (puthash (file-name-as-directory (file-truename workspace)) t
-           faltoo-queue-paused-workspaces)
+  (interactive)
+  (puthash (file-name-as-directory
+            (file-truename (or workspace (faltoo-active-workspace))))
+           t faltoo-queue-paused-workspaces)
   (force-mode-line-update t))
 
 (defun faltoo-queue-resume ()
@@ -119,11 +121,9 @@
   (faltoo-request-consume-queue faltoo-queue-workspace))
 
 (defun faltoo-queue-open ()
-  "Open and pause the current workspace's editable queue."
+  "Open the current workspace's editable queue."
   (interactive)
-  (let ((workspace (faltoo-active-workspace)))
-    (faltoo-queue-pause workspace)
-    (pop-to-buffer (faltoo-queue-buffer workspace))))
+  (pop-to-buffer (faltoo-queue-buffer (faltoo-active-workspace))))
 
 (defun faltoo-queue-confirm-kill ()
   "Confirm before discarding queued messages."

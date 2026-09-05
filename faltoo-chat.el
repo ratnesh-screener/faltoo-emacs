@@ -112,6 +112,25 @@
                      faltoo-chat--hook-feedback-separator)
                "\n"))
 
+(defun faltoo-chat--format-background-update (text)
+  "Return concise transcript Markdown when TEXT is a background update."
+  (let* ((text (string-trim text))
+         (message-start (string-match "\n## message\n" text)))
+    (when (and message-start (string-prefix-p "# Background update\n" text))
+      (let* ((message-end (match-end 0))
+             (metadata (split-string
+                        (substring text (length "# Background update") message-start)
+                        "\n" t "[ \t]+"))
+             (message (string-trim (substring text message-end))))
+        (concat "# Background Update\n\n"
+                (when metadata
+                  (concat (mapconcat
+                           (lambda (line)
+                             (concat "> " (upcase (substring line 0 1)) (substring line 1)))
+                           metadata "\n")
+                          "\n\n"))
+                message)))))
+
 (defun faltoo-chat--insert-rule ()
   (unless (bobp)
     (unless (looking-back "\n" nil)
@@ -130,8 +149,17 @@
          (role-text (or (alist-get 'role message) "message"))
          (role-key (downcase role-text))
          (role (capitalize role-text))
-         (text (or (alist-get 'text message) "")))
+         (text (or (alist-get 'text message) ""))
+         (background (and (string= role-key "user")
+                          (faltoo-chat--format-background-update text))))
     (cond
+     (background
+      (faltoo-chat--insert-rule)
+      (setq start (point))
+      (insert background "\n\n")
+      (faltoo-chat--highlight-block
+       start (save-excursion (goto-char start) (line-end-position))
+       'faltoo-chat-background-face 'faltoo-chat-user-overlays))
      ((member role-key '("tool" "hook-feedback"))
       (setq text (if (string= role-key "hook-feedback")
                      (faltoo-chat--format-hook-feedback text)
@@ -308,22 +336,9 @@
     (when (and (markerp faltoo-chat-prompt-marker)
                (string-empty-p (faltoo-chat--prompt-text)))
       (faltoo-chat-clear-user-prompt workspace))
-    (let ((inhibit-read-only t)
-          (start nil))
+    (let ((inhibit-read-only t))
       (goto-char (point-max))
-      (unless (or (bobp) (bolp))
-        (insert "
-"))
-      (faltoo-chat--insert-rule)
-      (setq start (point))
-      (insert "# User
-
-" text "
-
-")
-      (faltoo-chat--highlight-user-block start (save-excursion
-                                                (goto-char start)
-                                                (line-end-position))))))
+      (faltoo-chat--insert-message `((role . "user") (text . ,text))))))
 
 (defun faltoo-chat-send ()
   "Send the current workspace transcript prompt."

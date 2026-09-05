@@ -39,7 +39,8 @@ C-c f x   stop review session
 C-c f q   cancel running Faltoo answer stream for this repo
 C-c f h   open current repo transcript
 C-c f i   open generic repo-independent chat
-C-c f j   open and pause this workspace's editable submission queue
+C-c f j   open this workspace's editable submission queue
+C-c f p   pause this workspace's queue
 C-c f o   choose a folder and open its workspace transcript
 C-c f b   switch this chat's Faltoo core: release/local/custom
 ```
@@ -87,11 +88,12 @@ C-c p     paste saved prompt template
 Queued prompts live in one editable buffer per workspace, named like `*Faltoo Queue: repo-name*`:
 
 ```text
-C-c f j   open the queue and pause automatic consumption
-C-c C-c   resume FIFO submission after editing/reordering entries
+C-c f j   open the queue without changing consumption state
+C-c f p   pause this workspace's queue
+C-c C-c   resume FIFO submission after cancellation or failure
 ```
 
-Manual prompts, batched review prompts, and FaltooBot background notifications use the same queue. A user turn appears in the transcript only when its queue entry starts. Successful answers consume the next entry; cancellation or failure pauses the queue.
+Manual prompts, batched review prompts, and FaltooBot background notifications use the same queue. A user turn appears in the transcript only when its queue entry starts. Background notifications render as `Background Update` sections with quoted source metadata instead of ordinary user sections. Successful answers consume the next entry; cancellation or failure pauses the queue.
 
 In workspace transcript buffers, named like `*Faltoo: repo-name*`, and generic chat `*Faltoo Chat*`:
 

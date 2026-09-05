@@ -17,12 +17,31 @@
   "Face for pending Faltoo review comment lines.")
 
 (defface faltoo-chat-user-face
-  '((t :inherit region))
-  "Theme-aware primary face for user blocks in the Faltoo transcript.")
+  '((t :inherit (font-lock-builtin-face region) :weight bold))
+  "Theme-aware highlighted face for user headings in the transcript.")
 
 (defface faltoo-chat-assistant-face
-  '((t :inherit secondary-selection))
-  "Theme-aware secondary face for assistant blocks in the Faltoo transcript.")
+  '((t :inherit font-lock-function-name-face :weight bold))
+  "Theme-aware face for assistant headings in the Faltoo transcript.")
+
+(defface faltoo-chat-background-face
+  '((t :inherit warning :weight bold))
+  "Theme-aware face for background-update headings in the transcript.")
+
+(defun faltoo-chat-apply-theme-faces (&rest _)
+  "Keep transcript heading colors visible over Markdown heading faces."
+  (dolist (faces '((faltoo-chat-user-face font-lock-builtin-face
+                    (font-lock-builtin-face region))
+                   (faltoo-chat-assistant-face font-lock-function-name-face
+                    font-lock-function-name-face)
+                   (faltoo-chat-background-face warning warning)))
+    (set-face-attribute (car faces) nil
+                        :inherit (nth 2 faces)
+                        :foreground (face-foreground (cadr faces) nil t)
+                        :weight 'bold)))
+
+(add-hook 'enable-theme-functions #'faltoo-chat-apply-theme-faces)
+(faltoo-chat-apply-theme-faces)
 
 (defface faltoo-chat-tool-face
   '((t :inherit font-lock-comment-face))

@@ -65,7 +65,7 @@
                    ("]" . faltoo-next-change)
                    ("[" . faltoo-prev-change)
                    ("n" . faltoo-next-comment)
-                   ("p" . faltoo-prev-comment)
+                   ("p" . faltoo-queue-pause)
                    ("S" . faltoo-stage-current-file)
                    ("U" . faltoo-unstage-current-file)))
   (keymap-set faltoo-command-map (car binding) (cdr binding)))

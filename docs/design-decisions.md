@@ -241,8 +241,9 @@ Each workspace has one editable Markdown queue buffer. Manual prompts, finalized
 
 Decision:
 
-- `C-c f j` opens the workspace queue and pauses automatic consumption.
-- `C-c C-c` resumes FIFO submission after the user edits or reorders its text.
+- `C-c f j` opens the workspace queue without changing its consumption state.
+- `C-c f p` pauses the current workspace queue.
+- `C-c C-c` resumes FIFO submission after cancellation or failure.
 - The consumer appends a user turn to the transcript only when that entry starts.
 - Successful completion consumes the next entry; cancellation or failure pauses the queue.
 - Finalizing review comments converts them to their final prompt and clears their pending objects/overlays immediately. The queue text then becomes the sole source of truth.
@@ -252,6 +253,7 @@ Rationale:
 
 - One text buffer is both the editable UI and storage; no parallel queue model is needed.
 - The same consumer path gives prompts, review batches, and notifications consistent transcript timing.
+- Consumed notifications render as `Background Update` sections. Source/follow-up metadata is quoted, and the generated `## message` wrapper is omitted from display while the original queue text is still sent to FaltooBot.
 
 ### Prompt Detection
 
@@ -702,13 +704,13 @@ C-c f C   faltoo-file-comment
 C-c f a   faltoo-ask
 C-c f h   faltoo-chat
 C-c f j   faltoo-queue-open
+C-c f p   faltoo-queue-pause
 C-c f s   faltoo-submit-review-comments
 C-c f m   faltoo-comments-summary
 C-c f d   faltoo-delete-current-comment
 C-c f D   faltoo-magit-diff-current-file
 C-c f u   faltoo-review-unstaged
 C-c f n   faltoo-next-comment
-C-c f p   faltoo-prev-comment
 ```
 
 Inside `faltoo-review-mode`, use direct single-key bindings because review buffers are read-only:

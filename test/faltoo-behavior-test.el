@@ -624,6 +624,45 @@
                              (eq (overlay-get overlay 'face) 'faltoo-chat-user-face))
                            (overlays-at (point)))))))
 
+(ert-deftest faltoo-chat-renders-background-notifications-as-distinct-updates ()
+  "Scenario: Background notifications have the same concise live and reload rendering."
+  (let* ((root (file-name-as-directory (make-temp-file "faltoo-background" t)))
+         (notification "# Background update
+
+source: faltoo-emacs:test
+
+## message
+Task completed."))
+    (unwind-protect
+        (dolist (path '(reload live))
+          (if (eq path 'reload)
+              (faltoo-chat-render
+               `(((role . "user") (text . ,notification))) root)
+            (with-current-buffer (faltoo-chat-buffer root)
+              (let ((inhibit-read-only t))
+                (mapc #'delete-overlay faltoo-chat-user-overlays)
+                (setq faltoo-chat-user-overlays nil
+                      faltoo-chat-prompt-marker nil
+                      faltoo-chat-prompt-heading-marker nil)
+                (erase-buffer)))
+            (faltoo-chat-append-user-message notification root))
+          (with-current-buffer (faltoo-chat-buffer root)
+            (should (string-prefix-p "# Background Update
+
+> Source: faltoo-emacs:test
+
+Task completed."
+                                     (buffer-string)))
+            (should-not (string-match-p "## message" (buffer-string)))
+            (goto-char (point-min))
+            (should (cl-some
+                     (lambda (overlay)
+                       (eq (overlay-get overlay 'face) 'faltoo-chat-background-face))
+                     (overlays-at (point))))))
+      (when-let ((buffer (get-buffer (faltoo-chat-buffer-name-for root))))
+        (kill-buffer buffer))
+      (delete-directory root t))))
+
 (ert-deftest faltoo-chat-render-highlights-assistant-heading-only ()
   "Scenario: Assistant transcript headings are visually distinct without covering content."
   (let ((buf (faltoo-chat-render '(((role . "assistant") (text . "answer"))))))
@@ -653,6 +692,17 @@
   "Scenario: The main Faltoo prefix opens the editable workspace queue."
   ;; Then C-c f j opens the current workspace queue.
   (should (eq (lookup-key faltoo-command-map (kbd "j")) #'faltoo-queue-open)))
+
+(ert-deftest faltoo-main-prefix-p-pauses-workspace-queue ()
+  "Scenario: The main Faltoo prefix pauses the current workspace queue."
+  (let ((root (file-name-as-directory (make-temp-file "faltoo-queue-pause" t)))
+        (faltoo-queue-paused-workspaces (make-hash-table :test #'equal)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'faltoo-active-workspace) (lambda () root)))
+          (should (eq (lookup-key faltoo-command-map (kbd "p")) #'faltoo-queue-pause))
+          (call-interactively (lookup-key faltoo-command-map (kbd "p")))
+          (should (faltoo-queue-paused-p root)))
+      (delete-directory root t))))
 
 (ert-deftest faltoo-main-prefix-i-opens-generic-chat ()
   "Scenario: The main Faltoo prefix opens the repo-independent chat."
@@ -1736,14 +1786,34 @@ Hook notes"))))))
     (should (= captured-turns 50))))
 
 (ert-deftest faltoo-chat-faces-are-theme-aware ()
-  "Scenario: Transcript block faces inherit from theme faces."
-  ;; Then Faltoo uses theme-provided primary, secondary, and comment faces.
-  (should (eq (face-attribute 'faltoo-chat-user-face :inherit nil)
-              'region))
+  "Scenario: Transcript headings use three distinct theme colors."
+  ;; Then user, assistant, and background headings inherit distinct theme faces.
+  (should (equal (face-attribute 'faltoo-chat-user-face :inherit nil)
+                 '(font-lock-builtin-face region)))
   (should (eq (face-attribute 'faltoo-chat-assistant-face :inherit nil)
-              'secondary-selection))
+              'font-lock-function-name-face))
+  (should (eq (face-attribute 'faltoo-chat-background-face :inherit nil)
+              'warning))
   (should (eq (face-attribute 'faltoo-chat-tool-face :inherit nil)
               'font-lock-comment-face)))
+
+(ert-deftest faltoo-chat-heading-colors-override-markdown-heading-colors ()
+  "Scenario: Transcript heading colors remain visible after Markdown fontification."
+  (let (attributes)
+    (cl-letf (((symbol-function 'face-foreground)
+               (lambda (face &rest _)
+                 (alist-get face '((font-lock-builtin-face . "user-color")
+                                   (font-lock-function-name-face . "assistant-color")
+                                   (warning . "background-color")))))
+              ((symbol-function 'set-face-attribute)
+               (lambda (face _frame &rest args)
+                 (push (cons face args) attributes))))
+      (faltoo-chat-apply-theme-faces))
+    (dolist (expected '((faltoo-chat-user-face . "user-color")
+                        (faltoo-chat-assistant-face . "assistant-color")
+                        (faltoo-chat-background-face . "background-color")))
+      (should (equal (plist-get (alist-get (car expected) attributes) :foreground)
+                     (cdr expected))))))
 
 (ert-deftest faltoo-chat-send-submits-typed-slash-text-as-prompt ()
   "Scenario: Typed slash text in the transcript is submitted as a normal prompt."
@@ -4440,23 +4510,16 @@ old three
          (with-current-buffer buffer (erase-buffer))
          (kill-buffer buffer))))))
 
-(ert-deftest faltoo-opening-queue-pauses-until-explicit-resume ()
-  "Scenario: Queue text remains stable while the user edits it."
-  (let* ((root (file-name-as-directory (file-truename (make-temp-file "faltoo-queue-pause" t))))
+(ert-deftest faltoo-opening-queue-does-not-pause-consumption ()
+  "Scenario: Viewing the queue does not change its running state."
+  (let* ((root (file-name-as-directory (file-truename (make-temp-file "faltoo-queue-open" t))))
          (default-directory root)
-         (faltoo-queue-paused-workspaces (make-hash-table :test #'equal))
-         consumed)
+         (faltoo-queue-paused-workspaces (make-hash-table :test #'equal)))
     (unwind-protect
-        (cl-letf (((symbol-function 'pop-to-buffer) #'ignore)
-                  ((symbol-function 'faltoo-request-consume-queue)
-                   (lambda (workspace) (setq consumed workspace))))
+        (cl-letf (((symbol-function 'pop-to-buffer) #'ignore))
           (faltoo-queue-add "queued" root)
           (faltoo-queue-open)
-          (should (faltoo-queue-paused-p root))
-          (with-current-buffer (faltoo-queue-buffer root)
-            (faltoo-queue-resume))
-          (should-not (faltoo-queue-paused-p root))
-          (should (equal consumed root)))
+          (should-not (faltoo-queue-paused-p root)))
       (when-let ((buffer (get-buffer (faltoo-queue-buffer-name-for root))))
         (with-current-buffer buffer (erase-buffer))
         (kill-buffer buffer))
