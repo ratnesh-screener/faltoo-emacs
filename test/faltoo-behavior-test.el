@@ -2810,6 +2810,20 @@ Keep the flow minimal.")
       (define-key faltoo-command-map (kbd "o") directory-binding)
       (define-key faltoo-command-map (kbd "z") nil))))
 
+(ert-deftest faltoo-reload-restores-review-mode-bindings ()
+  "Scenario: Reload reapplies review bindings to the existing keymap."
+  (let ((refresh-binding (lookup-key faltoo-review-mode-map (kbd "R"))))
+    (unwind-protect
+        (progn
+          (define-key faltoo-review-mode-map (kbd "R") nil)
+          (define-key faltoo-review-mode-map (kbd "z") #'ignore)
+          (load-file (expand-file-name "faltoo-review.el" faltoo-root))
+          (should (eq (lookup-key faltoo-review-mode-map (kbd "R"))
+                      #'faltoo-review-refresh-all))
+          (should-not (lookup-key faltoo-review-mode-map (kbd "z"))))
+      (define-key faltoo-review-mode-map (kbd "R") refresh-binding)
+      (define-key faltoo-review-mode-map (kbd "z") nil))))
+
 (ert-deftest faltoo-reload-loads-plugin-files-in-place ()
   "Scenario: Faltoo code can be reloaded without restarting Emacs."
   (let (loaded)
