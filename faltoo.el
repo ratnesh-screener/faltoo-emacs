@@ -9,6 +9,7 @@
 (require 'faltoo-tree)
 (require 'faltoo-compose)
 (require 'faltoo-chat)
+(require 'faltoo-queue)
 (require 'faltoo-request)
 (require 'faltoo-ask)
 (require 'faltoo-comments)
@@ -25,6 +26,7 @@
     "faltoo-compose.el"
     "faltoo-bridge.el"
     "faltoo-chat.el"
+    "faltoo-queue.el"
     "faltoo-request.el"
     "faltoo-ask.el"
     "faltoo-comments.el"
@@ -52,6 +54,7 @@
                    ("d" . faltoo-delete-current-comment)
                    ("h" . faltoo-chat)
                    ("i" . faltoo-generic-chat)
+                   ("j" . faltoo-queue-open)
                    ("o" . faltoo-chat-directory)
                    ("b" . faltoo-select-faltoobot-command)
                    ("r" . faltoo-reload)

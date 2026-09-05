@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import io
 import json
@@ -38,6 +39,7 @@ def install_faltoobot_stubs() -> None:
     modules = {
         "faltoobot": types.ModuleType("faltoobot"),
         "faltoobot.faltoochat": types.ModuleType("faltoobot.faltoochat"),
+        "faltoobot.notify_queue": types.ModuleType("faltoobot.notify_queue"),
         "faltoobot.faltoochat.git": types.ModuleType("faltoobot.faltoochat.git"),
         "faltoobot.faltoochat.review_api": types.ModuleType("faltoobot.faltoochat.review_api"),
         "faltoobot.faltoochat.slash_commands": types.ModuleType("faltoobot.faltoochat.slash_commands"),
@@ -47,6 +49,12 @@ def install_faltoobot_stubs() -> None:
         "faltoobot.sessions": types.ModuleType("faltoobot.sessions"),
     }
 
+    modules["faltoobot"].notify_queue = modules["faltoobot.notify_queue"]
+    modules["faltoobot.notify_queue"].claim_notifications = lambda _matches: []
+    modules["faltoobot.notify_queue"].format_notification_message = lambda item: item["message"]
+    modules["faltoobot.notify_queue"].ack_notification = lambda _path: None
+    modules["faltoobot.notify_queue"].requeue_notification = lambda _path: None
+    modules["faltoobot.notify_queue"].recover_processing_notifications = lambda: 0
     modules["faltoobot.faltoochat.git"].get_unstaged_files = lambda _workspace: []
     modules["faltoobot.faltoochat.git"].is_git_workspace = lambda _workspace: True
     modules["faltoobot.faltoochat.review_api"].Review = dict
@@ -228,41 +236,6 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["rows"][1]["output_tokens"], 2)
         self.assertEqual(events[1]["rows"][1]["cached_tokens"], 8)
         self.assertEqual(events[1]["rows"][1]["total_tokens"], 12)
-
-    async def test_append_review_formats_transcript_comments_as_response_comments(self):
-        """Scenario: Transcript review comments are submitted as response comments."""
-        bridge = load_bridge()
-        captured_questions = []
-
-        async def append_user_turn(_session, question):
-            captured_questions.append(question)
-
-        async def empty_answer_stream(_session):
-            if False:
-                yield None
-
-        bridge.append_user_turn = append_user_turn
-        bridge.get_answer_streaming = empty_answer_stream
-
-        await bridge.append_review(
-            Path("/tmp/faltoo-workspace"),
-            [
-                {
-                    "filename": "Faltoo transcript",
-                    "line_number_start": 2291,
-                    "line_number_end": 2295,
-                    "code": "assistant text",
-                    "comment": "follow up",
-                }
-            ],
-        )
-
-        self.assertIn("Your response:\n\n```\nassistant text\n```", captured_questions[0])
-        self.assertNotIn("Comments in code review", captured_questions[0])
-        self.assertNotIn("File name", captured_questions[0])
-        self.assertNotIn("Faltoo transcript", captured_questions[0])
-        self.assertNotIn("### Line", captured_questions[0])
-        self.assertNotIn("Code:", captured_questions[0])
 
     async def test_manual_slash_command_is_submitted_as_plain_text(self):
         """Scenario: Manually typed slash commands are not expanded by the bridge."""
@@ -499,6 +472,64 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         # Then Emacs receives a rate-limit event it can place in the footer.
         self.assertEqual(emitted[0]["classes"], "rate-limit")
         self.assertEqual(emitted[0]["text"], "Remaining limit: 5h = 98%")
+
+
+    async def test_daemon_recovers_and_polls_notifications_while_open(self):
+        """Scenario: A persistent workspace daemon owns notification polling."""
+        bridge = load_bridge()
+        poll_started = asyncio.Event()
+        poll_cancelled = False
+        recovered = []
+
+        async def poll_notifications(workspace):
+            nonlocal poll_cancelled
+            self.assertEqual(workspace, Path("/tmp/project"))
+            poll_started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                poll_cancelled = True
+
+        async def no_requests():
+            await poll_started.wait()
+            if False:
+                yield ""
+
+        bridge.notify_queue.recover_processing_notifications = lambda: recovered.append(True)
+        bridge._poll_notifications = poll_notifications
+        bridge._stdin_lines = no_requests
+
+        result = await bridge.daemon(Path("/tmp/project"))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(recovered, [True])
+        self.assertTrue(poll_cancelled)
+
+
+    def test_notification_drain_emits_matching_workspace_text_and_acknowledges(self):
+        """Scenario: The daemon transfers matching notifications into the Emacs queue."""
+        bridge = load_bridge()
+        notification = {"chat_key": "/private/tmp/project", "message": "Task finished"}
+        claimed_path = Path("/tmp/notify.json")
+        emitted = []
+        acknowledged = []
+
+        bridge.notify_queue.claim_notifications = lambda matches: (
+            [(claimed_path, notification)] if matches(notification) else []
+        )
+        bridge.notify_queue.format_notification_message = (
+            lambda item: f"# Background update\n\n{item['message']}"
+        )
+        bridge.notify_queue.ack_notification = acknowledged.append
+        bridge._emit_payload = emitted.append
+
+        bridge._drain_notifications(Path("/tmp/project"))
+
+        self.assertEqual(
+            emitted,
+            [{"type": "queue", "text": "# Background update\n\nTask finished"}],
+        )
+        self.assertEqual(acknowledged, [claimed_path])
 
 
 if __name__ == "__main__":

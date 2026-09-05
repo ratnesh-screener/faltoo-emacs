@@ -9,7 +9,6 @@
 (require 'faltoo-compose)
 
 (declare-function faltoo-request-message "faltoo-request")
-(declare-function faltoo-request-ensure-idle "faltoo-request")
 
 (defvar-local faltoo-chat-prompt-marker nil)
 (defvar-local faltoo-chat-prompt-heading-marker nil)
@@ -285,9 +284,30 @@
 (defun faltoo-chat--prompt-text ()
   (string-trim (buffer-substring-no-properties faltoo-chat-prompt-marker (point-max))))
 
+(defun faltoo-chat-clear-user-prompt (&optional workspace)
+  "Remove WORKSPACE's current editable transcript prompt."
+  (when-let ((buffer (get-buffer (faltoo-chat-buffer-name-for
+                                  (or workspace (faltoo-chat-current-workspace))))))
+    (with-current-buffer buffer
+      (when (markerp faltoo-chat-prompt-heading-marker)
+        (let ((inhibit-read-only t)
+              (start faltoo-chat-prompt-heading-marker))
+          (save-excursion
+            (goto-char start)
+            (when (> (line-beginning-position) (point-min))
+              (forward-line -1)
+              (when (looking-at "^---$")
+                (setq start (point))))
+            (delete-region start (point-max)))
+          (setq faltoo-chat-prompt-marker nil
+                faltoo-chat-prompt-heading-marker nil))))))
+
 (defun faltoo-chat-append-user-message (text &optional workspace)
   "Append TEXT as a user turn in the workspace transcript."
   (with-current-buffer (faltoo-chat-buffer workspace)
+    (when (and (markerp faltoo-chat-prompt-marker)
+               (string-empty-p (faltoo-chat--prompt-text)))
+      (faltoo-chat-clear-user-prompt workspace))
     (let ((inhibit-read-only t)
           (start nil))
       (goto-char (point-max))
@@ -311,9 +331,6 @@
   (let ((text (faltoo-chat--prompt-text)))
     (when (string-empty-p text)
       (user-error "Prompt is empty"))
-    (faltoo-request-ensure-idle faltoo-chat-workspace)
-    (goto-char (point-max))
-    (insert "\n\n")
     (faltoo-request-message text nil nil t faltoo-chat-workspace)))
 
 (defun faltoo-chat-start-stream (title &optional workspace)

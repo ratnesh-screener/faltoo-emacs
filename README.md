@@ -39,6 +39,7 @@ C-c f x   stop review session
 C-c f q   cancel running Faltoo answer stream for this repo
 C-c f h   open current repo transcript
 C-c f i   open generic repo-independent chat
+C-c f j   open and pause this workspace's editable submission queue
 C-c f o   choose a folder and open its workspace transcript
 C-c f b   switch this chat's Faltoo core: release/local/custom
 ```
@@ -83,6 +84,15 @@ C-c /     run session command
 C-c p     paste saved prompt template
 ```
 
+Queued prompts live in one editable buffer per workspace, named like `*Faltoo Queue: repo-name*`:
+
+```text
+C-c f j   open the queue and pause automatic consumption
+C-c C-c   resume FIFO submission after editing/reordering entries
+```
+
+Manual prompts, batched review prompts, and FaltooBot background notifications use the same queue. A user turn appears in the transcript only when its queue entry starts. Successful answers consume the next entry; cancellation or failure pauses the queue.
+
 In workspace transcript buffers, named like `*Faltoo: repo-name*`, and generic chat `*Faltoo Chat*`:
 
 ```text
@@ -124,7 +134,7 @@ The local option defaults to:
 
 This choice is stored per workspace, so switching one repo/generic chat does not change other chats. It affects new bridge calls for that chat; already-running processes keep the command they started with. Switching also stops that workspace's persistent websocket bridge, if one is running, so the next request uses the selected core. While a local-core chat is answering, the mode-line label changes from `Faltoo:answering` to `Faltoo-beta:answering`.
 
-If FaltooBot config enables OpenAI websocket mode, Faltoo Emacs automatically keeps a persistent bridge process per workspace for chat/review requests. Otherwise it uses the regular one-shot bridge process.
+If FaltooBot config enables OpenAI websocket mode, Faltoo Emacs automatically keeps a persistent bridge process per workspace for chat/review requests. That daemon also polls FaltooBot background notifications into the workspace queue. Otherwise it uses the regular one-shot bridge process; queue and notification support intentionally targets websocket workspaces only.
 
 This is intentionally a command path, not a shell alias; Emacs will not see shell aliases such as `faltoo_codex`.
 
@@ -173,14 +183,14 @@ Manually typed slash text is sent to the LLM as normal prompt text. Use `C-c /` 
 - Transcript/history buffers are per Git repo, named like `*Faltoo: repo-name*`, and receive long review streams for that repo. `C-c f i` opens a generic `*Faltoo Chat*` session anchored at `faltoo-generic-chat-directory` for quick questions that should not use the current repo context.
 - Ask always rebuilds from the active region/current line and streams responses in the centered posframe and transcript. The last-response popup preserves follow-up drafts after close/reopen.
 - Completed assistant transcript footers include elapsed time and the latest streamed Codex limit when available, e.g. `> Assistant took: 20.0s` / `> Remaining limit: 5h = 98%`.
-- Pending comments are scoped to the current workspace. Review-comment submission streams to that workspace transcript and status/mode-line. Transcript selections can also be marked as pending comments with `C-c f c` and submitted with the same batch flow.
+- Pending comments are scoped to the current workspace. Submission converts them into one editable queue entry and clears their source overlays; the queue text then becomes the source of truth. Transcript selections use the same batch flow.
 - `C-c f q` cancels the current repo's running answer stream.
 - After a Faltoo request finishes, unmodified open buffers in that repo are refreshed from disk so assistant edits do not trigger stale-file save prompts. Buffers with unsaved local edits are left alone.
 - Faltoo never auto-stages changes.
 
 ## Quit guard
 
-Emacs asks before quitting while a Faltoo request is running or review comments are pending.
+Emacs asks before quitting while a Faltoo request is running, review comments are pending, or queued messages remain.
 
 ## Popup UI
 
@@ -190,6 +200,6 @@ Pending review-comment lines are highlighted directly.
 
 ## Full-file Git review
 
-`faltoo-review-mode` uses generated read-only buffers rather than modifying the real source buffers. The full working-tree file remains visible, removed rows are inserted inline, and added/removed rows use Magit's theme-aware diff backgrounds while retaining normal source syntax colors. Ask and review comments map back to the real source file, so comments created from either buffer share one workspace queue and survive stopping review.
+`faltoo-review-mode` uses generated read-only buffers rather than modifying the real source buffers. The full working-tree file remains visible, removed rows are inserted inline, and added/removed rows use Magit's theme-aware diff backgrounds while retaining normal source syntax colors. Ask and review comments map back to the real source file, so comments created from either buffer share one pending-comment list and survive stopping review.
 
 Review buffers show a header line like `Faltoo Review Faltoo[1/N]` so the active file is always visible. Visited files are reused when navigating; press `r` when you want to regenerate them from disk and Git.

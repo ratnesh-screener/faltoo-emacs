@@ -11,8 +11,8 @@ import traceback
 from typing import Any
 
 
+from faltoobot import notify_queue
 from faltoobot.faltoochat.git import get_unstaged_files, is_git_workspace  # ty: ignore[unresolved-import]
-from faltoobot.faltoochat.review_api import Review  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.slash_commands import SlashCommandStore  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.messages_rendering import get_item_text  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.stream import get_event_text  # ty: ignore[unresolved-import]
@@ -72,13 +72,6 @@ def _stdin_payload() -> dict[str, Any]:
     if isinstance(payload, dict):
         return payload
     return {}
-
-
-def _payload_comments(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    comments = payload.get("comments")
-    if not isinstance(comments, list):
-        return []
-    return [item for item in comments if isinstance(item, dict)]
 
 
 def messages_path(workspace: Path) -> int:
@@ -147,82 +140,6 @@ def messages(workspace: Path, limit: int, turns: int | None) -> int:
 
     print(json.dumps({"messages": _last_user_turns(messages_payload, turns)}, ensure_ascii=False))
     return 0
-
-
-def _transcript_reviews_prompt(comments: list[Review]) -> str:
-    sections = []
-    for comment in comments:
-        sections.append(
-            "\n".join(
-                [
-                    "Your response:",
-                    "",
-                    "```",
-                    comment["code"],
-                    "```",
-                    "",
-                    "Comment:",
-                    comment["comment"],
-                ]
-            )
-        )
-    return "\n\n---\n\n".join(sections).strip()
-
-
-def _reviews_prompt(comments: list[Review]) -> str:
-    if all(str(comment["filename"]) == "Faltoo transcript" for comment in comments):
-        return _transcript_reviews_prompt(comments)
-
-    lines = ["# Comments in code review", ""]
-    grouped: dict[Path, list[Review]] = {}
-    for comment in comments:
-        grouped.setdefault(comment["filename"], []).append(comment)
-
-    for index, (filename, items) in enumerate(grouped.items()):
-        lines.extend([f"## File name `{filename}`", ""])
-        for comment in items:
-            line_start = comment.get("file_line_number_start", comment["line_number_start"])
-            line_end = comment.get("file_line_number_end", comment["line_number_end"])
-            if str(filename) == "Faltoo transcript":
-                lines.extend(["Your response:", "", "```", comment["code"], "```", ""])
-            elif line_start == 0 and line_end == 0:
-                lines.extend(["### File comment", ""])
-            else:
-                lines.extend([
-                    f"### Line `{line_start}-{line_end}`",
-                    "",
-                    "Code:",
-                    "",
-                    "```",
-                    comment["code"],
-                    "```",
-                    "",
-                ])
-            lines.extend(["Comment:", comment["comment"], ""])
-        if index < len(grouped) - 1:
-            lines.extend(["---", ""])
-    return "\n".join(lines).strip()
-
-
-def _normalize_comments(items: list[dict[str, Any]]) -> list[Review]:
-    comments: list[Review] = []
-    for item in items:
-        line = int(item.get("line_number_start") or 0)
-        end = int(item.get("line_number_end") or line)
-        comments.append(
-            {
-                "filename": Path(str(item.get("filename") or "[No Name]")),
-                "line_number_start": line,
-                "line_number_end": end,
-                "file_line_number_start": int(
-                    item.get("file_line_number_start") or line
-                ),
-                "file_line_number_end": int(item.get("file_line_number_end") or end),
-                "code": str(item.get("code") or ""),
-                "comment": str(item.get("comment") or ""),
-            }
-        )
-    return comments
 
 
 BUILTIN_SLASH_COMMANDS = frozenset(
@@ -480,25 +397,6 @@ def websocket_enabled(_workspace: Path) -> int:
     return 0
 
 
-async def append_review(workspace: Path, items: list[dict[str, Any]], emit=None) -> int:
-    emit = emit or _emit
-    comments = _normalize_comments(items)
-    # The UI can submit with a stale empty queue after comments were cleared.
-    if not comments:
-        emit(True, "done", "No review comments to submit.")
-        return 0
-
-    session = _session(workspace)
-    await append_user_turn(session, question=_reviews_prompt(comments))
-    emit(
-        True,
-        "status",
-        f"Submitted {len(comments)} review comment(s). Waiting for assistant...",
-    )
-    await _stream_answer(session, emit)
-    return 0
-
-
 async def append_message(workspace: Path, text: str, emit=None) -> int:
     emit = emit or _emit
     text = text.strip()
@@ -532,8 +430,6 @@ async def daemon_handle_request(workspace: Path, request: dict[str, Any]) -> int
     try:
         if command == "append-message":
             await append_message(workspace, str(payload.get("text") or ""), emit)
-        elif command == "append-review":
-            await append_review(workspace, _payload_comments(payload), emit)
         elif command == "ping":
             emit(True, "status", "pong")
         elif command == "shutdown":
@@ -550,6 +446,30 @@ async def daemon_handle_request(workspace: Path, request: dict[str, Any]) -> int
     return 0
 
 
+def _drain_notifications(workspace: Path) -> None:
+    chat_key = _session(workspace).chat_key
+    for path, notification in notify_queue.claim_notifications(
+        lambda item: item["chat_key"] == chat_key
+    ):
+        try:
+            _emit_payload(
+                {
+                    "type": "queue",
+                    "text": notify_queue.format_notification_message(notification),
+                }
+            )
+        except Exception:
+            notify_queue.requeue_notification(path)
+            raise
+        notify_queue.ack_notification(path)
+
+
+async def _poll_notifications(workspace: Path) -> None:
+    while True:
+        _drain_notifications(workspace)
+        await asyncio.sleep(1)
+
+
 async def _stdin_lines():
     loop = asyncio.get_running_loop()
     while True:
@@ -561,9 +481,18 @@ async def _stdin_lines():
 
 
 async def daemon(workspace: Path) -> int:
-    async for line in _stdin_lines():
-        if await daemon_handle_request(workspace, json.loads(line)):
-            return 0
+    notify_queue.recover_processing_notifications()
+    poller = asyncio.create_task(_poll_notifications(workspace))
+    try:
+        async for line in _stdin_lines():
+            if await daemon_handle_request(workspace, json.loads(line)):
+                return 0
+    finally:
+        poller.cancel()
+        try:
+            await poller
+        except asyncio.CancelledError:
+            pass
     return 0
 
 
@@ -609,7 +538,6 @@ def main() -> int:
     daemon_parser = sub.add_parser("daemon")
     daemon_parser.add_argument("--workspace", default=str(Path.cwd()))
 
-    sub.add_parser("append-review")
     sub.add_parser("append-message")
     sub.add_parser("slash-commands")
 
@@ -640,10 +568,6 @@ def main() -> int:
         return websocket_enabled(Path(args.workspace))
     if args.command == "daemon":
         return asyncio.run(daemon(Path(args.workspace)))
-    if args.command == "append-review":
-        payload = _stdin_payload()
-        workspace = Path(str(payload.get("workspace") or Path.cwd()))
-        return asyncio.run(append_review(workspace, _payload_comments(payload)))
     if args.command == "append-message":
         payload = _stdin_payload()
         workspace = Path(str(payload.get("workspace") or Path.cwd()))

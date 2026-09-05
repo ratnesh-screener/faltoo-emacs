@@ -38,7 +38,8 @@
 (defvar faltoo-bridge-daemons (make-hash-table :test #'equal))
 (defvar faltoo-bridge-daemon-idle-timers (make-hash-table :test #'equal))
 (defvar faltoo-bridge-daemon-next-id 0)
-(defconst faltoo-bridge--daemon-commands '("append-message" "append-review"))
+(defvar faltoo-bridge-queue-hook nil)
+(defconst faltoo-bridge--daemon-commands '("append-message"))
 
 (defun faltoo-bridge-command-for-workspace (&optional workspace)
   "Return the active Faltoo command for WORKSPACE."
@@ -167,18 +168,21 @@
 
 (defun faltoo-bridge--daemon-handle-line (workspace process line)
   (let* ((event (json-parse-string line :object-type 'alist :array-type 'list))
-         (request-id (alist-get 'id event))
-         (requests (process-get process 'faltoo-requests))
-         (callbacks (gethash request-id requests)))
-    (when callbacks
-      (let ((on-event (car callbacks))
-            (on-done (cdr callbacks)))
-        (if (string= (or (alist-get 'type event) "") "complete")
-            (progn
-              (remhash request-id requests)
-              (funcall on-done (eq (alist-get 'ok event) t))
-              (faltoo-bridge--schedule-daemon-idle-stop workspace process))
-          (funcall on-event event))))))
+         (type (or (alist-get 'type event) "")))
+    (if (string= type "queue")
+        (run-hook-with-args 'faltoo-bridge-queue-hook workspace (alist-get 'text event))
+      (let* ((request-id (alist-get 'id event))
+             (requests (process-get process 'faltoo-requests))
+             (callbacks (gethash request-id requests)))
+        (when callbacks
+          (let ((on-event (car callbacks))
+                (on-done (cdr callbacks)))
+            (if (string= type "complete")
+                (progn
+                  (remhash request-id requests)
+                  (funcall on-done (eq (alist-get 'ok event) t))
+                  (faltoo-bridge--schedule-daemon-idle-stop workspace process))
+              (funcall on-event event))))))))
 
 (defun faltoo-bridge--daemon-filter (workspace process chunk)
   (process-put process 'faltoo-pending

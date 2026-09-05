@@ -485,10 +485,10 @@
                  (setq routed-to 'oneshot)
                  'oneshot-process)))
 
-      ;; When an append-review stream starts.
+      ;; When an append-message stream starts.
       (should (eq (faltoo-bridge-stream
-                   '("append-review")
-                   '((workspace . "/repo/") (comments . []))
+                   '("append-message")
+                   '((workspace . "/repo/") (text . "hello"))
                    #'ignore #'ignore)
                   'oneshot-process)))
 
@@ -648,6 +648,11 @@
   "Scenario: The main Faltoo prefix exposes request cancellation."
   ;; Then C-c f q cancels the current workspace request.
   (should (eq (lookup-key faltoo-command-map (kbd "q")) #'faltoo-request-cancel)))
+
+(ert-deftest faltoo-main-prefix-j-opens-workspace-queue ()
+  "Scenario: The main Faltoo prefix opens the editable workspace queue."
+  ;; Then C-c f j opens the current workspace queue.
+  (should (eq (lookup-key faltoo-command-map (kbd "j")) #'faltoo-queue-open)))
 
 (ert-deftest faltoo-main-prefix-i-opens-generic-chat ()
   "Scenario: The main Faltoo prefix opens the repo-independent chat."
@@ -2325,21 +2330,23 @@ removed")
                    (goto-char (point-max))
                    (insert "follow up")
                    (faltoo-comment-save))))
-              (cl-letf (((symbol-function 'faltoo-chat-append-user-message) #'ignore)
-                        ((symbol-function 'faltoo-request-stream)
-                         (lambda (_args payload _title _popup on-submitted _on-done)
-                           (setq submitted-workspace (alist-get 'workspace payload))
-                           (funcall on-submitted))))
+              (cl-letf (((symbol-function 'faltoo-request-consume-queue)
+                         (lambda (queued-workspace)
+                           (setq submitted-workspace queued-workspace))))
                 (faltoo-submit-review-comments)))
 
-            ;; Then it is submitted from the generic queue, not the busy parent repo.
+            ;; Then it enters the generic queue, not the busy parent repo.
             (should (equal submitted-workspace workspace))
+            (should (= (faltoo-queue-count workspace) 1))
             (should-not (faltoo-comments--list workspace))
             (should-not (faltoo-comments--list parent))))
       (when (get-buffer "*Faltoo Chat*")
         (kill-buffer "*Faltoo Chat*"))
       (when (get-buffer "*Faltoo Comment*")
         (kill-buffer "*Faltoo Comment*"))
+      (when-let ((buffer (get-buffer (faltoo-queue-buffer-name-for workspace))))
+        (with-current-buffer buffer (erase-buffer))
+        (kill-buffer buffer))
       (delete-directory parent t))))
 
 (ert-deftest faltoo-submit-review-comments-uses-current-workspace-queue ()
@@ -2429,24 +2436,6 @@ removed")
        (should (string-match-p "Comment:\nplease fix this" (buffer-string)))
        (should (string-match-p "---\n# Assistant" (buffer-string)))))))
 
-(ert-deftest faltoo-request-rejects-overlapping-streams-in-same-workspace ()
-  "Scenario: Faltoo does not start a second request in the same repo session."
-  (faltoo-test--with-temp-git-file
-   '("one")
-   (lambda (_file root)
-     (let ((faltoo-submitting nil)
-           (faltoo-submitting-workspaces (make-hash-table :test #'equal))
-           (bridge-called nil))
-       ;; Given a Faltoo request is already running for this workspace.
-       (puthash (file-truename root) t faltoo-submitting-workspaces)
-
-       ;; When another message is submitted from the same workspace.
-       (cl-letf (((symbol-function 'faltoo-bridge-stream)
-                  (lambda (&rest _args) (setq bridge-called t))))
-         ;; Then the request is rejected before touching the bridge.
-         (should-error (faltoo-request-message "second request") :type 'user-error)
-         (should-not bridge-called))))))
-
 (ert-deftest faltoo-request-allows-parallel-streams-in-different-workspaces ()
   "Scenario: Running one repo session does not block prompts in another repo."
   (faltoo-test--with-two-temp-git-files
@@ -2478,6 +2467,7 @@ removed")
            (faltoo-submitting-workspaces (make-hash-table :test #'equal))
            (faltoo-request-processes (make-hash-table :test #'equal))
            (faltoo-request-cancelled (make-hash-table :test #'equal))
+           (faltoo-queue-paused-workspaces (make-hash-table :test #'equal))
            cancelled-process done)
        ;; Given a request is running for the current workspace.
        (cl-letf (((symbol-function 'faltoo-bridge-stream)
@@ -2487,6 +2477,7 @@ removed")
                  ((symbol-function 'faltoo-bridge-cancel-stream)
                   (lambda (process) (setq cancelled-process process))))
          (faltoo-request-message "question")
+         (faltoo-request-message "queued follow-up")
 
          ;; When cancelling it.
          (faltoo-request-cancel (file-truename root))
@@ -2499,10 +2490,15 @@ removed")
          (cl-letf (((symbol-function 'ding) (lambda (&rest _args) nil)))
            (funcall done nil))
 
-         ;; Then the workspace is idle and the status reflects cancellation.
+         ;; Then the workspace is idle, paused, and keeps its queued follow-up.
          (should-not (faltoo-workspace-submitting-p (file-truename root)))
          (should-not (gethash (file-truename root) faltoo-request-processes))
-         (should (equal faltoo-status "Faltoo cancelled")))))))
+         (should (faltoo-queue-paused-p (file-truename root)))
+         (should (= (faltoo-queue-count root) 1))
+         (should (equal faltoo-status "Faltoo cancelled"))
+         (with-current-buffer (faltoo-queue-buffer root)
+           (erase-buffer))
+         (kill-buffer (faltoo-queue-buffer-name-for root)))))))
 
 (ert-deftest faltoo-request-completion-clears-only-that-workspace ()
   "Scenario: Completing one repo stream leaves other repo streams running."
@@ -4318,6 +4314,20 @@ old three
 
 ;;; Buffer reload specs
 
+(ert-deftest faltoo-quit-guard-detects-queued-messages ()
+  "Scenario: Quit guard treats queued messages as unsaved work."
+  (let* ((root (file-name-as-directory (make-temp-file "faltoo-quit-queue" t)))
+         (faltoo-queue-paused-workspaces (make-hash-table :test #'equal)))
+    (unwind-protect
+        (progn
+          (faltoo-queue-add "queued prompt" root)
+          (should (faltoo-has-pending-work-p))
+          (should (member "1 queued message(s)" (faltoo-pending-work-labels))))
+      (with-current-buffer (faltoo-queue-buffer root)
+        (erase-buffer))
+      (kill-buffer (faltoo-queue-buffer-name-for root))
+      (delete-directory root t))))
+
 (ert-deftest faltoo-reload-workspace-buffers-refreshes-unmodified-stale-buffers ()
   "Scenario: Assistant-edited files refresh in Emacs before the user saves."
   (faltoo-test--with-temp-git-file
@@ -4368,5 +4378,132 @@ old three
       (should (equal comment-workspace default-directory))
       (should-not review-refreshed))))
 
+
+
+;;; Submission queue specs
+
+(ert-deftest faltoo-queue-buffer-is-editable-message-storage ()
+  "Scenario: A workspace queue is an editable buffer of message pages."
+  (let* ((root (file-name-as-directory (make-temp-file "faltoo-queue" t)))
+         (faltoo-queue-paused-workspaces (make-hash-table :test #'equal)))
+    (unwind-protect
+        (progn
+          (faltoo-queue-add "first prompt" root)
+          (faltoo-queue-add "second prompt" root)
+          (should (= (faltoo-queue-count root) 2))
+          (with-current-buffer (faltoo-queue-buffer root)
+            (should (derived-mode-p 'markdown-mode))
+            (should-not buffer-read-only)
+            (goto-char (point-min))
+            (search-forward "first")
+            (replace-match "edited")
+            (should (string= (plist-get (faltoo-queue-pop root) :text)
+                             "edited prompt"))))
+      (when-let ((buffer (get-buffer (faltoo-queue-buffer-name-for root))))
+        (with-current-buffer buffer (erase-buffer))
+        (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest faltoo-request-queues-overlapping-workspace-messages ()
+  "Scenario: A busy workspace sends queued messages after the active answer."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file root)
+     (let ((faltoo-submitting-workspaces (make-hash-table :test #'equal))
+           (faltoo-request-processes (make-hash-table :test #'equal))
+           (faltoo-request-start-times (make-hash-table :test #'equal))
+           (faltoo-request-rate-limits (make-hash-table :test #'equal))
+           (faltoo-request-cancelled (make-hash-table :test #'equal))
+           (faltoo-queue-paused-workspaces (make-hash-table :test #'equal))
+           calls completions)
+       (faltoo-test--kill-chat-buffer)
+       (cl-letf (((symbol-function 'faltoo-bridge-stream)
+                  (lambda (_args payload _on-event on-done)
+                    (setq calls (append calls (list (alist-get 'text payload)))
+                          completions (append completions (list on-done)))
+                    'bridge-process))
+                 ((symbol-function 'faltoo-reload-workspace-buffers) #'ignore)
+                 ((symbol-function 'ding) #'ignore))
+         (faltoo-request-message "first" nil nil nil root)
+         (faltoo-request-message "second" nil nil nil root)
+         (should (equal calls '("first")))
+         (should (= (faltoo-queue-count root) 1))
+         (with-current-buffer (faltoo-chat-buffer root)
+           (should-not (string-match-p "second" (buffer-string))))
+         (funcall (car completions) t)
+         (should (equal calls '("first" "second")))
+         (should (= (faltoo-queue-count root) 0))
+         (with-current-buffer (faltoo-chat-buffer root)
+           (should (< (string-match "first" (buffer-string))
+                      (string-match "second" (buffer-string))))))
+       (when-let ((buffer (get-buffer (faltoo-queue-buffer-name-for root))))
+         (with-current-buffer buffer (erase-buffer))
+         (kill-buffer buffer))))))
+
+(ert-deftest faltoo-opening-queue-pauses-until-explicit-resume ()
+  "Scenario: Queue text remains stable while the user edits it."
+  (let* ((root (file-name-as-directory (file-truename (make-temp-file "faltoo-queue-pause" t))))
+         (default-directory root)
+         (faltoo-queue-paused-workspaces (make-hash-table :test #'equal))
+         consumed)
+    (unwind-protect
+        (cl-letf (((symbol-function 'pop-to-buffer) #'ignore)
+                  ((symbol-function 'faltoo-request-consume-queue)
+                   (lambda (workspace) (setq consumed workspace))))
+          (faltoo-queue-add "queued" root)
+          (faltoo-queue-open)
+          (should (faltoo-queue-paused-p root))
+          (with-current-buffer (faltoo-queue-buffer root)
+            (faltoo-queue-resume))
+          (should-not (faltoo-queue-paused-p root))
+          (should (equal consumed root)))
+      (when-let ((buffer (get-buffer (faltoo-queue-buffer-name-for root))))
+        (with-current-buffer buffer (erase-buffer))
+        (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest faltoo-queued-review-clears-comments-and-overlays ()
+  "Scenario: Queued review text replaces pending source comment state."
+  (let* ((root (file-name-as-directory (file-truename (make-temp-file "faltoo-review-queue" t))))
+         (default-directory root)
+         (faltoo-comments (make-hash-table :test #'equal))
+         (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+         (faltoo-queue-paused-workspaces (make-hash-table :test #'equal))
+         (overlay (make-overlay (point-min) (point-min)))
+         (comment (make-faltoo-comment :file "sample.py" :path "sample.py"
+                                       :start 1 :end 1 :code "value = 1"
+                                       :text "rename this" :overlay overlay)))
+    (unwind-protect
+        (progn
+          (faltoo-comments--set (list comment) root)
+          (faltoo-set-workspace-submitting root t)
+          (faltoo-submit-review-comments)
+          (should-not (faltoo-comments--list root))
+          (should-not (overlay-buffer overlay))
+          (with-current-buffer (faltoo-queue-buffer root)
+            (should (string-match-p "rename this" (buffer-string)))))
+      (faltoo-set-workspace-submitting root nil)
+      (when-let ((buffer (get-buffer (faltoo-queue-buffer-name-for root))))
+        (with-current-buffer buffer (erase-buffer))
+        (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest faltoo-daemon-notification-enters-workspace-queue ()
+  "Scenario: Background notifications use the same queue as manual prompts."
+  (let* ((root (file-name-as-directory (make-temp-file "faltoo-notify-queue" t)))
+         (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+         (faltoo-queue-paused-workspaces (make-hash-table :test #'equal)))
+    (unwind-protect
+        (progn
+          (faltoo-set-workspace-submitting root t)
+          (run-hook-with-args 'faltoo-bridge-queue-hook root "# Background update\n\nDone")
+          (should (= (faltoo-queue-count root) 1))
+          (with-current-buffer (faltoo-queue-buffer root)
+            (should (string-match-p "Background update" (buffer-string)))))
+      (faltoo-set-workspace-submitting root nil)
+      (when-let ((buffer (get-buffer (faltoo-queue-buffer-name-for root))))
+        (with-current-buffer buffer (erase-buffer))
+        (kill-buffer buffer))
+      (delete-directory root t))))
 
 ;;; faltoo-behavior-test.el ends here

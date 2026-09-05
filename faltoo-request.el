@@ -5,6 +5,7 @@
 (require 'faltoo-core)
 (require 'faltoo-bridge)
 (require 'faltoo-chat)
+(require 'faltoo-queue)
 (require 'faltoo-ui)
 (require 'faltoo-faces)
 (require 'faltoo-compose)
@@ -84,6 +85,7 @@
     (unless process
       (user-error "No Faltoo request running for this workspace"))
     (puthash target t faltoo-request-cancelled)
+    (faltoo-queue-pause target)
     (faltoo-set-status "Cancelling Faltoo request...")
     (faltoo-bridge-cancel-stream process)))
 
@@ -138,32 +140,36 @@
     (when popup-buffer
       (faltoo-popup-start-stream popup-buffer))
     (faltoo-chat-start-stream "Assistant · answering" workspace)
-    (puthash
-     workspace
-     (faltoo-bridge-stream
-      args payload
-      (lambda (event)
-        (faltoo-request--route-event event workspace popup-buffer on-submitted))
-      (lambda (ok)
-        (let ((elapsed (- (float-time) (gethash workspace faltoo-request-start-times)))
-              (rate-limit (gethash workspace faltoo-request-rate-limits))
-              (cancelled (gethash workspace faltoo-request-cancelled)))
-          (remhash workspace faltoo-request-start-times)
-          (remhash workspace faltoo-request-rate-limits)
-          (remhash workspace faltoo-request-processes)
-          (remhash workspace faltoo-request-cancelled)
-          (faltoo-set-workspace-submitting workspace nil)
-          (faltoo-set-status (cond (cancelled "Faltoo cancelled")
-                                   (ok "Faltoo complete")
-                                   (t "Faltoo failed")))
-          (faltoo-request--flush-answer workspace)
-          (faltoo-reload-workspace-buffers workspace)
-          (faltoo-chat-finish-stream workspace elapsed rate-limit)
-          (when (and ok popup-buffer rate-limit)
-            (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit) t))
-          (when on-done (funcall on-done (and ok (not cancelled))))
-          (when (and ok (not cancelled)) (ding)))))
-     faltoo-request-processes)))
+    (let ((process
+           (faltoo-bridge-stream
+            args payload
+            (lambda (event)
+              (faltoo-request--route-event event workspace popup-buffer on-submitted))
+            (lambda (ok)
+              (let ((elapsed (- (float-time) (gethash workspace faltoo-request-start-times)))
+                    (rate-limit (gethash workspace faltoo-request-rate-limits))
+                    (cancelled (gethash workspace faltoo-request-cancelled)))
+                (remhash workspace faltoo-request-start-times)
+                (remhash workspace faltoo-request-rate-limits)
+                (remhash workspace faltoo-request-processes)
+                (remhash workspace faltoo-request-cancelled)
+                (faltoo-set-workspace-submitting workspace nil)
+                (faltoo-set-status (cond (cancelled "Faltoo cancelled")
+                                         (ok "Faltoo complete")
+                                         (t "Faltoo failed")))
+                (faltoo-request--flush-answer workspace)
+                (faltoo-reload-workspace-buffers workspace)
+                (faltoo-chat-finish-stream workspace elapsed rate-limit)
+                (when (and ok popup-buffer rate-limit)
+                  (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit) t))
+                (when on-done (funcall on-done (and ok (not cancelled))))
+                (if (and ok (not cancelled))
+                    (progn
+                      (ding)
+                      (faltoo-request-consume-queue workspace))
+                  (faltoo-queue-pause workspace)))))))
+      (when (faltoo-workspace-submitting-p workspace)
+        (puthash workspace process faltoo-request-processes)))))
 
 
 (defun faltoo-request--group-review-comments (comments)
@@ -237,28 +243,41 @@
           (setq lines (append lines '("---" "")))))
       (string-trim (string-join lines "\n")))))
 
+(defun faltoo-request-consume-queue (workspace)
+  "Start WORKSPACE's next queued message when it is idle."
+  (unless (or (faltoo-workspace-submitting-p workspace)
+              (faltoo-queue-paused-p workspace))
+    (when-let ((entry (faltoo-queue-pop workspace)))
+      (let ((text (plist-get entry :text)))
+        (faltoo-chat-append-user-message text workspace)
+        (faltoo-request-stream
+         (list "append-message")
+         (list (cons 'workspace workspace) (cons 'text text))
+         "Submitting queued message..."
+         (plist-get entry :popup-buffer) nil (plist-get entry :on-done))))))
+
+(defun faltoo-request--queue-notification (workspace text)
+  "Add background notification TEXT to WORKSPACE's submission queue."
+  (faltoo-queue-add text workspace)
+  (faltoo-request-consume-queue workspace))
+
+(remove-hook 'faltoo-bridge-queue-hook #'faltoo-request--queue-notification)
+(add-hook 'faltoo-bridge-queue-hook #'faltoo-request--queue-notification)
+
 (defun faltoo-request-message (text &optional popup-buffer on-done skip-transcript-user workspace)
-  "Send TEXT as a chat message."
+  "Queue TEXT as a chat message."
   (let ((workspace (or workspace (faltoo-workspace))))
-    (faltoo-request-ensure-idle workspace)
-    (unless skip-transcript-user
-      (faltoo-chat-append-user-message text workspace))
-    (faltoo-request-stream
-     (list "append-message")
-     (list (cons 'workspace workspace) (cons 'text text))
-     "Submitting ask..."
-     popup-buffer nil on-done)))
+    (when skip-transcript-user
+      (faltoo-chat-clear-user-prompt workspace))
+    (faltoo-queue-add text workspace popup-buffer on-done)
+    (faltoo-request-consume-queue workspace)))
 
 (defun faltoo-request-review (comments on-submitted &optional on-done workspace)
-  "Submit COMMENTS as review comments for WORKSPACE."
+  "Queue COMMENTS as review text for WORKSPACE."
   (let ((workspace (or workspace (faltoo-active-workspace))))
-    (faltoo-request-ensure-idle workspace)
-    (faltoo-chat-append-user-message (faltoo-request--review-prompt comments) workspace)
-    (faltoo-request-stream
-     (list "append-review")
-     (list (cons 'workspace workspace) (cons 'comments (vconcat comments)))
-     "Submitting review comments..."
-     nil on-submitted on-done)))
+    (faltoo-queue-add (faltoo-request--review-prompt comments) workspace nil on-done)
+    (funcall on-submitted)
+    (faltoo-request-consume-queue workspace)))
 
 (provide 'faltoo-request)
 ;;; faltoo-request.el ends here

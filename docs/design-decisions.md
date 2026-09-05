@@ -93,6 +93,7 @@ faltoo.el              ; public commands, setup, command map
 faltoo-core.el         ; workspace/session state
 faltoo-bridge.el       ; Python bridge calls and streaming JSONL parser
 faltoo-chat.el         ; per-workspace transcript/chat buffers
+faltoo-queue.el        ; editable per-workspace submission queue
 faltoo-tree.el         ; messages.json transcript inspector
 faltoo-review.el       ; generated full-file review buffers and unstaged files
 faltoo-comments.el     ; pending comment data, overlays, navigation
@@ -234,21 +235,23 @@ Reasons:
 
 Canonical history remains FaltooBot's persisted session. Local edits to transcript buffers are UI edits unless an explicit save/export feature is later added.
 
-### Sending Chat Messages
+### Submission Queue
 
-Chat messages should send immediately.
-
-This intentionally differs from `faltoo.nvim`, where Ask saves a pending question and `submit` sends it later.
+Each workspace has one editable Markdown queue buffer. Manual prompts, finalized review batches, and background notifications enter it as page-separated text entries.
 
 Decision:
 
-- Chat/Ask = immediate send from the current repo transcript or source-buffer popup.
-- Review comments = prepared/batched and submitted together, including comments on selected transcript text.
+- `C-c f j` opens the workspace queue and pauses automatic consumption.
+- `C-c C-c` resumes FIFO submission after the user edits or reorders its text.
+- The consumer appends a user turn to the transcript only when that entry starts.
+- Successful completion consumes the next entry; cancellation or failure pauses the queue.
+- Finalizing review comments converts them to their final prompt and clears their pending objects/overlays immediately. The queue text then becomes the sole source of truth.
+- Queue and notification support targets websocket-enabled workspaces only.
 
 Rationale:
 
-- Immediate send is more natural for chat in Emacs.
-- Batch submission is still valuable for review comments.
+- One text buffer is both the editable UI and storage; no parallel queue model is needed.
+- The same consumer path gives prompts, review batches, and notifications consistent transcript timing.
 
 ### Prompt Detection
 
@@ -283,7 +286,7 @@ Preferred UI:
 
 - Use `posframe` for Ask popups.
 - The popup should appear centered and include target context: file, line/range, and selected code when applicable.
-- `C-c C-c` sends immediately.
+- `C-c C-c` queues the Ask and starts it immediately when the workspace is idle.
 - `C-c C-k`/`C-g` cancels.
 - `C-c C-f` inserts a file reference.
 - `C-c /` runs built-in session commands. `C-c p` pastes a saved prompt template.
@@ -419,7 +422,7 @@ Review is code-first but uses generated buffers so removed lines can appear inli
 - includes already staged hunks in blue, remapping their index coordinates through later working-tree edits;
 - maps Ask/comment line ranges and file identity back to the real source file.
 
-The real source buffer remains untouched and editable. Starting review from a transcript opens the generated review buffer in another window so the transcript remains visible. Pending comments are keyed by workspace and canonical source path, so comments created from the source or generated review buffer share one queue and survive `faltoo-review-stop`.
+The real source buffer remains untouched and editable. Starting review from a transcript opens the generated review buffer in another window so the transcript remains visible. Pending comments are keyed by workspace and canonical source path, so comments created from the source or generated review buffer share one pending-comment list and survive `faltoo-review-stop`.
 
 Review mode excludes non-file, special, Magit, process, commit, and rebase buffers. Those buffers are never converted into review buffers.
 
@@ -510,46 +513,26 @@ These should navigate, inspect, edit, and delete pending comments before submiss
 
 ## Submitting
 
-### Chat Submission
+### Queue Consumption
 
-Chat messages from a repo transcript send immediately using bridge command:
+All submissions become editable text entries in the current workspace queue. When idle and unpaused, the consumer:
 
-```text
-append-message
-```
-
-Behavior:
-
-- Insert/render user prompt in the repo transcript.
-- Add an `# Assistant · answering` section.
-- Start async bridge process.
-- Stream JSONL events into the chat buffer.
-- On completion, finalize the assistant heading in-place and append the next user prompt after a horizontal rule.
-- Ring bell optionally.
-- Reload review buffers if the assistant may have edited files.
+- removes the first entry from the queue buffer;
+- appends it as the next user turn in the transcript;
+- sends it through bridge command `append-message`;
+- streams the answer into the transcript and any attached Ask popup;
+- starts the next entry only after successful completion;
+- pauses after cancellation or failure.
 
 ### Review Comment Submission
 
-Review comments are submitted in batch using bridge command:
+Review comments are still prepared in batches. Submission formats the batch as its final Markdown prompt, adds that text to the workspace queue, and clears the submitted comment objects and overlays. Later edits happen directly in the queue buffer.
 
-```text
-append-review
-```
-
-Behavior:
-
-- Convert pending comment structs to bridge payload.
-- Start async bridge process.
-- Stream response into the repo transcript.
-- Remove only the submitted comment objects once the bridge confirms submission.
-- Keep comments added after submission started.
-- On completion, reload unmodified source buffers and refresh comment indicators only for that workspace; leave generated review buffers unchanged.
+On answer completion, Faltoo reloads unmodified source buffers and comment indicators only for that workspace; generated review buffers remain unchanged until explicit refresh.
 
 ### Overlapping Submissions
 
-Do not allow overlapping Faltoo requests in MVP.
-
-If a request is already running, notify the user.
+Allow one active request per workspace. Additional submissions enter that workspace's editable queue; other workspaces continue independently.
 
 ## History / Persistence
 
@@ -578,7 +561,6 @@ Bridge commands needed:
 messages
 messages-path
 unstaged-files
-append-review
 append-message
 slash-commands
 websocket-enabled
@@ -588,7 +570,7 @@ daemon
 Emacs side should provide:
 
 - synchronous bridge call helper for commands like `messages`, `unstaged-files`, `slash-commands`
-- asynchronous streaming helper for `append-message` and `append-review`
+- asynchronous streaming helper for `append-message`
 - if FaltooBot config enables OpenAI websocket mode, route append streams through one persistent daemon process per workspace
 - if websocket mode is disabled, keep the simple one-shot process flow
 - JSONL process filter with chunk accumulator
@@ -607,9 +589,13 @@ Decision:
 - Ask the bridge whether FaltooBot websocket mode is enabled for the current
   Python environment.
 - When enabled, keep one `daemon` bridge process per workspace and send
-  `append-message` / `append-review` requests to it as JSONL.
-- The daemon tags emitted stream events with a request id and sends a final
-  completion event. Emacs still allows only one active request per workspace.
+  queued `append-message` requests to it as JSONL.
+- The daemon tags emitted stream events with a request id, sends a final
+  completion event, and polls matching FaltooBot background notifications.
+- Notification claim/ack/requeue remains in Python; Emacs receives only formatted
+  text and puts it into the same workspace queue as manual submissions.
+- Emacs allows one active request per workspace and consumes the next queued text
+  only after successful completion.
 - Idle daemon processes stop after 30 minutes.
 - Cancellation kills the current workspace's daemon process.
 - Non-append commands and non-websocket workspaces keep the old one-shot bridge
@@ -670,10 +656,11 @@ Warn/confirm when there is:
 
 - a running Faltoo request
 - pending review comments
+- queued messages
 
 Implemented with `kill-emacs-query-functions`.
 
-Since default Ask messages send immediately, there is no pending Ask question in the MVP unless a draft feature is later added.
+Ask submissions enter the workspace queue and normally start immediately when that workspace is idle. The editable Ask popup remains attached to its queued entry so a delayed response can still stream there.
 
 ## Session Transcript Inspector
 
@@ -714,6 +701,7 @@ C-c f c   faltoo-comment
 C-c f C   faltoo-file-comment
 C-c f a   faltoo-ask
 C-c f h   faltoo-chat
+C-c f j   faltoo-queue-open
 C-c f s   faltoo-submit-review-comments
 C-c f m   faltoo-comments-summary
 C-c f d   faltoo-delete-current-comment
@@ -859,7 +847,6 @@ Use the same structured command model:
 messages
 messages-path
 unstaged-files
-append-review
 append-message
 slash-commands
 websocket-enabled
@@ -891,8 +878,8 @@ Ask uses centered `posframe` input while keeping focus on code.
 
 MVP behavior:
 
-- `C-c C-c` sends immediately.
-- Response streams in the same popup and current repo transcript. Opening Ask again rebuilds from the current source region/line instead of restoring old Ask state.
+- `C-c C-c` queues the Ask and starts it when the workspace is idle.
+- Once consumed, the response streams in the same popup and current repo transcript. Opening Ask again rebuilds from the current source region/line instead of restoring old Ask state.
 - Popup remains open after completion until closed.
 - `C-g`/`C-c C-k` closes and returns focus to the source window.
 - Plain `q` is not a close key because it must remain typeable in editable popups.

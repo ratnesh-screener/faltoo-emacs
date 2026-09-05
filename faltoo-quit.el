@@ -1,6 +1,7 @@
 ;;; faltoo-quit.el --- Quit guard for Faltoo -*- lexical-binding: t; -*-
 
 (require 'faltoo-core)
+(require 'faltoo-queue)
 
 (defun faltoo-pending-work-labels ()
   "Return labels for pending Faltoo work."
@@ -9,7 +10,10 @@
    (when (fboundp 'faltoo-comments-total-count)
      (let ((count (faltoo-comments-total-count)))
        (when (> count 0)
-         (list (format "%d pending review comment(s)" count)))))))
+         (list (format "%d pending review comment(s)" count)))))
+   (let ((count (faltoo-queue-total-count)))
+     (when (> count 0)
+       (list (format "%d queued message(s)" count))))))
 
 (defun faltoo-has-pending-work-p ()
   "Return non-nil when Faltoo has pending work."

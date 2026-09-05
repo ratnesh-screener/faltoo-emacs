@@ -53,6 +53,7 @@ faltoo-ask.el          Source-buffer Ask UI and last-response popup.
 faltoo-comments.el     Pending review-comment model, posframe input, overlays, navigation, submit payload.
 faltoo-review.el       Generated full-file review buffers, inline Git rows, Magit wrappers, review navigation.
 faltoo-chat.el         Per-workspace transcript/history rendering.
+faltoo-queue.el        Editable per-workspace FIFO for prompts, review batches, and notifications.
 faltoo-tree.el         Special-mode transcript inspector for messages.json, row details, token summary, pruning.
 faltoo-quit.el         Quit guard for running requests / pending comments.
 python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
@@ -88,8 +89,12 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Ask always rebuilds from the active region/current line when invoked; responses stream in the posframe and current repo transcript. Last-response popups preserve follow-up drafts across close/reopen.
 - Faltoo workspace/session follows the current buffer's Git root when present; outside Git it falls back to the current folder and informs the user once. Popup and repo transcript buffers set `default-directory` to that workspace so sends continue in the correct session. Generic chat intentionally uses `faltoo-generic-chat-directory` instead of source-buffer workspace detection.
 - The Python bridge resolves its Python from the current workspace's command override, falling back to `faltoo-faltoobot-command`; this allows per-chat switching between released FaltooBot and the local venv command.
-- If FaltooBot config enables OpenAI websocket mode, append-message/append-review streams use one persistent daemon process per workspace; otherwise they use the one-shot bridge. Switching a workspace's Faltoo core stops that workspace daemon and clears its websocket capability cache.
+- If FaltooBot config enables OpenAI websocket mode, queued `append-message` streams use one persistent daemon process per workspace; otherwise they use the one-shot bridge. Switching a workspace's Faltoo core stops that workspace daemon and clears its websocket capability cache.
 - Background notification and submission queue support only needs to work for websocket-enabled workspaces; do not add non-websocket fallback plumbing.
+- Manual prompts, finalized review batches, and background notifications share an editable FIFO buffer per workspace. `C-c f j` opens and pauses it; `C-c C-c` resumes consumption.
+- User turns enter the transcript only when consumed. Successful completion starts the next entry; cancellation or failure pauses the queue.
+- Finalizing review comments adds their generated prompt to the queue and immediately clears the pending comment objects/overlays. The editable queue text becomes the source of truth.
+- Each persistent workspace daemon polls FaltooBot notifications and emits formatted notification text into the same Emacs queue; claim/ack/requeue stays in Python.
 - Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
 - Request cancellation is per workspace: `C-c f q` from source/review buffers through the main Faltoo prefix.
 - Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
@@ -100,7 +105,7 @@ python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
 - Request completion reloads unmodified source buffers and comment overlays only for that workspace; generated review buffers refresh through `r` for the current file, `R`/`C-c f u` for all loaded review buffers, or Git actions.
 - Review Git colors use low-priority background-only overlays derived from Magit so source syntax colors, selection, and pending-comment overlays remain visible.
 - In review buffers, `s`/`u` stage/unstage the current hunk or every hunk in the active region, while `S`/`U` stage/unstage the whole file; staged snapshot rows use a muted theme-aware blue background.
-- Review/source comments share one workspace queue keyed by canonical source path and survive stopping review.
+- Review/source comments share one pending-comment list keyed by workspace and canonical source path, and survive stopping review.
 - Faltoo never auto-stages assistant edits.
 
 ## Testing
