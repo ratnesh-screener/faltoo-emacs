@@ -1,177 +1,72 @@
 # Faltoo Emacs Agent Guide
 
-## User Preferences / Standing Instructions
+## Working rules
 
-- User prefers compact responses; avoid lengthy explanations unless specifically asked.
-- This plugin is for the user's personal use only. Be opinionated, direct, and fast.
-- Optimize for the user's desired workflow, not broad compatibility or fallback support.
-- Prefer simple, boring, easy-to-read code that works quickly.
-- Always do the smallest change that solves the current problem; question whether every new line is really needed.
-- Avoid excessive defensive programming; this codebase controls most call paths.
-- Fix root causes with higher-level architecture changes, not localized band-aid handlers.
-- Preserve the code-first workflow: source buffers are primary; transcript is secondary/history.
-- Dependencies are acceptable and expected. Required packages are `posframe`, `magit`, and `markdown-mode`.
-- Target the latest stable Emacs in use for this project, currently GNU Emacs 30.2.
+- Personal-use plugin: support this user's workflow, not broad compatibility.
+- Be brief, direct, and critical. Ask when something is unknown; do not assume.
+- Make the smallest useful change. Question every new line and preserve existing logic when refactoring.
+- Fix root causes, not symptoms. Avoid defensive checks in controlled call paths, fallback scaffolding, tiny helpers, and deep call chains.
+- Keep code primary; transcript is history. Do not build a chat-first TUI clone.
+- Target Emacs 30.2 with required `posframe`, `magit`, `markdown-mode`, and the system `file` command.
+- Read `docs/design-decisions.md` before changing behavior. `README.md` owns installation and keybindings; do not duplicate them here.
 
-## Product Direction
+## Code map
 
-Faltoo Emacs is a code-first Emacs integration for FaltooBot/FaltooChat.
+| File | Responsibility |
+|---|---|
+| `faltoo.el` | Entrypoint, command map, reload |
+| `faltoo-core.el` | Workspace state, source context, status, source reload |
+| `faltoo-bridge.el` | Python processes, JSON/JSONL transport, core selection |
+| `python/faltoo_bridge.py` | FaltooBot imports, sessions, stream events, notification polling |
+| `faltoo-request.el` | Shared request and stream routing |
+| `faltoo-chat.el` | Workspace transcripts and history rendering |
+| `faltoo-queue.el` | Editable workspace FIFO and consumption |
+| `faltoo-ui.el` | Posframe lifecycle and shared Markdown setup |
+| `faltoo-compose.el` | Popup layout and stream formatting |
+| `faltoo-faces.el` | Theme-aware faces |
+| `faltoo-ask.el` | Ask and last-response popups |
+| `faltoo-comments.el` | Pending comments, overlays, navigation, batch prompts |
+| `faltoo-review.el` | Generated full-file review, Magit integration, navigation |
+| `faltoo-tree.el` | Incremental `messages.json` inspector, details, tokens, pruning |
+| `faltoo-quit.el` | Quit guard |
 
-Primary workflow:
+Shared UI belongs in UI/compose; shared stream behavior belongs in request. Do not duplicate these in individual popups.
 
-1. Open unstaged files one at a time in generated read-only review buffers.
-2. Keep the source major mode and full-file context while inserting removed Git rows inline.
-3. Keep code at the forefront with the source major mode and full-file context; generated review buffers do not promise LSP parity with real file buffers.
-4. Use Magit's theme-aware diff faces and Git operations.
-5. Use `posframe` for code-local Ask and review-comment input.
-6. Use Magit for staging/unstaging/status/diff operations.
-7. Use per-workspace transcript buffers named like `*Faltoo: repo-name*` as history, not the main interaction surface.
+## Invariants
 
-Do not turn Faltoo into a chat-first TUI clone. The Nvim plugin exists because the TUI was too chat-centered; keep this Emacs plugin code-centered.
+- Workspace is Git root or current folder; generic chat has its own fixed directory. Popups retain the originating workspace.
+- Requests, queues, and pending comments are workspace-scoped. Source/review comments share canonical file identity and survive stopping review.
+- Ask rebuilds from the current full-line selection. Last-response follow-up drafts survive close/reopen.
+- Review buffers are generated and read-only; they do not promise real-file LSP parity. Source buffers remain editable.
+- Git colors affect backgrounds only; selection, syntax, and comments stay visible.
+- Review owns hidden Magit diff buffers; rendering and staging share their sections. Kill backing buffers with their review.
+- Git actions rebuild review state from the index/worktree. Never toggle staged flags or apply stored zero-context patches. Magit hunks use three context lines.
+- Review refresh is explicit or follows Git actions, not assistant completion. Completion reloads only unmodified source buffers in that workspace.
+- Queue text is its storage. Consumption appends user turns; finalizing comments clears their objects/overlays. Opening the queue does not pause it.
+- Queue/notification support targets websocket workspaces only. Claim/ack/requeue stays in Python.
+- Reload must not stop running bridge daemons. Switching a workspace's core does stop its daemon.
+- Let Markdown mode fontify normally. Do not force synchronous fontification or move the reader while appending streams.
+- Never auto-stage assistant edits.
 
-## Design Reference
+## Verification
 
-Authoritative design doc:
+First write a failing, descriptive BDD-style ERT test, then fix. Prefer parameterized behavior cases and remove redundant tests after green. Run a short real Emacs check; mocks alone missed UI and Git bugs.
 
-```text
-docs/design-decisions.md
-```
+| Test | Purpose |
+|---|---|
+| `test/faltoo-behavior-test.el` | Behavior specs |
+| `test/faltoo-performance-test.el` | Rendering and interaction budgets |
+| `test/faltoo-review-git-test.el` | Installed Magit, real Git index/worktree assertions |
+| `test/faltoo-bridge-behavior-test.py` | Python bridge behavior |
+| `test/load-smoke.el` | Load with dependency stubs |
+| `test/byte-compile-smoke.el` | Byte compilation |
 
-Read this before changing behavior or UX assumptions.
+Run the commands in README's Testing section before committing. For review changes, check full-file context, inline deletions, source/comment mapping, stage/unstage, refresh, navigation, and buffer cleanup. `dev/faltoo-visual-test.el` supports opt-in local visual testing; do not change regular init for test scaffolding.
 
-## Code Map
+## Commits
 
-```text
-faltoo.el              Main entrypoint, command map, package provide.
-faltoo-core.el         Shared state, workspace/git-root helpers, mode-line status, buffer reload.
-faltoo-bridge.el       Python bridge process calls and JSON/JSONL stream handling.
-faltoo-request.el      Central request/stream routing for Ask and review submissions.
-faltoo-ui.el           Posframe popup primitives and popup base mode.
-faltoo-compose.el      Shared popup layout helpers: titles, metadata, sections, code, help.
-faltoo-faces.el        Faces for popups, review comments, full-line diff highlights.
-faltoo-ask.el          Source-buffer Ask UI and last-response popup.
-faltoo-comments.el     Pending review-comment model, posframe input, overlays, navigation, submit payload.
-faltoo-review.el       Generated full-file review buffers, inline Git rows, Magit wrappers, review navigation.
-faltoo-chat.el         Per-workspace transcript/history rendering.
-faltoo-queue.el        Editable per-workspace FIFO for prompts, review batches, and notifications.
-faltoo-tree.el         Special-mode transcript inspector for messages.json, row details, token summary, pruning.
-faltoo-quit.el         Quit guard for running requests / pending comments.
-python/faltoo_bridge.py Bridge copied/adapted from faltoo.nvim.
-```
-
-## Important Architecture Rules
-
-- Keep stream handling centralized in `faltoo-request.el`. Do not duplicate stream routing in Ask/comments.
-- Keep posframe display primitives in `faltoo-ui.el`; keep layout formatting in `faltoo-compose.el`.
-- Keep generated full-file review behavior in `faltoo-review.el`.
-- Keep pending-comment state and overlays in `faltoo-comments.el`.
-- Keep bridge subprocess details in `faltoo-bridge.el`.
-- If a UI behavior applies to both Ask and comments, implement it once in `faltoo-ui.el` or `faltoo-compose.el`.
-- If a stream behavior applies to both Ask and review submissions, implement it once in `faltoo-request.el`.
-- Avoid adding broad fallback paths. Required packages are required.
-
-## Current UX Decisions
-
-- `C-c f` is the main prefix.
-- `C-c f u` starts review of unstaged files.
-- In normal source buffers, `C-c f a` opens Ask posframe for active region or current line.
-- In normal source buffers, `C-c f c` opens review-comment posframe for active region/current line.
-- In normal source buffers, `C-c f C` opens file-level comment posframe.
-- In normal source buffers, `C-c f s` submits pending review comments.
-- In normal source buffers, `C-c f l` shows latest assistant response in posframe.
-- `C-c f h` opens the current Git repo's transcript/history.
-- `C-c f i` opens generic `*Faltoo Chat*`, anchored at `faltoo-generic-chat-directory`, for quick questions outside the current repo/session.
-- `C-c f o` chooses a folder and opens its Git-root or folder-scoped transcript without first visiting a file.
-- `C-c f b` switches the current chat/workspace Faltoo core command between release/local/custom for testing local FaltooBot changes. Local-core answering status is shown as `Faltoo-beta:answering`.
-- In normal source buffers, `C-c f x` stops current review session.
-- Ask context is only active region or current line. Do not add defun/file/buffer context unless asked.
-- Ask/comment snippets always expand to full source lines: current line when no region, or all lines touched by the active region. Generated review snippets prefix added/removed rows with `+`/`-`.
-- Ask always rebuilds from the active region/current line when invoked; responses stream in the posframe and current repo transcript. Last-response popups preserve follow-up drafts across close/reopen.
-- Faltoo workspace/session follows the current buffer's Git root when present; outside Git it falls back to the current folder and informs the user once. Popup and repo transcript buffers set `default-directory` to that workspace so sends continue in the correct session. Generic chat intentionally uses `faltoo-generic-chat-directory` instead of source-buffer workspace detection.
-- The Python bridge resolves its Python from the current workspace's command override, falling back to `faltoo-faltoobot-command`; this allows per-chat switching between released FaltooBot and the local venv command.
-- If FaltooBot config enables OpenAI websocket mode, queued `append-message` streams use one persistent daemon process per workspace; otherwise they use the one-shot bridge. Switching a workspace's Faltoo core stops that workspace daemon and clears its websocket capability cache.
-- Background notification and submission queue support only needs to work for websocket-enabled workspaces; do not add non-websocket fallback plumbing.
-- Manual prompts, finalized review batches, and background notifications share an editable FIFO buffer per workspace. `C-c f j` opens it without changing consumption state; `C-c f p` pauses it; `C-c C-c` resumes after cancellation or failure.
-- User turns enter the transcript only when consumed. Successful completion starts the next entry; cancellation or failure pauses the queue.
-- Finalizing review comments adds their generated prompt to the queue and immediately clears the pending comment objects/overlays. The editable queue text becomes the source of truth.
-- Each persistent workspace daemon polls FaltooBot notifications and emits formatted notification text into the same Emacs queue; claim/ack/requeue stays in Python. Transcript rendering shows consumed notifications as `Background Update` sections with quoted metadata and no `## message` heading.
-- Running-request state is per workspace. A request in one Git repo must not block Ask/chat/review submission in another repo.
-- Request cancellation is per workspace: `C-c f q` from source/review buffers through the main Faltoo prefix.
-- Transcript and popup buffers use `markdown-mode` with local pretty Markdown settings, because model output is Markdown.
-- `C-c /` runs built-in session commands (`/reset`, `/resume`, `/name`, `/tree`, `/status`); `C-c p` inserts saved prompt templates. Typed slash text submits as a normal prompt.
-- Pending review comments are scoped per workspace. Review-comment submissions stream to the current repo transcript and status/mode-line, not a popup. Transcript selections/current lines can also be queued as pending comments with the same `C-c f c` / `C-c f s` batch flow.
-- Review buffers are generated, read-only, use direct single-key bindings, and show `Faltoo[1/N]`.
-- Review buffers retain the source major mode, insert removed rows inline, and include already staged hunks for each opened review file.
-- Request completion reloads unmodified source buffers and comment overlays only for that workspace; generated review buffers refresh through `r` for the current file, `R`/`C-c f u` for all loaded review buffers, or Git actions.
-- Review Git colors use low-priority background-only overlays derived from Magit so source syntax colors, selection, and pending-comment overlays remain visible.
-- In review buffers, `s`/`u` stage/unstage the current hunk or every hunk in the active region, while `S`/`U` stage/unstage the whole file; staged snapshot rows use a muted theme-aware blue background.
-- Review/source comments share one pending-comment list keyed by workspace and canonical source path, and survive stopping review.
-- Faltoo never auto-stages assistant edits.
-
-## Testing
-
-Tests should be behavior-oriented and readable, BDD style.
-
-Main test files:
-
-```text
-test/faltoo-behavior-test.el      Behavior/spec tests.
-test/faltoo-performance-test.el   Performance behavior tests.
-test/faltoo-bridge-behavior-test.py Python bridge behavior tests.
-test/byte-compile-smoke.el        Byte compile smoke.
-test/load-smoke.el                Load smoke with dependency stubs.
-```
-
-Run before committing:
-
-```sh
-emacs -Q --batch -l test/faltoo-behavior-test.el -f ert-run-tests-batch-and-exit
-emacs -Q --batch -l test/faltoo-performance-test.el -f ert-run-tests-batch-and-exit
-python3 -m unittest test/faltoo-bridge-behavior-test.py
-emacs -Q --batch -l test/byte-compile-smoke.el
-rm -f *.elc
-```
-
-When adding behavior, first add a failing BDD-style test with a descriptive name, then fix.
-
-Good test names:
-
-```elisp
-faltoo-ask-uses-active-region-when-present
-faltoo-popup-show-creates-focusable-bordered-posframe
-faltoo-review-buffer-renders-full-file-with-inline-deletions
-```
-
-## Manual Test Flow
-
-In a Git repo with unstaged changes:
-
-```text
-C-c f u   review unstaged files
-a         ask about region/current line in review buffers
-C-c C-c   send from Ask popup
-C-g       close popup
-c         add review comment in review buffers
-C-c C-c   save comment
-s/u       stage/unstage current hunk or selected hunks in review buffers
-S/U       stage/unstage current file in review buffers
-C-c f s   submit comments in review buffers
-h         view current repo transcript in review buffers
-C-c C-l   load more transcript turns from the repo transcript
-C-c C-p/n jump previous/next user message in the repo transcript
-```
-
-Expected visual behavior:
-
-- Generated review buffer is read-only; the real source buffer remains editable.
-- Header line shows `Faltoo Review Faltoo[1/N]`.
-- Git changes are highlighted as full lines.
-- Ask/comment posframes are focusable, editable, and bordered.
-- Pending comment lines are highlighted with the review-comment face.
-
-## Git / Commit Notes
-
-- This repo is a Git repo.
-- Do not commit unrelated user test edits. Example: user may leave temporary edits in `faltoo.el` to create unstaged changes for UI testing.
-- Keep commits focused and small.
-- Run tests before committing.
+- Keep commits focused. Preserve unrelated user edits, including the test comment at the end of `faltoo.el`.
+- Run configured pre-commit hooks only on changed files; report any hook-driven edits.
+- Compare the title with the complete staged diff: cover all major user-visible changes.
+- The title says what changed; the body explains why (bug cause or refactor benefit). Prefer bullets, wrapped at 72 columns.
+- Use a heredoc or `git commit -F` for multiline messages, never literal `\n` in `-m` strings.
