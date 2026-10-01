@@ -2248,7 +2248,7 @@ removed")
          (setq faltoo-popup-return-window source-window)
          (insert "explain this")
          (cl-letf (((symbol-function 'faltoo-request-message)
-                    (lambda (_message _popup _on-done) nil)))
+                    (lambda (_message _popup _on-done &optional _skip _workspace) nil)))
            (faltoo-ask-send)))
 
        ;; Then returning to the source buffer will not leave the region selected.
@@ -2268,7 +2268,7 @@ removed")
 
        ;; When the request completes successfully.
        (cl-letf (((symbol-function 'faltoo-request-message)
-                  (lambda (_message _popup on-done)
+                  (lambda (_message _popup on-done &optional _skip _workspace)
                     (funcall on-done t))))
          (faltoo-ask-send))
 
@@ -2289,14 +2289,14 @@ removed")
        (with-current-buffer "*Faltoo Popup*"
          (insert "first question")
          (cl-letf (((symbol-function 'faltoo-request-message)
-                    (lambda (_message _popup on-done)
+                    (lambda (_message _popup on-done &optional _skip _workspace)
                       (funcall on-done t))))
            (faltoo-ask-send))
          (insert "second question")
 
          ;; When sending the follow-up.
          (cl-letf (((symbol-function 'faltoo-request-message)
-                    (lambda (message _popup _on-done)
+                    (lambda (message _popup _on-done &optional _skip _workspace)
                       (setq captured-message message))))
            (faltoo-ask-send)))
 
@@ -3183,7 +3183,7 @@ removed")
 
       ;; When sending from that popup.
       (cl-letf (((symbol-function 'faltoo-request-message)
-                 (lambda (message _popup _on-done)
+                 (lambda (message _popup _on-done &optional _skip _workspace)
                    (setq captured-message message))))
         (faltoo-ask-send)))
 
@@ -3499,6 +3499,37 @@ hello
          (should-not (faltoo-comments--list))
          (should-not (overlay-buffer overlay)))))))
 
+
+(ert-deftest faltoo-chat-ask-sends-selected-lines-to-its-workspace ()
+  "Scenario: Ask reuses transcript lines in repo and generic chats."
+  (dolist (selection '(nil t))
+    (dolist (workspace '("/tmp/repo/" "/tmp/repo/general/"))
+      (with-temp-buffer
+        ;; Given a transcript whose workspace must not be rediscovered.
+        (faltoo-chat-mode)
+        (setq-local faltoo-chat-workspace workspace)
+        (insert "alpha\nbeta\ncharlie")
+        (goto-char 9)
+        (when selection
+          (set-mark (point))
+          (goto-char 14)
+          (activate-mark))
+        (cl-letf (((symbol-function 'faltoo-popup-show) #'ignore)
+                  ((symbol-function 'faltoo-workspace) (lambda () "/tmp/repo/"))
+                  ((symbol-function 'faltoo-request-message)
+                   (lambda (text _popup _done _skip target)
+                     (should (equal target workspace))
+                     (should (equal text
+                                    (concat "Your response:\n\n```markdown\n"
+                                            (if selection "beta\ncharlie" "beta")
+                                            "\n```\n\nExplain this"))))))
+          ;; When Ask is opened and sent, its full-line context is preserved.
+          (faltoo-ask)
+          (with-current-buffer faltoo-popup-buffer
+            (should (string-match-p "Your response" (buffer-string)))
+            (should-not (string-match-p "Range:" (buffer-string)))
+            (insert "Explain this")
+            (faltoo-ask-send)))))))
 
 (ert-deftest faltoo-chat-comment-uses-selected-transcript-lines ()
   "Scenario: Transcript selections can be queued as review comments."

@@ -7,6 +7,7 @@
 (require 'faltoo-compose)
 
 (defvar-local faltoo-ask-context nil)
+(defvar-local faltoo-ask-workspace nil)
 (defvar-local faltoo-ask-question-marker nil)
 (defvar-local faltoo-ask-sent nil)
 (defvar-local faltoo-last-response-message nil)
@@ -25,12 +26,14 @@
 
 (defun faltoo-ask--context ()
   "Return full-line context from active region or current line."
-  (let ((range (faltoo-current-line-range)))
-    (list :file (faltoo-relative-file (faltoo-current-file))
+  (let ((range (faltoo-current-line-range))
+        (chat (derived-mode-p 'faltoo-chat-mode)))
+    (list :transcript chat
+          :file (unless chat (faltoo-relative-file (faltoo-current-file)))
           :start (nth 2 range)
           :end (nth 3 range)
           :code (nth 4 range)
-          :language (faltoo-current-language))))
+          :language (if chat "markdown" (faltoo-current-language)))))
 
 (defun faltoo-ask--insert-prompt (context)
   "Insert Ask popup content for CONTEXT."
@@ -40,9 +43,10 @@
         (code (plist-get context :code))
         (language (plist-get context :language)))
     (faltoo-compose-insert-title "Ask Faltoo")
-    (faltoo-compose-insert-meta "File" file)
-    (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end)))
-    (faltoo-compose-insert-section "Code")
+    (unless (plist-get context :transcript)
+      (faltoo-compose-insert-meta "File" file)
+      (faltoo-compose-insert-meta "Range" (if (= start end) (format "line %d" start) (format "lines %d-%d" start end))))
+    (faltoo-compose-insert-section (if (plist-get context :transcript) "Your response" "Code"))
     (faltoo-compose-insert-code code language)
     (faltoo-compose-insert-help "C-c C-c send · C-c C-k/C-g close · C-c C-f file · C-c / command · C-c p prompt")
     (faltoo-compose-insert-section "Question")
@@ -52,12 +56,13 @@
 (defun faltoo-ask ()
   "Ask Faltoo about active region or current line."
   (interactive)
-  (let* ((workspace (faltoo-workspace))
+  (let* ((workspace (faltoo-active-workspace))
          (context (faltoo-ask--context))
          (buf (faltoo-popup-buffer faltoo-popup-buffer #'faltoo-ask-mode)))
     (with-current-buffer buf
       (setq default-directory workspace
             faltoo-ask-context context
+            faltoo-ask-workspace workspace
             faltoo-ask-sent nil)
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -69,10 +74,13 @@
 
 (defun faltoo-ask--message (context question)
   (if context
-      (format "About `%s` lines %d-%d:\n\n```%s\n%s\n```\n\n%s"
-              (plist-get context :file)
-              (plist-get context :start)
-              (plist-get context :end)
+      (format "%s\n\n```%s\n%s\n```\n\n%s"
+              (if (plist-get context :transcript)
+                  "Your response:"
+                (format "About `%s` lines %d-%d:"
+                        (plist-get context :file)
+                        (plist-get context :start)
+                        (plist-get context :end)))
               (plist-get context :language)
               (plist-get context :code)
               question)
@@ -111,7 +119,8 @@
      (lambda (ok)
        (when (and ok (buffer-live-p buf))
          (with-current-buffer buf
-           (faltoo-ask--insert-follow-up)))))))
+           (faltoo-ask--insert-follow-up))))
+     nil faltoo-ask-workspace)))
 
 (defun faltoo-last-response-buffer-name (workspace)
   (format "*Faltoo Last Response: %s*"
@@ -123,6 +132,7 @@
       (faltoo-ask-mode))
     (setq default-directory workspace
           faltoo-ask-context nil
+          faltoo-ask-workspace workspace
           faltoo-ask-sent nil
           faltoo-last-response-message message)
     (let ((inhibit-read-only t))
