@@ -94,8 +94,12 @@ The result is (BEG END START-LINE END-LINE CODE)."
                            (line-beginning-position 2))))))
     (list line-beg line-end
           (or (get-text-property line-beg 'faltoo-review-file-line)
+              (and (= line-beg (point-max))
+                   (bound-and-true-p faltoo-review-eof-line))
               (line-number-at-pos line-beg))
           (or (get-text-property end-line-beg 'faltoo-review-file-line)
+              (and (= end-line-beg (point-max))
+                   (bound-and-true-p faltoo-review-eof-line))
               (line-number-at-pos end))
           (mapconcat #'identity (nreverse lines) "\n"))))
 

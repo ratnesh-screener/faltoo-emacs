@@ -1,6 +1,7 @@
 ;;; faltoo-performance-test.el --- Performance behavior specs for faltoo -*- lexical-binding: t; -*-
 
 (require 'ert)
+(load-file "test/faltoo-magit-fixture.el")
 (require 'benchmark)
 (add-to-list 'load-path default-directory)
 
@@ -14,12 +15,11 @@
 (defun posframe-hide (&rest _args) nil)
 (provide 'posframe)
 
-(defun magit-stage-file (&rest _args) nil)
-(defun magit-unstage-file (&rest _args) nil)
+(defun magit-stage-files (&rest _args) nil)
+(defun magit-unstage-files (&rest _args) nil)
 (defun magit-status (&rest _args) nil)
 (defun magit-diff-working-tree (&rest _args) nil)
 (defun magit-refresh (&rest _args) nil)
-(provide 'magit)
 
 
 (require 'faltoo)
@@ -45,7 +45,12 @@
               (insert (format "line_%05d = %d\n" index index))))
           (find-file file)
           (setq faltoo-workspace root)
-          (funcall body file root))
+          (cl-letf (((symbol-function 'magit--insert-diff) #'faltoo-test--insert-diff)
+                    ((symbol-function 'magit-bare-repo-p) (lambda () nil))
+                    ((symbol-function 'faltoo-test--patch) (lambda (&rest _) "")))
+            (funcall body file root)))
+      (when-let ((review (get-buffer (faltoo-review-buffer-name file))))
+        (kill-buffer review))
       (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
       (delete-directory root t))))
 
@@ -71,12 +76,45 @@
   (faltoo-perf--with-temp-git-file
    20000
    (lambda (file _root)
-     (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) "")))
+     (cl-letf (((symbol-function 'faltoo-test--patch) (lambda (&rest _args) "")))
        (faltoo-perf--should-finish-under
         0.2
         (lambda ()
           (let ((review (faltoo-review-buffer file)))
             (kill-buffer review))))))))
+
+(ert-deftest faltoo-performance-review-rendering-retains-no-undo-history ()
+  "Scenario: Large read-only reviews allocate no undo history; source undo works."
+  (dolist (line-count '(1000 20000))
+    (faltoo-perf--with-temp-git-file
+     line-count
+     (lambda (file _root)
+       ;; Given a real source buffer with an undoable edit.
+       (let ((source (current-buffer))
+             (original-size (buffer-size)))
+         (goto-char (point-max))
+         (undo-boundary)
+         (insert "# local edit\n")
+         (undo-boundary)
+         (let ((source-undo buffer-undo-list))
+           (cl-letf (((symbol-function 'faltoo-test--patch) (lambda (&rest _) "")))
+             (let ((review (faltoo-review-buffer file)))
+               (unwind-protect
+                   (progn
+                     ;; Rendering and repeated rebuilds must retain zero undo records.
+                     (with-current-buffer review
+                       (dotimes (_ 3)
+                         (should (eq buffer-undo-list t))
+                         (should buffer-read-only)
+                         (faltoo-review-refresh-buffer))
+                       (should (eq buffer-undo-list t)))
+                     ;; The real source history must be untouched and usable.
+                     (with-current-buffer source
+                       (should (eq buffer-undo-list source-undo))
+                       (undo-only 1)
+                       (should (= (buffer-size) original-size))
+                       (set-buffer-modified-p nil)))
+                 (kill-buffer review))))))))))
 
 (ert-deftest faltoo-performance-returning-to-loaded-review-buffer-is-instant ()
   "Scenario: Repeated review file navigation reuses already-rendered buffers."
@@ -84,7 +122,7 @@
    10000
    (lambda (file _root)
      (let ((patch-calls 0))
-       (cl-letf (((symbol-function 'faltoo-review--patch)
+       (cl-letf (((symbol-function 'faltoo-test--patch)
                   (lambda (&rest _args)
                     (cl-incf patch-calls)
                     "")))

@@ -99,7 +99,9 @@
 
 (defun faltoo-comments--review-line-position (line &optional display-line)
   "Return the generated review position for source LINE."
-  (or (and display-line
+  (or (and (eq line (bound-and-true-p faltoo-review-eof-line))
+           (point-max))
+      (and display-line
            (save-excursion
              (goto-char (point-min))
              (forward-line (1- display-line))

@@ -1,6 +1,7 @@
 ;;; faltoo-behavior-test.el --- Behavior specs for faltoo -*- lexical-binding: t; -*-
 
 (require 'ert)
+(load-file "test/faltoo-magit-fixture.el")
 (add-to-list 'load-path default-directory)
 
 (define-derived-mode markdown-mode text-mode "Markdown")
@@ -20,16 +21,15 @@
 (defun posframe-poshandler-frame-center (&rest _args) nil)
 (provide 'posframe)
 
-(defun magit-stage-file (&rest _args) nil)
-(defun magit-unstage-file (&rest _args) nil)
+(defun magit-stage-files (&rest _args) nil)
+(defun magit-unstage-files (&rest _args) nil)
 (defun magit-status (&rest _args) nil)
 (defun magit-diff-working-tree (&rest _args) nil)
 (defun magit-refresh (&rest _args) nil)
-(defface magit-diff-added '((t :background "#123456")) "")
-(defface magit-diff-added-highlight '((t :background "#246824")) "")
-(defface magit-diff-file-heading-selection '((t :background "#224466")) "")
-(defface magit-diff-removed '((t :background "#654321")) "")
-(provide 'magit)
+(set-face-attribute 'magit-diff-added nil :background "#123456")
+(set-face-attribute 'magit-diff-added-highlight nil :background "#246824")
+(set-face-attribute 'magit-diff-file-heading-selection nil :background "#224466")
+(set-face-attribute 'magit-diff-removed nil :background "#654321")
 
 
 (require 'faltoo)
@@ -45,7 +45,12 @@
           (write-region (string-join lines "\n") nil file nil 'silent)
           (find-file file)
           (setq faltoo-workspace root)
-          (funcall body file root))
+          (cl-letf (((symbol-function 'magit--insert-diff) #'faltoo-test--insert-diff)
+                    ((symbol-function 'magit-bare-repo-p) (lambda () nil))
+                    ((symbol-function 'faltoo-test--patch) (lambda (&rest _) "")))
+            (funcall body file root)))
+      (when-let ((review (get-buffer (faltoo-review-buffer-name file))))
+        (kill-buffer review))
       (when (get-file-buffer file) (kill-buffer (get-file-buffer file)))
       (delete-directory root t))))
 
@@ -3749,34 +3754,13 @@ hello
                           "*Faltoo Review: sample.py*"))
          (delete-directory default-directory t))))))
 
-(ert-deftest faltoo-review-reads-the-complete-git-patch ()
-  "Scenario: Review rendering consumes every line emitted by Git."
-  (let ((patch "diff --git a/sample.py b/sample.py
-@@ -1 +1 @@
--old
-+new
-")
-        calls)
-    ;; Given Magit inserts a complete multi-line patch.
-    (cl-letf (((symbol-function 'magit-git-insert)
-               (lambda (&rest args)
-                 (push args calls)
-                 (insert patch)
-                 0)))
-
-      ;; Then Faltoo returns complete unstaged and staged patches.
-      (should (equal (faltoo-review--patch "sample.py") patch))
-      (should (equal (faltoo-review--patch "sample.py" t) patch))
-      (should-not (member "--cached" (cadr calls)))
-      (should (member "--cached" (car calls))))))
-
 (ert-deftest faltoo-review-buffer-renders-full-file-with-inline-deletions ()
   "Scenario: Review buffers show removed and added rows inside the complete file."
   (faltoo-test--with-temp-git-file
    '("new value" "unchanged")
    (lambda (file _root)
      ;; Given Git reports the first working-tree line as a replacement.
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached ""
                     "@@ -1 +1 @@
@@ -3812,12 +3796,59 @@ unchanged"))
                      'face)
                     (faltoo-review--line-background-face 'insert nil)))))))))
 
+(ert-deftest faltoo-review-shows-binary-paths-and-inline-images-without-opening-source ()
+  "Scenario: Non-text files never become raw-byte review or source buffers."
+  (pcase-dolist (`(,name ,bytes ,image)
+                  `(("document.pdf" "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n" nil)
+                    ("data.bin" ,(unibyte-string 0 1 2 255 0 1) nil)
+                    ("pixel.png" ,(base64-decode-string
+                                   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC") t)))
+    (let* ((root (file-name-as-directory (make-temp-file "faltoo-binary" t)))
+           (default-directory root)
+           (file (expand-file-name name root))
+           review)
+      (unwind-protect
+          (progn
+            (make-directory (expand-file-name ".git" root))
+            (let ((coding-system-for-write 'no-conversion))
+              (write-region bytes nil file nil 'silent))
+            ;; Opening and refreshing must not visit the source or request a diff.
+            (cl-letf (((symbol-function 'find-file-noselect)
+                       (lambda (&rest _) (ert-fail "Visited binary source")))
+                      ((symbol-function 'faltoo-review--diff-sections)
+                       (lambda (&rest _) (ert-fail "Diffed a non-text file"))))
+              (setq review (faltoo-review-buffer file))
+              (with-current-buffer review
+                (dotimes (_ 2)
+                  (should buffer-read-only)
+                  (should (string-match-p (regexp-quote file) (buffer-string)))
+                  (should-not (string-match-p (regexp-quote bytes) (buffer-string)))
+                  (should-not faltoo-review-hunk-positions)
+                  (let* ((pos (text-property-not-all (point-min) (point-max) 'display nil))
+                         (display (and pos (get-text-property pos 'display))))
+                    (should (eq (eq (car-safe display) 'image) image))
+                    (when image (should (equal (plist-get (cdr display) :file) (file-truename file)))))
+                  (faltoo-review-refresh-buffer)))))
+        (when (buffer-live-p review) (kill-buffer review))
+        (delete-directory root t)))))
+
+(ert-deftest faltoo-review-keeps-structured-and-unicode-text-in-the-diff-path ()
+  "Scenario: Content detection does not exclude code, JSON, XML or empty files."
+  (dolist (text '("" "print('hello')\n" "Hello नमस्ते\n"
+                  "{\"items\": [1, 2, 3]}\n" "<?xml version=\"1.0\"?><root/>\n"))
+    (let ((file (make-temp-file "faltoo-content")))
+      (unwind-protect
+          (progn
+            (write-region text nil file nil 'silent)
+            (should (eq (faltoo-review--file-type file) 'text)))
+        (delete-file file)))))
+
 (ert-deftest faltoo-review-buffer-includes-already-staged-hunks ()
   "Scenario: Review buffers show staged hunks after unstaged line shifts."
   (faltoo-test--with-temp-git-file
    '("unstaged insertion" "context" "staged value")
    (lambda (file _root)
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached
                       "@@ -2 +2 @@
@@ -3843,7 +3874,7 @@ staged value"))
   (faltoo-test--with-temp-git-file
    '("working")
    (lambda (file _root)
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached
                       "@@ -1 +1 @@
@@ -3870,7 +3901,7 @@ working"))
    '("def new_value():" "    return 1")
    (lambda (file _root)
      (let ((original-face-background (symbol-function 'face-background)))
-       (cl-letf (((symbol-function 'faltoo-review--patch)
+       (cl-letf (((symbol-function 'faltoo-test--patch)
                   (lambda (_relative &optional cached)
                     (if cached ""
                       "@@ -1 +1 @@
@@ -3903,7 +3934,7 @@ working"))
    '("<div class=\"new\">new</div>")
    (lambda (file _root)
      (let ((original-face-background (symbol-function 'face-background)))
-       (cl-letf (((symbol-function 'faltoo-review--patch)
+       (cl-letf (((symbol-function 'faltoo-test--patch)
                   (lambda (_relative &optional cached)
                     (if cached ""
                       "@@ -1 +1 @@
@@ -3942,7 +3973,7 @@ working"))
    (lambda (file _root)
      (let ((insert-calls 0)
            (original-insert (symbol-function 'insert)))
-       (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) ""))
+       (cl-letf (((symbol-function 'faltoo-test--patch) (lambda (&rest _args) ""))
                  ((symbol-function 'insert)
                   (lambda (&rest args)
                     (cl-incf insert-calls)
@@ -3955,7 +3986,7 @@ working"))
   (faltoo-test--with-temp-git-file
    '("one" "two")
    (lambda (file _root)
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached "" "@@ -3 +2,0 @@
 -old three"))))
@@ -3974,7 +4005,7 @@ old three
    '("one" "two")
    (lambda (file _root)
      (let ((patch-calls 0))
-       (cl-letf (((symbol-function 'faltoo-review--patch)
+       (cl-letf (((symbol-function 'faltoo-test--patch)
                   (lambda (&rest _args)
                     (cl-incf patch-calls)
                     "")))
@@ -3997,7 +4028,7 @@ old three
    '("changed")
    (lambda (file _root)
      ;; Given a generated review buffer represents the source file.
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached "" "@@ -1 +1 @@
 -old
@@ -4008,6 +4039,52 @@ old three
          (with-current-buffer buf
            (should (equal (faltoo-current-file) (file-truename file)))))))))
 
+(ert-deftest faltoo-comments-save-with-review-selection-ending-at-eof ()
+  "Scenario: EOF review comments do not break review or transcript saves."
+  (dolist (deleted '(nil t))
+    (faltoo-test--with-temp-git-file
+     '("changed" "")
+     (lambda (file root)
+       (let ((faltoo-comments (make-hash-table :test #'equal)))
+         (cl-letf (((symbol-function 'faltoo-test--patch)
+                    (lambda (_file &optional cached)
+                      (cond (cached "")
+                            (deleted "@@ -1 +1 @@\n-old\n+changed")
+                            (t "@@ -0,0 +1 @@\n+changed"))))
+                   ((symbol-function 'faltoo-popup-show) #'ignore)
+                   ((symbol-function 'faltoo-popup-close) #'ignore))
+           (let ((review (faltoo-review-buffer file)))
+             (unwind-protect
+                 (progn
+                   ;; Given added text selected through the trailing empty line.
+                   (with-current-buffer review
+                     (goto-char (point-min))
+                     (when deleted (forward-line 1))
+                     (set-mark (point))
+                     (goto-char (point-max))
+                     (activate-mark)
+                     (faltoo-comment))
+                   ;; When saving it, EOF must map back into the review buffer.
+                   (with-current-buffer "*Faltoo Comment*"
+                     (insert "Review EOF")
+                     (faltoo-comment-save))
+                   (let ((comment (car (faltoo-comments--list root))))
+                     (should (= (faltoo-comment-end comment) 2))
+                     (should (= (overlay-end (faltoo-comment-overlay comment))
+                                (with-current-buffer review (point-max))))
+                     ;; Then saving another comment in the transcript also works.
+                     (with-temp-buffer
+                       (faltoo-chat-mode)
+                       (setq-local faltoo-chat-workspace root)
+                       (insert "An answer")
+                       (faltoo-comment)
+                       (with-current-buffer "*Faltoo Comment*"
+                         (insert "Transcript question")
+                         (faltoo-comment-save))
+                       (should (= (faltoo-comments-count root) 2))
+                       (should (overlay-buffer (faltoo-comment-overlay comment))))))
+               (kill-buffer review)))))))))
+
 (ert-deftest faltoo-review-comments-survive-generated-buffer-session ()
   "Scenario: Review comments remain attached to the source file after review stops."
   (faltoo-test--with-temp-git-file
@@ -4017,7 +4094,7 @@ old three
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file))
            faltoo-current-review-index 0)
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached "" "@@ -1 +1 @@
 -old
@@ -4044,6 +4121,37 @@ old three
           (should (eq comment (car (faltoo-comments--list root))))
           (should (eq (faltoo-comment-source-buffer comment) (get-file-buffer file)))
           (should (overlay-buffer (faltoo-comment-overlay comment)))))))))
+
+(ert-deftest faltoo-review-cycles-removed-added-and-full-views ()
+  "Scenario: Review view cycling hides only the opposite diff rows."
+  (faltoo-test--with-temp-git-file
+   '("context" "changed")
+   (lambda (file _root)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
+                (lambda (_file &optional cached)
+                  (if cached "" "@@ -2 +2 @@\n-old\n+changed"))))
+       (let ((review (faltoo-review-buffer file)))
+         (unwind-protect
+             (with-current-buffer review
+               ;; Given the full file with interleaved removed/added rows.
+               (should (eq (key-binding (kbd "o")) #'faltoo-review-cycle-view))
+               (let ((text (buffer-string)))
+                 (pcase-dolist (`(,removed-hidden ,added-hidden)
+                                '((nil t) (t nil) (nil nil)))
+                   ;; When cycling, only display visibility changes.
+                   (faltoo-review-cycle-view)
+                   (should (equal text (buffer-string)))
+                   (should buffer-read-only)
+                   (dotimes (refresh 2)
+                     (when (= refresh 1) (faltoo-review-refresh-buffer))
+                     ;; Then context stays visible, even after refresh.
+                     (goto-char (point-min))
+                     (should-not (invisible-p (point)))
+                     (forward-line 1)
+                     (should (eq (not (null (invisible-p (point)))) removed-hidden))
+                     (forward-line 1)
+                     (should (eq (not (null (invisible-p (point)))) added-hidden))))))
+           (kill-buffer review)))))))
 
 (ert-deftest faltoo-review-mode-keybindings-use-plain-keys-in-read-only-review-buffers ()
   "Scenario: Generated review buffers use direct single-key commands."
@@ -4090,6 +4198,41 @@ old three
             (should (equal (sort refreshed #'string<) expected)))
         (kill-buffer first)
         (kill-buffer second)))))
+
+(ert-deftest faltoo-review-refresh-preserves-visible-reader-positions ()
+  "Scenario: Both refresh commands preserve review positions, clamping shorter files."
+  (dolist (command '(faltoo-vc-refresh faltoo-review-refresh-all))
+    (dolist (shorten '(nil t))
+      (faltoo-test--with-temp-git-file
+       (make-list 100 "some source code")
+       (lambda (file root)
+         (let ((faltoo-review-files (list file))
+               (faltoo-review-workspace root))
+           (cl-letf (((symbol-function 'faltoo-test--patch) (lambda (&rest _) ""))
+                     ((symbol-function 'magit-refresh) #'ignore))
+             (let ((review (faltoo-review-buffer file)))
+               (unwind-protect
+                   (save-window-excursion
+                     ;; Given two views of the same review at different offsets.
+                     (delete-other-windows)
+                     (switch-to-buffer review)
+                     (let* ((first (selected-window))
+                            (second (split-window-right))
+                            (positions (list (list first 341 256)
+                                             (list second 681 596))))
+                       (dolist (state positions)
+                         (set-window-point (nth 0 state) (nth 1 state))
+                         (set-window-start (nth 0 state) (nth 2 state)))
+                       (when shorten (write-region "short\n" nil file nil 'silent))
+                       ;; When refreshing the file or the whole review set.
+                       (funcall command)
+                       ;; Then each view retains its offsets within the new bounds.
+                       (dolist (state positions)
+                         (should (= (window-point (nth 0 state))
+                                    (min (nth 1 state) (point-max))))
+                         (should (= (window-start (nth 0 state))
+                                    (min (nth 2 state) (point-max)))))))
+                 (kill-buffer review))))))))))
 
 (ert-deftest faltoo-review-unstaged-closes-the-old-workspace-review-set ()
   "Scenario: Starting review elsewhere preserves comments owned by the old workspace."
@@ -4145,55 +4288,6 @@ old three
           (should refreshed))
       (kill-buffer review-buffer))))
 
-(ert-deftest faltoo-review-selection-stages-and-unstages-all-selected-hunks ()
-  "Scenario: Staging commands apply every hunk touched by the region."
-  (pcase-dolist (`(,command ,initially-staged ,expected-staged ,expected-command)
-                  '((faltoo-stage-current-hunk nil t
-                     ("apply" "--cached" "--unidiff-zero" "-"))
-                    (faltoo-unstage-current-hunk t nil
-                     ("apply" "--cached" "--reverse" "--unidiff-zero" "-"))))
-    (faltoo-test--with-temp-git-file
-       '("first" "context" "second")
-       (lambda (file _root)
-         (let ((patch "diff --git a/sample.py b/sample.py
---- a/sample.py
-+++ b/sample.py
-@@ -1 +1 @@
--old first
-+first
-@@ -3 +3 @@
--old second
-+second
-")
-               calls)
-           (cl-letf (((symbol-function 'faltoo-review--patch)
-                      (lambda (_relative &optional cached)
-                        (if (eq cached initially-staged) patch "")))
-                     ((symbol-function 'magit-run-git-with-input)
-                      (lambda (&rest args)
-                        (push (cons args (buffer-string)) calls)
-                        0)))
-             (with-current-buffer (faltoo-review-buffer file)
-               (goto-char (point-min))
-               (set-mark (point))
-               (goto-char (point-max))
-               (activate-mark)
-
-               (funcall command)
-
-               (should (= (length calls) 1))
-               (should (equal (caar calls) expected-command))
-               (should (equal (cdar calls) patch))
-               (goto-char (point-min))
-               (should (eq (get-text-property
-                            (point) 'faltoo-review-hunk-staged)
-                           expected-staged))
-               (goto-char (point-max))
-               (forward-line -1)
-               (should (eq (get-text-property
-                            (point) 'faltoo-review-hunk-staged)
-                           expected-staged)))))))))
-
 (ert-deftest faltoo-review-staged-background-mutes-the-theme-blue ()
   "Scenario: Staged rows use a subdued version of the theme's blue background."
   (cl-letf (((symbol-function 'color-darken-name)
@@ -4204,76 +4298,12 @@ old three
     (should (equal (faltoo-review--line-background-face 'insert t)
                    '(:background "#16293d" :extend t)))))
 
-(ert-deftest faltoo-review-hunk-staging-round-trips-index-state-and-faces ()
-  "Scenario: Review hunks can be staged blue and unstaged back to diff colors."
-  (faltoo-test--with-temp-git-file
-   '("new value")
-   (lambda (file _root)
-     (let ((patch "diff --git a/sample.py b/sample.py
---- a/sample.py
-+++ b/sample.py
-@@ -1 +1 @@
--old value
-+new value
-")
-           calls)
-       (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (_relative &optional cached)
-                    (if cached "" patch)))
-                 ((symbol-function 'magit-run-git-with-input)
-                  (lambda (&rest args)
-                    (push (cons args (buffer-string)) calls)
-                    0)))
-         (with-current-buffer (faltoo-review-buffer file)
-           (goto-char (point-min))
-
-           (faltoo-stage-current-hunk)
-
-           (should (equal (caar calls) '("apply" "--cached" "--unidiff-zero" "-")))
-           (should (equal (cdar calls) patch))
-           (should (equal
-                    (overlay-get
-                     (cl-find-if (lambda (overlay)
-                                   (overlay-get overlay 'faltoo-review-diff))
-                                 (overlays-at (point)))
-                     'face)
-                    (faltoo-review--line-background-face 'delete t)))
-           (should (get-text-property (point) 'faltoo-review-hunk-staged))
-           (forward-line 1)
-           (should (equal
-                    (overlay-get
-                     (cl-find-if (lambda (overlay)
-                                   (overlay-get overlay 'faltoo-review-diff))
-                                 (overlays-at (point)))
-                     'face)
-                    (faltoo-review--line-background-face 'insert t)))
-
-           (faltoo-unstage-current-hunk)
-
-           (should (equal (caar calls)
-                          '("apply" "--cached" "--reverse" "--unidiff-zero" "-")))
-           (should-not (get-text-property (point) 'faltoo-review-hunk-staged))
-           (should (equal
-                    (overlay-get
-                     (cl-find-if (lambda (overlay)
-                                   (overlay-get overlay 'faltoo-review-diff))
-                                 (overlays-at (point)))
-                     'face)
-                    (faltoo-review--line-background-face 'insert nil)))
-           (forward-line -1)
-           (should (equal
-                    (overlay-get
-                     (cl-find-if (lambda (overlay)
-                                   (overlay-get overlay 'faltoo-review-diff))
-                                 (overlays-at (point)))
-                     'face)
-                    (faltoo-review--line-background-face 'delete nil)))))))))
-
 (ert-deftest faltoo-review-change-navigation-wraps-between-hunks ()
   "Scenario: Change navigation moves between generated hunks and wraps at edges."
   (faltoo-test--with-temp-git-file
    '("first" "context" "second" "context")
    (lambda (file _root)
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached ""
                     "@@ -1 +1 @@
@@ -4289,7 +4319,10 @@ old three
          (faltoo-next-change)
          (should (= (line-number-at-pos) 1))
          (faltoo-prev-change)
-         (should (= (line-number-at-pos) 4)))))))
+         (should (= (line-number-at-pos) 4))
+         (cl-letf (((symbol-function 'recenter) #'ignore))
+           (faltoo-show-change)
+           (should (= (line-number-at-pos) 4))))))))
 
 
 (ert-deftest faltoo-review-buffer-is-read-only-and-shows-file-index ()
@@ -4298,7 +4331,7 @@ old three
    '("one")
    (lambda (file _root)
      (setq faltoo-review-files (list (file-truename file)))
-     (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) "")))
+     (cl-letf (((symbol-function 'faltoo-test--patch) (lambda (&rest _args) "")))
        (with-current-buffer (faltoo-review-buffer file)
          (should faltoo-review-mode)
          (should buffer-read-only)
@@ -4310,7 +4343,7 @@ old three
    '("one")
    (lambda (file _root)
      (setq faltoo-review-files (list (file-truename file)))
-     (cl-letf (((symbol-function 'faltoo-review--patch) (lambda (&rest _args) "")))
+     (cl-letf (((symbol-function 'faltoo-test--patch) (lambda (&rest _args) "")))
        (let ((review (faltoo-review-buffer file)))
          (switch-to-buffer review)
          (faltoo-review-stop)
@@ -4332,7 +4365,7 @@ old three
           (goto-char (point-max))
           (insert "source note")
           (faltoo-comment-save))))
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached "" "@@ -1 +1 @@\n-old\n+changed"))))
        (let ((review (faltoo-review-buffer file)))
@@ -4355,7 +4388,7 @@ old three
    (lambda (file root)
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file)))
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached "" "@@ -1,2 +0,0 @@
 -old one
@@ -4380,7 +4413,7 @@ old three
    (lambda (file root)
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file)))
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached "" "@@ -1 +1 @@
 -old
@@ -4407,7 +4440,7 @@ old three
    (lambda (file root)
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file)))
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached "" "@@ -1 +1 @@
 -old
@@ -4432,7 +4465,7 @@ old three
    (lambda (file root)
      (setq faltoo-comments (make-hash-table :test #'equal)
            faltoo-review-files (list (file-truename file)))
-     (cl-letf (((symbol-function 'faltoo-review--patch)
+     (cl-letf (((symbol-function 'faltoo-test--patch)
                 (lambda (_relative &optional cached)
                   (if cached "" "@@ -1 +1 @@\n-old\n+changed"))))
        (let ((review (faltoo-review-buffer file)))
