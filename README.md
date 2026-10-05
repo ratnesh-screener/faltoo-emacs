@@ -32,6 +32,7 @@ All use the `C-c f` prefix:
 | `h` / `i` / `o` | Workspace transcript / generic chat / choose folder |
 | `j` / `p` | Open queue / pause queue |
 | `q` | Cancel this workspace's answer |
+| `A` | Open a Claude sub-agent's conversation (the one on an `Agent:` line, or pick one); `g` refreshes |
 | `u` / `x` | Start or refresh unstaged review / stop review |
 | `g` | Magit status |
 | `]` / `[` | Next/previous change |

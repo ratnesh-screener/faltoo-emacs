@@ -219,30 +219,101 @@
               faltoo-chat-stream-last-block nil
               faltoo-chat-prompt-heading-marker nil)
         (erase-buffer)
-        (let (assistant-active)
-          (dolist (message messages)
-            (let ((role (downcase (or (alist-get 'role message) "message")))
-                  (class (alist-get 'class message)))
-              (cond
-               ;; Live streaming intentionally omits reasoning summaries.
-               ((string= class "thinking"))
-               ((string= role "user")
-                (setq assistant-active nil)
-                (faltoo-chat--insert-message message))
-               ((member role '("tool" "hook-feedback"))
-                (unless assistant-active
-                  (faltoo-chat--insert-assistant-heading)
-                  (setq assistant-active t))
-                (faltoo-chat--insert-message message))
-               ((string= role "assistant")
-                (faltoo-chat--insert-message message assistant-active)
-                (setq assistant-active t))
-               (t
-                (setq assistant-active nil)
-                (faltoo-chat--insert-message message)))))
-        (faltoo-chat--insert-user-prompt)))
+        (faltoo-chat--insert-messages messages)
+        (faltoo-chat--insert-user-prompt))
       (goto-char faltoo-chat-prompt-marker))
     buf))
+
+(defun faltoo-chat--insert-messages (messages)
+  "Insert history MESSAGES, grouping each answer under one Assistant heading."
+  (let (assistant-active)
+    (dolist (message messages)
+      (let ((role (downcase (or (alist-get 'role message) "message")))
+            (class (alist-get 'class message)))
+        (cond
+         ;; Live streaming intentionally omits reasoning summaries.
+         ((string= class "thinking"))
+         ((string= role "user")
+          (setq assistant-active nil)
+          (faltoo-chat--insert-message message))
+         ((member role '("tool" "hook-feedback"))
+          (unless assistant-active
+            (faltoo-chat--insert-assistant-heading)
+            (setq assistant-active t))
+          (faltoo-chat--insert-message message))
+         ((string= role "assistant")
+          (faltoo-chat--insert-message message assistant-active)
+          (setq assistant-active t))
+         (t
+          (setq assistant-active nil)
+          (faltoo-chat--insert-message message)))))))
+
+(defvar-local faltoo-agent-id nil
+  "Claude sub-agent shown in this buffer.")
+
+(defvar faltoo-agent-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") #'faltoo-agent-refresh)
+    map))
+
+(define-derived-mode faltoo-agent-mode markdown-mode "Faltoo-Agent"
+  "Read-only view of a Claude sub-agent's conversation."
+  (faltoo-ui-enable-pretty-markdown)
+  (setq-local truncate-lines nil)
+  (setq buffer-read-only t))
+
+(defun faltoo-agent-refresh ()
+  "Re-read this sub-agent's conversation, keeping point where possible."
+  (interactive)
+  (let ((inhibit-read-only t)
+        (point (point)))
+    (mapc #'delete-overlay (append faltoo-chat-user-overlays faltoo-chat-tool-overlays
+                                   faltoo-chat-assistant-overlays))
+    (setq faltoo-chat-user-overlays nil
+          faltoo-chat-tool-overlays nil
+          faltoo-chat-assistant-overlays nil)
+    (erase-buffer)
+    (faltoo-chat--insert-messages
+     (faltoo-bridge-subagent-messages faltoo-agent-id default-directory))
+    (goto-char (min point (point-max)))))
+
+(defun faltoo-subagent ()
+  "Open a sub-agent's conversation from the current Claude session.
+On a transcript `Agent:' line, open that sub-agent directly."
+  (interactive)
+  (let ((workspace (faltoo-active-workspace)))
+    (unless (faltoo-bridge-claude-p workspace)
+      (user-error "Sub-agent inspection needs the Claude core"))
+    (let* ((agents (or (faltoo-bridge-subagents workspace)
+                       (user-error "No sub-agents in this Claude session")))
+           (labels (mapcar (lambda (agent) (alist-get 'description agent)) agents))
+           (at-point (save-excursion
+                       (beginning-of-line)
+                       (and (looking-at "> Agent: \\(.*\\)$") (match-string-no-properties 1))))
+           (choice (if (member at-point labels)
+                       at-point
+                     (completing-read
+                      "Sub-agent: "
+                      (faltoo-session-completion-table
+                       labels
+                       (lambda (label)
+                         (let ((agent (nth (cl-position label labels :test #'string=) agents)))
+                           (propertize (concat "  " (string-join
+                                                     (seq-remove #'string-empty-p
+                                                                 (list (alist-get 'agent_type agent)
+                                                                       (alist-get 'model agent)
+                                                                       (alist-get 'modified agent)))
+                                                     " · "))
+                                       'face 'completions-annotations))))
+                      nil t)))
+           (agent (nth (cl-position choice labels :test #'string=) agents))
+           (buf (get-buffer-create (format "*Faltoo Agent: %s*" choice))))
+      (with-current-buffer buf
+        (faltoo-agent-mode)
+        (setq default-directory workspace
+              faltoo-agent-id (alist-get 'id agent))
+        (faltoo-agent-refresh))
+      (pop-to-buffer buf #'display-buffer-pop-up-window))))
 
 (defun faltoo-chat-current-workspace ()
   "Return the workspace attached to this chat buffer or the current Git repo."

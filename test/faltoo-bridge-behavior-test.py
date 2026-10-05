@@ -549,7 +549,8 @@ class BridgeCliBehaviorTest(unittest.TestCase):
         commands = emacs_bridge_commands()
         self.assertIn("messages", commands)
 
-        self.assertLessEqual(commands, set(load_bridge().COMMANDS))
+        # Emacs checks for the Claude core before asking for sub-agents.
+        self.assertLessEqual(commands - {"subagents", "subagent-messages"}, set(load_bridge().COMMANDS))
         # Claude has no /tree yet and always sends prompts through its daemon.
         self.assertLessEqual(commands - {"tree-rows", "append-message"}, set(load_claude_bridge().COMMANDS))
 
@@ -1053,6 +1054,53 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             ],
         )
 
+    def test_subagents_list_newest_first_and_render_their_conversation(self):
+        """Scenario: A session's sub-agents are listed from Claude's files and render like history."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge, workspace = self.claude_home(tmpdir)
+            bridge._set_session_id(workspace, "s1")
+            agents = bridge._session_path(workspace, "s1").with_suffix("") / "subagents"
+            agents.mkdir(parents=True)
+
+            def agent(agent_id, description, age, records):
+                (agents / f"agent-{agent_id}.meta.json").write_text(
+                    json.dumps({"agentType": "general-purpose", "description": description})
+                )
+                path = agents / f"agent-{agent_id}.jsonl"
+                path.write_text("".join(json.dumps(record) + "\n" for record in records))
+                os.utime(path, (age, age))
+
+            # Given two sub-agents, one with a tool call and answer, and an orphan meta file.
+            agent("old", "Count entries", 1, [
+                {"type": "user", "isSidechain": True, "message": {"content": "Run ls /"}},
+                {"type": "assistant", "isSidechain": True, "message": {"model": "claude-haiku-4-5", "content": [
+                    {"type": "tool_use", "name": "Read", "input": {"file_path": str(workspace / "a.txt")}}]}},
+                {"type": "assistant", "isSidechain": True, "message": {"model": "claude-haiku-4-5", "content": [
+                    {"type": "text", "text": "17"}]}},
+            ])
+            agent("new", "Review diff", 2, [])
+            (agents / "agent-gone.meta.json").write_text(json.dumps({"description": "Gone"}))
+
+            def run(command, *args):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    self.assertEqual(command(workspace, *args), 0)
+                return json.loads(out.getvalue())
+
+            listed = run(bridge.subagents)["agents"]
+            history = run(bridge.subagent_messages, "old")["messages"]
+
+        # Then they are listed newest first with their type, the model that answered, and time.
+        self.assertEqual(
+            [(item["id"], item["description"], item["agent_type"], item["model"]) for item in listed],
+            [("new", "Review diff", "general-purpose", ""), ("old", "Count entries", "general-purpose", "claude-haiku-4-5")],
+        )
+        self.assertRegex(listed[0]["modified"], r"^\d{1,2} [A-Z][a-z]{2} \d\d:\d\d$")
+        # And a sub-agent's task, tools, and answer render like the transcript.
+        self.assertEqual(
+            [(item["role"], item["text"]) for item in history],
+            [("user", "Run ls /"), ("tool", "Read: a.txt"), ("assistant", "17")],
+        )
 
 
 if __name__ == "__main__":

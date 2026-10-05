@@ -323,8 +323,9 @@ def _content_text(content: Any) -> str:
     return "\n".join(block["text"] for block in content if block.get("type") == "text")
 
 
-def _history(path: Path, workspace: Path) -> list[dict[str, str]]:
-    """Render a Claude session file the way the live stream renders it."""
+def _history(path: Path, workspace: Path, sidechain: bool = False) -> list[dict[str, str]]:
+    """Render a Claude session file the way the live stream renders it.
+    SIDECHAIN selects a sub-agent's records instead of the main conversation's."""
     messages: list[dict[str, str]] = []
     if not path.exists():
         return messages
@@ -337,7 +338,11 @@ def _history(path: Path, workspace: Path) -> list[dict[str, str]]:
                 summary = re.search(r"<summary>(.*?)</summary>", attachment["prompt"], re.S)
                 messages.append({"role": "tool", "class": "tool", "text": summary.group(1) if summary else BACKGROUND_NOTICE})
                 continue
-            if item.get("type") not in {"user", "assistant"} or item.get("isSidechain") or item.get("isMeta"):
+            if (
+                item.get("type") not in {"user", "assistant"}
+                or bool(item.get("isSidechain")) != sidechain
+                or item.get("isMeta")
+            ):
                 continue
             content = item["message"]["content"]
             if item["type"] == "user":
@@ -367,6 +372,45 @@ def messages(workspace: Path, limit: int, turns: int | None) -> int:
 def messages_path(workspace: Path) -> int:
     workspace = _workspace(workspace)
     print(_session_path(workspace, _session_id(workspace)))
+    return 0
+
+
+def _subagent_dir(workspace: Path) -> Path:
+    return _session_path(workspace, _session_id(workspace)).with_suffix("") / "subagents"
+
+
+def subagents(workspace: Path) -> int:
+    workspace = _workspace(workspace)
+    transcripts = [
+        meta.with_name(meta.name.removesuffix(".meta.json") + ".jsonl")
+        for meta in _subagent_dir(workspace).glob("agent-*.meta.json")
+    ]
+    agents = []
+    for path in sorted((path for path in transcripts if path.exists()), key=lambda path: path.stat().st_mtime, reverse=True):
+        meta = json.loads(path.with_suffix(".meta.json").read_text(encoding="utf-8"))
+        model = ""
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                # Replies record the model that answered, confirming any model the parent asked for.
+                if '"assistant"' in line:
+                    model = json.loads(line).get("message", {}).get("model", model)
+        agents.append(
+            {
+                "id": path.stem.removeprefix("agent-"),
+                "description": meta.get("description") or path.stem,
+                "agent_type": meta.get("agentType", ""),
+                "model": model,
+                "modified": datetime.fromtimestamp(path.stat().st_mtime).strftime("%-d %b %H:%M"),
+            }
+        )
+    print(json.dumps({"agents": agents}, ensure_ascii=False))
+    return 0
+
+
+def subagent_messages(workspace: Path, agent_id: str) -> int:
+    workspace = _workspace(workspace)
+    history = _history(_subagent_dir(workspace) / f"agent-{agent_id}.jsonl", workspace, sidechain=True)
+    print(json.dumps({"messages": history}, ensure_ascii=False))
     return 0
 
 
@@ -505,6 +549,8 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
         args.workspace, str(_stdin_payload().get("session_id") or "")
     ),
     "status": lambda args: session_status(args.workspace),
+    "subagents": lambda args: subagents(args.workspace),
+    "subagent-messages": lambda args: subagent_messages(args.workspace, str(_stdin_payload()["agent_id"])),
     # Claude always runs as a persistent daemon so background tasks survive turns.
     "websocket-enabled": lambda _args: _emit_payload({"enabled": True}) or 0,
     "daemon": lambda args: asyncio.run(daemon(args.workspace, args.claude, args.idle_seconds)),

@@ -29,6 +29,7 @@ Use normal Emacs buffers, local modes, completion, overlays, and process filters
 - `/reset`, `/resume`, and core switches stop the workspace's Claude daemon so the next message starts the selected session. When background tasks are running, stopping asks first; declining changes nothing.
 - `C-c p` lists FaltooBot's saved prompts, then `~/.claude/commands/*.md` (frontmatter stripped), with the source as a completion annotation.
 - Tool summaries show repo files relative to the workspace and other paths in full.
+- Sub-agents are inspected from Claude's saved `subagents/agent-*.jsonl` files, not the live stream: `C-c f A` opens the one on a transcript `Agent:` line or one picked by description, rendered like history in a read-only buffer that `g` re-reads while it runs. The transcript itself shows only the `Agent:` line and the outcome.
 
 ## Queue
 

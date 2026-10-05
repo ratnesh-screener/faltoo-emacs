@@ -59,6 +59,7 @@
                    ("b" . faltoo-select-faltoobot-command)
                    ("r" . faltoo-reload)
                    ("R" . faltoo-restart-daemon)
+                   ("A" . faltoo-subagent)
                    ("q" . faltoo-request-cancel)
                    ("u" . faltoo-review-unstaged)
                    ("x" . faltoo-review-stop)

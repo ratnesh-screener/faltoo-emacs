@@ -20,7 +20,7 @@
 | `python/faltoo_bridge.py` | FaltooBot imports, sessions, stream events, notification polling |
 | `python/claude_bridge.py` | Claude Code core: bridge CLI over `claude -p` stream-json, turn translation, sessions |
 | `faltoo-request.el` | Shared request and stream routing |
-| `faltoo-chat.el` | Workspace transcripts and history rendering |
+| `faltoo-chat.el` | Workspace transcripts, history rendering, sub-agent views |
 | `faltoo-queue.el` | Editable workspace FIFO and consumption |
 | `faltoo-ui.el` | Posframe lifecycle and shared Markdown setup |
 | `faltoo-compose.el` | Popup layout and stream formatting |

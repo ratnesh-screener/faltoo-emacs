@@ -1008,6 +1008,70 @@ Task completed."
                                  "  1 Oct 18:00 · cccccccc")))
     (should (equal resumed-session "cccccccc-3333"))))
 
+(defconst faltoo-test--subagents
+  '(((id . "a1") (description . "Count entries") (agent_type . "general-purpose")
+     (model . "claude-haiku-4-5") (modified . "5 Oct 14:00"))
+    ((id . "a2") (description . "Review diff") (agent_type . "Explore") (model . "") (modified . "5 Oct 13:00"))))
+
+(ert-deftest faltoo-subagent-opens-the-agent-at-point-read-only-and-refreshes ()
+  "Scenario: On a transcript Agent line, C-c f A opens that sub-agent's conversation."
+  (should (eq (keymap-lookup faltoo-command-map "A") #'faltoo-subagent))
+  (let (fetched)
+    (cl-letf (((symbol-function 'faltoo-active-workspace) (lambda () "/repo/"))
+              ((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
+              ((symbol-function 'faltoo-bridge-subagents) (lambda (_workspace) faltoo-test--subagents))
+              ((symbol-function 'faltoo-bridge-subagent-messages)
+               (lambda (id _workspace)
+                 (push id fetched)
+                 '(((role . "user") (text . "Run ls /"))
+                   ((role . "tool") (text . "Bash: List root"))
+                   ((role . "assistant") (text . "17")))))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _args) (error "Should open the agent at point without asking"))))
+      ;; Given point is on a transcript Agent line.
+      (with-temp-buffer
+        (insert "> Agent: Review diff\n")
+        (goto-char (point-min))
+
+        ;; When opening sub-agents.
+        (faltoo-subagent))
+
+      ;; Then that agent's conversation renders read-only, and g re-reads it.
+      (with-current-buffer "*Faltoo Agent: Review diff*"
+        (should buffer-read-only)
+        (should (string-match-p "# User\n\nRun ls /[^z]*# Assistant[^z]*> Bash: List root[^z]*17"
+                                (buffer-string)))
+        (should (eq (keymap-lookup (current-local-map) "g") #'faltoo-agent-refresh))
+        (faltoo-agent-refresh)
+        (kill-buffer))
+      (should (equal fetched '("a2" "a2"))))))
+
+(ert-deftest faltoo-subagent-picks-by-description-with-type-and-time-annotations ()
+  "Scenario: Away from an Agent line, sub-agents are picked by description; FaltooBot is refused."
+  (let (annotations opened)
+    (cl-letf (((symbol-function 'faltoo-active-workspace) (lambda () "/repo/"))
+              ((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
+              ((symbol-function 'faltoo-bridge-subagents) (lambda (_workspace) faltoo-test--subagents))
+              ((symbol-function 'faltoo-bridge-subagent-messages)
+               (lambda (id _workspace) (setq opened id) nil))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _args)
+                 (let ((annotate (completion-metadata-get (completion-metadata "" collection nil)
+                                                          'annotation-function)))
+                   (setq annotations (mapcar (lambda (label) (substring-no-properties (funcall annotate label)))
+                                             (all-completions "" collection)))
+                   "Count entries"))))
+      (with-temp-buffer (faltoo-subagent))
+      (kill-buffer "*Faltoo Agent: Count entries*")
+
+      ;; A sub-agent that has not answered yet has no model to show.
+      (should (equal annotations '("  general-purpose · claude-haiku-4-5 · 5 Oct 14:00"
+                                   "  Explore · 5 Oct 13:00")))
+      (should (equal opened "a1"))
+
+      (cl-letf (((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) nil)))
+        (should-error (faltoo-subagent) :type 'user-error)))))
+
 (ert-deftest faltoo-session-tree-opens-transcript-inspector ()
   "Scenario: The /tree command opens the structured transcript inspector."
   (let (opened-workspace)

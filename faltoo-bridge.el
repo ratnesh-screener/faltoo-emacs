@@ -488,6 +488,17 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
   (let ((workspace (or workspace (faltoo-workspace))))
     (faltoo-bridge-call-json (list "status" "--workspace" workspace) nil workspace)))
 
+(defun faltoo-bridge-subagents (workspace)
+  "Return the sub-agents of WORKSPACE's current Claude session, newest first."
+  (alist-get 'agents (faltoo-bridge-call-json (list "subagents" "--workspace" workspace)
+                                              nil workspace)))
+
+(defun faltoo-bridge-subagent-messages (agent-id workspace)
+  "Return Claude sub-agent AGENT-ID's history messages in WORKSPACE."
+  (alist-get 'messages (faltoo-bridge-call-json (list "subagent-messages" "--workspace" workspace)
+                                                (json-serialize `((agent_id . ,agent-id)))
+                                                workspace)))
+
 (defun faltoo-bridge-messages-path (&optional workspace)
   (let ((workspace (or workspace (faltoo-workspace))))
     (string-trim
