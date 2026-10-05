@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections.abc import Callable
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -145,11 +146,6 @@ def messages(workspace: Path, limit: int, turns: int | None) -> int:
 BUILTIN_SLASH_COMMANDS = frozenset(
     {"/compact", "/name", "/reset", "/resume", "/status", "/tree"}
 )
-
-
-def session_info(workspace: Path) -> int:
-    print(json.dumps(_session_payload(_session(workspace)), ensure_ascii=False))
-    return 0
 
 
 def reset_session(workspace: Path) -> int:
@@ -499,85 +495,52 @@ async def daemon(workspace: Path) -> int:
     return 0
 
 
+def run_cli(
+    prog: str,
+    commands: dict[str, Callable[[argparse.Namespace], int]],
+    argv: list[str] | None = None,
+    options: dict[str, dict[str, Any]] | None = None,
+) -> int:
+    """Run the bridge command Emacs named; all commands share one option set."""
+    parser = argparse.ArgumentParser(prog=prog)
+    parser.add_argument("command", choices=sorted(commands))
+    parser.add_argument("--workspace", type=Path, default=Path.cwd())
+    parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--turns", type=int)
+    for flag, kwargs in (options or {}).items():
+        parser.add_argument(flag, **kwargs)
+    args = parser.parse_args(argv)
+    return commands[args.command](args)
+
+
+def _append_message_command(_args: argparse.Namespace) -> int:
+    # One-shot append for non-websocket workspaces; Emacs sends the workspace on stdin.
+    payload = _stdin_payload()
+    workspace = Path(str(payload.get("workspace") or Path.cwd()))
+    return asyncio.run(append_message(workspace, str(payload.get("text") or "")))
+
+
+COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "messages": lambda args: messages(args.workspace, args.limit, args.turns),
+    "messages-path": lambda args: messages_path(args.workspace),
+    "unstaged-files": lambda args: unstaged_files(args.workspace),
+    "reset-session": lambda args: reset_session(args.workspace),
+    "name-session": lambda args: name_session(args.workspace, str(_stdin_payload().get("name") or "")),
+    "list-sessions": lambda args: sessions_list(args.workspace),
+    "resume-session": lambda args: resume_session(
+        args.workspace, str(_stdin_payload().get("session_id") or "")
+    ),
+    "status": lambda args: session_status(args.workspace),
+    "tree-rows": lambda args: tree_rows(args.workspace),
+    "websocket-enabled": lambda args: websocket_enabled(args.workspace),
+    "daemon": lambda args: asyncio.run(daemon(args.workspace)),
+    "append-message": _append_message_command,
+    "slash-commands": lambda _args: slash_commands(),
+}
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="faltoo_bridge")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    messages_parser = sub.add_parser("messages")
-    messages_parser.add_argument("--workspace", default=str(Path.cwd()))
-    messages_parser.add_argument("--limit", type=int, default=100)
-    messages_parser.add_argument("--turns", type=int)
-
-    messages_path_parser = sub.add_parser("messages-path")
-    messages_path_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    unstaged_parser = sub.add_parser("unstaged-files")
-    unstaged_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    session_info_parser = sub.add_parser("session-info")
-    session_info_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    reset_session_parser = sub.add_parser("reset-session")
-    reset_session_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    name_session_parser = sub.add_parser("name-session")
-    name_session_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    list_sessions_parser = sub.add_parser("list-sessions")
-    list_sessions_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    resume_session_parser = sub.add_parser("resume-session")
-    resume_session_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    status_parser = sub.add_parser("status")
-    status_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    tree_rows_parser = sub.add_parser("tree-rows")
-    tree_rows_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    websocket_parser = sub.add_parser("websocket-enabled")
-    websocket_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    daemon_parser = sub.add_parser("daemon")
-    daemon_parser.add_argument("--workspace", default=str(Path.cwd()))
-
-    sub.add_parser("append-message")
-    sub.add_parser("slash-commands")
-
-    args = parser.parse_args()
-    if args.command == "messages":
-        return messages(Path(args.workspace), args.limit, args.turns)
-    if args.command == "messages-path":
-        return messages_path(Path(args.workspace))
-    if args.command == "unstaged-files":
-        return unstaged_files(Path(args.workspace))
-    if args.command == "session-info":
-        return session_info(Path(args.workspace))
-    if args.command == "reset-session":
-        return reset_session(Path(args.workspace))
-    if args.command == "name-session":
-        payload = _stdin_payload()
-        return name_session(Path(args.workspace), str(payload.get("name") or ""))
-    if args.command == "list-sessions":
-        return sessions_list(Path(args.workspace))
-    if args.command == "resume-session":
-        payload = _stdin_payload()
-        return resume_session(Path(args.workspace), str(payload.get("session_id") or ""))
-    if args.command == "status":
-        return session_status(Path(args.workspace))
-    if args.command == "tree-rows":
-        return tree_rows(Path(args.workspace))
-    if args.command == "websocket-enabled":
-        return websocket_enabled(Path(args.workspace))
-    if args.command == "daemon":
-        return asyncio.run(daemon(Path(args.workspace)))
-    if args.command == "append-message":
-        payload = _stdin_payload()
-        workspace = Path(str(payload.get("workspace") or Path.cwd()))
-        return asyncio.run(append_message(workspace, str(payload.get("text") or "")))
-    if args.command == "slash-commands":
-        return slash_commands()
-    return 1
+    return run_cli("faltoo_bridge", COMMANDS)
 
 
 if __name__ == "__main__":

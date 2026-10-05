@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Claude Code core: faltoo_bridge's CLI and JSONL contract over `claude -p`."""
+"""Claude Code core: the shared bridge CLI over `claude -p` stream-json."""
 from __future__ import annotations
 
 import argparse
 import asyncio
+from collections.abc import Callable
 from datetime import datetime
 import json
 import os
@@ -14,7 +15,15 @@ import traceback
 from typing import Any
 from uuid import uuid4
 
-from faltoo_bridge import _emit_payload, _last_user_turns, _slash_command_payload, _stdin_payload, unstaged_files
+from faltoo_bridge import (
+    _emit_payload,
+    _last_user_turns,
+    _slash_command_payload,
+    _stdin_payload,
+    _workspace,
+    run_cli,
+    unstaged_files,
+)
 
 CLAUDE_HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")).expanduser()
 STATE_PATH = (
@@ -29,10 +38,6 @@ RATE_LIMIT_WINDOWS = {"five_hour": "5h", "seven_day": "7d"}
 # FaltooBot's prompt preview length.
 PREVIEW_LIMIT = 48
 BACKGROUND_NOTICE = "Claude continued in the background."
-
-
-def _workspace(workspace: Path) -> Path:
-    return workspace.expanduser().resolve()
 
 
 def _project_dir(workspace: Path) -> Path:
@@ -489,56 +494,30 @@ def slash_commands() -> int:
     return 0
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(prog="claude_bridge")
-    parser.add_argument("--claude", default="claude")
-    sub = parser.add_subparsers(dest="command", required=True)
-    for name in (
-        "messages",
-        "messages-path",
-        "unstaged-files",
-        "websocket-enabled",
-        "daemon",
-        "list-sessions",
-        "reset-session",
-        "resume-session",
-        "name-session",
-        "status",
-    ):
-        sub.add_parser(name).add_argument("--workspace", default=str(Path.cwd()))
-    sub.choices["messages"].add_argument("--limit", type=int, default=100)
-    sub.choices["messages"].add_argument("--turns", type=int)
-    sub.choices["daemon"].add_argument("--idle-seconds", type=float, default=1800)
-    sub.add_parser("slash-commands")
+COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "messages": lambda args: messages(args.workspace, args.limit, args.turns),
+    "messages-path": lambda args: messages_path(args.workspace),
+    "unstaged-files": lambda args: unstaged_files(args.workspace),
+    "reset-session": lambda args: reset_session(args.workspace),
+    "name-session": lambda args: name_session(args.workspace, str(_stdin_payload().get("name") or "")),
+    "list-sessions": lambda args: sessions_list(args.workspace),
+    "resume-session": lambda args: resume_session(
+        args.workspace, str(_stdin_payload().get("session_id") or "")
+    ),
+    "status": lambda args: session_status(args.workspace),
+    # Claude always runs as a persistent daemon so background tasks survive turns.
+    "websocket-enabled": lambda _args: _emit_payload({"enabled": True}) or 0,
+    "daemon": lambda args: asyncio.run(daemon(args.workspace, args.claude, args.idle_seconds)),
+    "slash-commands": lambda _args: slash_commands(),
+}
 
-    args = parser.parse_args()
-    if args.command == "messages":
-        return messages(Path(args.workspace), args.limit, args.turns)
-    if args.command == "messages-path":
-        return messages_path(Path(args.workspace))
-    if args.command == "unstaged-files":
-        return unstaged_files(Path(args.workspace))
-    if args.command == "websocket-enabled":
-        # Claude always runs as a persistent daemon so background tasks survive turns.
-        _emit_payload({"enabled": True})
-        return 0
-    if args.command == "daemon":
-        return asyncio.run(daemon(Path(args.workspace), args.claude, args.idle_seconds))
-    if args.command == "slash-commands":
-        return slash_commands()
-    if args.command == "status":
-        return session_status(Path(args.workspace))
-    if args.command == "list-sessions":
-        return sessions_list(Path(args.workspace))
-    if args.command == "reset-session":
-        return reset_session(Path(args.workspace))
-    if args.command == "resume-session":
-        payload = _stdin_payload()
-        return resume_session(Path(args.workspace), str(payload.get("session_id") or ""))
-    if args.command == "name-session":
-        payload = _stdin_payload()
-        return name_session(Path(args.workspace), str(payload.get("name") or ""))
-    return 1
+
+def main() -> int:
+    return run_cli(
+        "claude_bridge",
+        COMMANDS,
+        options={"--claude": {"default": "claude"}, "--idle-seconds": {"type": float, "default": 1800}},
+    )
 
 
 if __name__ == "__main__":

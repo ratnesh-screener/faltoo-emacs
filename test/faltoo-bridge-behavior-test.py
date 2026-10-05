@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import contextlib
 from contextlib import redirect_stdout
@@ -534,6 +535,47 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(acknowledged, [claimed_path])
 
 
+def emacs_bridge_commands() -> set[str]:
+    """Bridge command names the Elisp sends, read from its `(list "command" ...)` calls."""
+    root = Path(__file__).resolve().parents[1]
+    source = "".join((root / name).read_text() for name in ("faltoo-bridge.el", "faltoo-request.el"))
+    return set(re.findall(r'\(list "([a-z][a-z-]*)"', source))
+
+
+class BridgeCliBehaviorTest(unittest.TestCase):
+
+    def test_both_bridges_accept_every_command_emacs_sends(self):
+        """Scenario: Neither core rejects a bridge command Emacs can send it."""
+        commands = emacs_bridge_commands()
+        self.assertIn("messages", commands)
+
+        self.assertLessEqual(commands, set(load_bridge().COMMANDS))
+        # Claude has no /tree yet and always sends prompts through its daemon.
+        self.assertLessEqual(commands - {"tree-rows", "append-message"}, set(load_claude_bridge().COMMANDS))
+
+    def test_shared_cli_parses_emacs_argument_shapes(self):
+        """Scenario: One table-driven CLI handles workspace, limit, and core-specific options."""
+        bridge = load_bridge()
+        seen = []
+        commands = {"messages": lambda args: seen.append(args) or 0}
+
+        result = bridge.run_cli(
+            "test",
+            commands,
+            ["--claude", "/bin/claude", "messages", "--workspace", "/tmp/p", "--limit", "5", "--turns", "2"],
+            options={"--claude": {"default": "claude"}},
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            (seen[0].workspace, seen[0].limit, seen[0].turns, seen[0].claude),
+            (Path("/tmp/p"), 5, 2, "/bin/claude"),
+        )
+        with redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                bridge.run_cli("test", commands, ["session-info"])
+
+
 def load_claude_bridge():
     install_faltoobot_stubs()
     python_dir = Path(__file__).resolve().parents[1] / "python"
@@ -1010,6 +1052,7 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
                 {"command": "/review", "preview": "Review the diff", "template": "Review $ARGUMENTS carefully.", "source": "claude"},
             ],
         )
+
 
 
 if __name__ == "__main__":
