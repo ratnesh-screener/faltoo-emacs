@@ -268,8 +268,6 @@ START is called with the event and completion callbacks."
              (lambda (on-event on-done)
                (puthash workspace (plist-put entry :callbacks (cons on-event on-done))
                         faltoo-request-claude-prompts)
-               (funcall on-event '((classes . "status")
-                                   (text . "Submitted message. Waiting for assistant...")))
                (faltoo-bridge-claude-send workspace text)))
           (faltoo-request-stream
            (list "append-message")
@@ -291,6 +289,9 @@ Claude echoes the sent prompt, already shown, at its turn's start; a turn
 without a prompt echo was started by Claude and follows its notification."
   (let ((entry (gethash workspace faltoo-request-claude-prompts)))
     (pcase (alist-get 'type event)
+      ("submitted"
+       (funcall (car (plist-get entry :callbacks))
+                '((classes . "status") (text . "Submitted message. Waiting for assistant..."))))
       ("prompt"
        (if entry
            (puthash workspace (plist-put entry :echoed t) faltoo-request-claude-prompts)

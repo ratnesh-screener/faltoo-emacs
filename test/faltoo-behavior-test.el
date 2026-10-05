@@ -684,13 +684,15 @@
                     (lambda (workspace hook-process event)
                       (push (list workspace (eq hook-process process) (alist-get 'type event)) seen)))
 
-          (dolist (line '("{\"type\":\"prompt\",\"text\":\"Hi\"}"
+          (dolist (line '("{\"type\":\"submitted\"}"
+                          "{\"type\":\"prompt\",\"text\":\"Hi\"}"
                           "{\"type\":\"notification\",\"text\":\"# Background update\"}"
                           "{\"type\":\"turn\",\"id\":\"turn-1\"}"))
             (faltoo-bridge--daemon-handle-line "/repo/" process line))
 
           (should (equal (reverse seen)
-                         '(("/repo/" t "prompt") ("/repo/" t "notification") ("/repo/" t "turn")))))
+                         '(("/repo/" t "submitted") ("/repo/" t "prompt")
+                           ("/repo/" t "notification") ("/repo/" t "turn")))))
       (delete-process process))))
 
 (ert-deftest faltoo-bridge-messages-passes-turn-limit-to-bridge ()
@@ -2731,8 +2733,13 @@ removed")
        (should (faltoo-workspace-submitting-p workspace))
        (should (eq (gethash workspace faltoo-request-processes) process))
        (with-current-buffer (faltoo-test--chat-buffer-name)
-         (should (string-match-p "# User\n\nquestion\n\n---\n# Assistant · answering\n\n> Submitted message"
+         (should (string-match-p "# User\n\nquestion\n\n---\n# Assistant · answering\n*\\'"
                                  (buffer-string))))
+
+       ;; When the daemon confirms it, as FaltooBot's daemon does.
+       (faltoo-test--claude-event workspace process 'type "submitted")
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "# Assistant · answering\n\n> Submitted message" (buffer-string))))
 
        ;; When Claude echoes it and answers in a turn.
        (faltoo-test--claude-event workspace process 'type "prompt" 'text "question")

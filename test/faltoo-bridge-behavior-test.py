@@ -798,6 +798,25 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             ],
         )
 
+    def test_daemon_confirms_each_prompt_it_writes_to_claude(self):
+        """Scenario: Like FaltooBot's daemon, Claude's confirms a sent prompt after writing it."""
+        bridge = load_claude_bridge()
+        emitted, written = [], []
+        bridge._emit_payload = emitted.append
+
+        async def send():
+            daemon = bridge.ClaudeDaemon(Path("/repo"), "claude", 60)
+            daemon.child = types.SimpleNamespace(
+                stdin=types.SimpleNamespace(write=lambda data: written.append(json.loads(data)))
+            )
+            await daemon.request({"command": "append-message", "payload": {"text": "Hi"}})
+            daemon.idle_timer.cancel()
+
+        asyncio.run(send())
+
+        self.assertEqual(written, [{"type": "user", "message": {"role": "user", "content": "Hi"}}])
+        self.assertEqual(emitted, [{"type": "submitted"}])
+
     def test_failed_claude_turns_report_cancel_or_error(self):
         """Scenario: Interrupted turns read as cancelled; other failures show their error."""
         bridge = load_claude_bridge()

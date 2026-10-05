@@ -47,7 +47,7 @@ A FaltooBot/FaltooChat command, or the symbol `claude' for Claude Code."
 (defvar faltoo-bridge-queue-hook nil)
 (defvar faltoo-bridge-claude-hook nil
   "Functions called with WORKSPACE, PROCESS and a Claude stream EVENT.
-EVENT is a prompt echo, a notification, or a turn start.")
+EVENT confirms a sent prompt, echoes it, notifies, or starts a turn.")
 (defvar faltoo-bridge-daemon-exit-hook nil
   "Functions called with WORKSPACE and its stderr text when its daemon exits.")
 (defconst faltoo-bridge--daemon-commands '("append-message"))
@@ -220,7 +220,7 @@ The next prompt starts a fresh daemon."
       (run-hook-with-args 'faltoo-bridge-queue-hook workspace (alist-get 'text event)))
      ((string= type "background-tasks")
       (process-put process 'faltoo-background-tasks (alist-get 'count event)))
-     ((member type '("prompt" "notification" "turn"))
+     ((member type '("submitted" "prompt" "notification" "turn"))
       (run-hook-with-args 'faltoo-bridge-claude-hook workspace process event))
      (t
       (let* ((request-id (alist-get 'id event))

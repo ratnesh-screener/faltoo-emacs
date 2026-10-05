@@ -281,6 +281,7 @@ class ClaudeDaemon:
             if not self.child:
                 await self._start_child()
             self._write({"type": "user", "message": {"role": "user", "content": str(payload["text"])}})
+            _emit_payload({"type": "submitted"})
         elif command == "interrupt":
             if self.child:
                 self.turns.interrupting = True
