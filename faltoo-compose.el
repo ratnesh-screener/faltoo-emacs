@@ -143,30 +143,45 @@
         (setq buffer-read-only t)))
     (faltoo-popup-show buf 100 30)))
 
-(defun faltoo-session-completion-table (labels)
-  "Return a completion table that preserves FaltooBot's LABELS order."
+(defun faltoo-session-completion-table (labels &optional annotate)
+  "Return a completion table that preserves FaltooBot's LABELS order.
+ANNOTATE, when non-nil, returns the annotation for a label."
   (lambda (string pred action)
     (if (eq action 'metadata)
-        '(metadata
+        `(metadata
           (display-sort-function . identity)
-          (cycle-sort-function . identity))
+          (cycle-sort-function . identity)
+          (annotation-function . ,annotate))
       (complete-with-action action labels string pred))))
 
 (defun faltoo-session-resume (&optional session-id)
   "Resume Faltoo SESSION-ID for the current workspace."
   (interactive)
   (let* ((sessions (faltoo-bridge-list-sessions (faltoo-session-workspace)))
-         (labels (mapcar (lambda (session)
-                           (or (alist-get 'name session) (alist-get 'id session)))
-                         sessions))
+         (labeled (let (seen)
+                    (mapcar (lambda (session)
+                              (let* ((id (alist-get 'id session))
+                                     (name (or (alist-get 'name session) id))
+                                     ;; Repeated titles keep their short id to stay selectable.
+                                     (label (if (member name seen)
+                                                (format "%s · %s" name (string-limit id 8))
+                                              name)))
+                                (push name seen)
+                                (cons label session)))
+                            sessions)))
          (choice (or session-id
                      (completing-read
                       "Resume session: "
-                      (faltoo-session-completion-table labels) nil t)))
-         (selected (or (cl-find choice sessions
-                                :key (lambda (session)
-                                       (or (alist-get 'name session) (alist-get 'id session)))
-                                :test #'string=)
+                      (faltoo-session-completion-table
+                       (mapcar #'car labeled)
+                       (lambda (label)
+                         (let ((session (cdr (assoc label labeled))))
+                           (when-let ((modified (alist-get 'modified session)))
+                             (propertize (format "  %s · %s" modified
+                                                 (string-limit (alist-get 'id session) 8))
+                                         'face 'completions-annotations)))))
+                      nil t)))
+         (selected (or (cdr (assoc choice labeled))
                        (cl-find choice sessions
                                 :key (lambda (session) (alist-get 'id session))
                                 :test #'string=)))
@@ -206,12 +221,29 @@
   "Insert the selected saved Faltoo prompt template."
   (interactive)
   (let* ((commands (faltoo-bridge-slash-commands))
-         (labels (mapcar (lambda (cmd)
-                           (let ((name (alist-get 'command cmd))
-                                 (preview (or (alist-get 'preview cmd) "")))
-                             (if (string-empty-p preview) name (format "%s — %s" name preview))))
-                         commands))
-         (choice (completing-read "Command: " labels nil t))
+         (labels (let (seen)
+                   (mapcar (lambda (cmd)
+                             (let* ((name (alist-get 'command cmd))
+                                    (preview (or (alist-get 'preview cmd) ""))
+                                    (label (if (string-empty-p preview)
+                                               name
+                                             (format "%s — %s" name preview))))
+                               (push label seen)
+                               ;; A prompt copied between sources stays selectable.
+                               (if (member label (cdr seen))
+                                   (format "%s · %s" label (alist-get 'source cmd))
+                                 label)))
+                           commands)))
+         (choice (completing-read
+                  "Command: "
+                  (faltoo-session-completion-table
+                   labels
+                   (lambda (label)
+                     (when-let ((source (alist-get 'source
+                                                   (nth (cl-position label labels :test #'string=)
+                                                        commands))))
+                       (propertize (concat "  " source) 'face 'completions-annotations))))
+                  nil t))
          (index (cl-position choice labels :test #'string=))
          (command (nth index commands)))
     (insert (or (alist-get 'template command)

@@ -5,7 +5,9 @@ import asyncio
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import contextlib
 from contextlib import redirect_stdout
 import sys
 import types
@@ -530,6 +532,484 @@ class FaltooBridgeBehaviorTest(unittest.IsolatedAsyncioTestCase):
             [{"type": "queue", "text": "# Background update\n\nTask finished"}],
         )
         self.assertEqual(acknowledged, [claimed_path])
+
+
+def load_claude_bridge():
+    install_faltoobot_stubs()
+    python_dir = Path(__file__).resolve().parents[1] / "python"
+    sys.path.insert(0, str(python_dir))
+    sys.modules.pop("faltoo_bridge", None)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "claude_bridge_under_test", python_dir / "claude_bridge.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(python_dir))
+    return module
+
+
+def text_delta(text):
+    return {
+        "type": "stream_event",
+        "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}},
+    }
+
+
+def text_block_start():
+    return {
+        "type": "stream_event",
+        "event": {"type": "content_block_start", "content_block": {"type": "text"}},
+    }
+
+
+def tool_use(name, tool_input, parent=None):
+    return {
+        "type": "assistant",
+        "parent_tool_use_id": parent,
+        "message": {"content": [{"type": "tool_use", "name": name, "input": tool_input}]},
+    }
+
+
+def replay(text):
+    return {"type": "user", "isReplay": True, "message": {"role": "user", "content": text}}
+
+
+SYSTEM_INIT = {"type": "system", "subtype": "init"}
+RESULT_OK = {"type": "result", "subtype": "success", "is_error": False, "result": "ok"}
+
+
+class ClaudeBridgeBehaviorTest(unittest.TestCase):
+
+    def run_turns(self, bridge, messages, interrupting=False):
+        emitted = []
+        bridge._emit_payload = emitted.append
+        turns = bridge.ClaudeTurns(Path("/repo"))
+        turns.interrupting = interrupting
+        for message in messages:
+            turns.handle(message)
+        return turns, emitted
+
+    def outline(self, emitted):
+        """Compact (id, kind) pairs: event type, or the class of stream text."""
+        return [(event.get("id"), event.get("classes") or event["type"]) for event in emitted]
+
+    def test_prompted_claude_turn_streams_as_faltoo_events(self):
+        """Scenario: A prompt's echo and its turn reach Emacs as prompt, turn, and turn events."""
+        bridge = load_claude_bridge()
+
+        # Given Claude echoes a prompt, streams text and a tool, and reports limits.
+        turns, emitted = self.run_turns(
+            bridge,
+            [
+                SYSTEM_INIT,
+                replay("Fix it"),
+                text_block_start(),
+                text_delta("Look"),
+                text_delta("ing."),
+                tool_use("Bash", {"command": "git status", "description": "Show  status"}),
+                tool_use("Read", {"file_path": "/x"}, parent="toolu_subagent"),
+                text_block_start(),
+                text_delta("Done."),
+                {
+                    "type": "rate_limit_event",
+                    "rate_limit_info": {
+                        "unifiedWindows": {
+                            "five_hour": {"utilization": 0.08},
+                            "seven_day": {"utilization": 0.04},
+                        }
+                    },
+                },
+                RESULT_OK,
+            ],
+        )
+
+        # Then Emacs shows the echoed prompt, opens one turn, and streams into it,
+        # with sub-agent internals hidden.
+        self.assertEqual(emitted[0], {"type": "prompt", "text": "Fix it"})
+        self.assertEqual(emitted[1], {"type": "turn", "id": "turn-1"})
+        self.assertEqual(
+            [(event["classes"], event["text"]) for event in emitted[2:-1]],
+            [
+                ("answer", "Look"),
+                ("answer", "ing."),
+                ("tool", "Bash: Show status"),
+                ("answer", "Done."),
+                ("rate-limit", "Remaining limit: 5h = 92%, 7d = 96%"),
+                ("done", "Assistant response saved."),
+            ],
+        )
+        self.assertTrue(all(event["id"] == "turn-1" for event in emitted[1:]))
+        self.assertEqual(emitted[-1], {"id": "turn-1", "type": "complete", "ok": True})
+        self.assertTrue(turns.idle())
+
+    def test_consecutive_text_blocks_are_separated_by_a_paragraph(self):
+        """Scenario: Text blocks split by hidden thinking do not run together."""
+        bridge = load_claude_bridge()
+
+        _turns, emitted = self.run_turns(
+            bridge,
+            [replay("Hi"), text_block_start(), text_delta("One."), text_block_start(), text_delta("Two.")],
+        )
+
+        self.assertEqual("".join(event.get("text", "") for event in emitted[2:]), "One.\n\nTwo.")
+
+    def test_turn_claude_starts_itself_is_headed_by_its_notification(self):
+        """Scenario: Claude answering a finished background task gets a Background Update heading."""
+        bridge = load_claude_bridge()
+
+        # Given Claude is idle when a background task notification starts a turn.
+        turns, emitted = self.run_turns(
+            bridge,
+            [
+                {
+                    "type": "system",
+                    "subtype": "task_notification",
+                    "summary": 'Background command "Sleep" completed (exit code 0)',
+                },
+                SYSTEM_INIT,
+                text_block_start(),
+                text_delta("finished-marker"),
+                RESULT_OK,
+            ],
+        )
+
+        # Then the notification heads the turn instead of a prompt.
+        self.assertEqual(
+            emitted[0],
+            {
+                "type": "notification",
+                "text": "# Background update\n\nsource: Claude Code\n\n## message\n"
+                'Background command "Sleep" completed (exit code 0)',
+            },
+        )
+        self.assertEqual(
+            self.outline(emitted[1:]),
+            [("turn-1", "turn"), ("turn-1", "answer"), ("turn-1", "done"), ("turn-1", "complete")],
+        )
+        self.assertTrue(turns.idle())
+
+    def test_notification_folded_into_a_running_turn_stays_inline(self):
+        """Scenario: A background task finishing mid-turn is a line inside that turn."""
+        bridge = load_claude_bridge()
+
+        # Given Claude folds a task notification into the running turn and echoes it.
+        _turns, emitted = self.run_turns(
+            bridge,
+            [
+                replay("Fix it"),
+                tool_use("Bash", {"description": "Wait"}),
+                {"type": "system", "subtype": "task_notification", "summary": "Task done"},
+                replay("<task-notification>\n<summary>Task done</summary>\n</task-notification>"),
+                text_delta("Done."),
+                RESULT_OK,
+            ],
+        )
+
+        # Then the answer stays one turn, with the notification as a status line.
+        self.assertEqual(
+            self.outline(emitted),
+            [
+                (None, "prompt"),
+                ("turn-1", "turn"),
+                ("turn-1", "tool"),
+                ("turn-1", "status"),
+                ("turn-1", "answer"),
+                ("turn-1", "done"),
+                ("turn-1", "complete"),
+            ],
+        )
+        self.assertEqual(emitted[3]["text"], "Task done")
+
+    def test_prompt_folded_into_a_running_turn_starts_the_next_turn(self):
+        """Scenario: A prompt Claude takes mid-turn ends that turn and starts its own."""
+        bridge = load_claude_bridge()
+
+        # Given Emacs sent a prompt while Claude's background turn was using tools.
+        _turns, emitted = self.run_turns(
+            bridge,
+            [
+                SYSTEM_INIT,
+                tool_use("Bash", {"description": "Read output"}),
+                replay("Question"),
+                text_delta("Answer."),
+                RESULT_OK,
+            ],
+        )
+
+        # Then the transcript shows the prompt where Claude took it.
+        self.assertEqual(
+            self.outline(emitted),
+            [
+                (None, "notification"),
+                ("turn-1", "turn"),
+                ("turn-1", "tool"),
+                ("turn-1", "complete"),
+                (None, "prompt"),
+                ("turn-2", "turn"),
+                ("turn-2", "answer"),
+                ("turn-2", "done"),
+                ("turn-2", "complete"),
+            ],
+        )
+
+    def test_failed_claude_turns_report_cancel_or_error(self):
+        """Scenario: Interrupted turns read as cancelled; other failures show their error."""
+        bridge = load_claude_bridge()
+        cases = (
+            (True, {"type": "result", "subtype": "error_during_execution", "is_error": True},
+             ("status", "Cancelled.")),
+            (False, {"type": "result", "subtype": "success", "is_error": True, "result": "Prompt is too long"},
+             ("error", "Prompt is too long")),
+        )
+
+        for interrupting, result, expected in cases:
+            with self.subTest(expected=expected):
+                turns, emitted = self.run_turns(
+                    bridge, [replay("Hi"), text_delta("Partial"), result], interrupting=interrupting
+                )
+
+                self.assertEqual((emitted[-2]["classes"], emitted[-2]["text"]), expected)
+                self.assertEqual(emitted[-1], {"id": "turn-1", "type": "complete", "ok": False})
+                self.assertFalse(turns.interrupting)
+
+    def test_running_background_tasks_keep_the_daemon_busy(self):
+        """Scenario: Idle expiry waits for Claude's background tasks to finish."""
+        bridge = load_claude_bridge()
+
+        turns, emitted = self.run_turns(
+            bridge,
+            [{"type": "system", "subtype": "background_tasks_changed", "tasks": [{"task_id": "b1"}]}],
+        )
+
+        self.assertFalse(turns.idle())
+        # Emacs uses the count to confirm before stopping the daemon.
+        self.assertEqual(emitted, [{"type": "background-tasks", "count": 1}])
+
+    def test_workspace_session_prefers_faltoo_choice_then_latest_claude_session(self):
+        """Scenario: Each workspace continues its selected or most recent Claude session."""
+        bridge = load_claude_bridge()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir).resolve()
+            workspace = root / "repo"
+            bridge.CLAUDE_HOME = root / "claude"
+            bridge.STATE_PATH = root / "state.json"
+            project = bridge._project_dir(workspace)
+            project.mkdir(parents=True)
+            self.assertEqual(
+                bridge._project_dir(Path("/Users/me/screener_dev/faltoo-emacs")).name,
+                "-Users-me-screener-dev-faltoo-emacs",
+            )
+
+            # Given no session yet, a new one is created and remembered.
+            created = bridge._session_id(workspace)
+            self.assertEqual(bridge._session_id(workspace), created)
+
+            # Given Claude sessions exist but Faltoo has no choice, the latest continues.
+            bridge.STATE_PATH.unlink()
+            (project / "old.jsonl").write_text("")
+            (project / "new.jsonl").write_text("")
+            os.utime(project / "old.jsonl", (1, 1))
+            self.assertEqual(bridge._session_id(workspace), "new")
+
+            # Given Faltoo chose a session, that choice wins.
+            bridge._set_session_id(workspace, "old")
+            self.assertEqual(bridge._session_id(workspace), "old")
+
+    def test_claude_history_renders_like_the_live_stream(self):
+        """Scenario: Reloaded Claude transcripts match live Faltoo rendering."""
+        bridge = load_claude_bridge()
+        records = [
+            {"type": "queue-operation", "content": "Fix it"},
+            {"type": "user", "message": {"content": "Fix it"}},
+            {"type": "user", "isMeta": True, "message": {"content": "<local-command-caveat>"}},
+            {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": "hmm"}]}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "content": "a"}]}},
+            {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "task-notification",
+                                                  "prompt": "<task-notification>\n<summary>Folded done</summary>\n</task-notification>"}},
+            {"type": "attachment", "attachment": {"type": "total_tokens_reminder"}},
+            {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "sub"}]}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Fixed.\n"}]}},
+            {"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}},
+            {"type": "user", "origin": {"kind": "task-notification"}, "message": {
+                "content": "<task-notification>\n<summary>Task done</summary>\n</task-notification>"}},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "session.jsonl"
+            path.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+            history = bridge._history(path, Path("/repo"))
+
+        self.assertEqual(
+            [(item["role"], item["text"]) for item in history],
+            [
+                ("user", "Fix it"),
+                ("tool", "Bash: ls"),
+                ("tool", "Folded done"),
+                ("assistant", "Fixed."),
+                ("user", "# Background update\n\nsource: Claude Code\n\n## message\nTask done"),
+            ],
+        )
+
+    def test_tool_summaries_show_repo_paths_relative_to_the_workspace(self):
+        """Scenario: Tool summaries name repo files by repo path and others in full."""
+        bridge = load_claude_bridge()
+        cases = (
+            ({"name": "Read", "input": {"file_path": "/repo/docs/guide.md"}}, "Read: docs/guide.md"),
+            ({"name": "Grep", "input": {"pattern": "defun", "path": "/repo/python"}}, "Grep: defun"),
+            ({"name": "Glob", "input": {"path": "/repo/test"}}, "Glob: test"),
+            ({"name": "Read", "input": {"file_path": "/tmp/task.output"}}, "Read: /tmp/task.output"),
+            ({"name": "Read", "input": {"file_path": "/repository/x.el"}}, "Read: /repository/x.el"),
+            ({"name": "TodoWrite", "input": {"todos": []}}, "TodoWrite"),
+        )
+
+        for block, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(bridge._tool_summary(block, Path("/repo")), expected)
+
+    def test_session_commands_reset_resume_name_and_list_claude_sessions(self):
+        """Scenario: /reset, /resume, /name, and the resume list use Claude's session files."""
+        bridge = load_claude_bridge()
+
+        def record(**fields):
+            return json.dumps(fields, separators=(",", ":")) + "\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir).resolve()
+            workspace = root / "repo"
+            bridge.CLAUDE_HOME = root / "claude"
+            bridge.STATE_PATH = root / "state.json"
+            project = bridge._project_dir(workspace)
+            project.mkdir(parents=True)
+
+            # Given sessions titled by the user, by Claude, by their prompt, and one empty.
+            (project / "named.jsonl").write_text(
+                record(type="ai-title", aiTitle="Auto title")
+                + record(type="user", message={"content": "First prompt"})
+                + record(type="custom-title", customTitle="Old name")
+                + record(type="custom-title", customTitle="Chosen\nname")
+            )
+            (project / "auto.jsonl").write_text(
+                record(type="user", isMeta=True, message={"content": "<caveat>"})
+                + record(type="user", message={"content": [{"type": "text", "text": "Prompt"}]})
+                + record(type="ai-title", aiTitle="Auto title")
+            )
+            (project / "plain.jsonl").write_text(
+                record(type="user", message={"content": "Fix   the\nbridge " + "x" * 80})
+            )
+            (project / "empty.jsonl").write_text(record(type="custom-title", customTitle="No messages"))
+            for age, name in enumerate(("plain", "auto", "named")):
+                os.utime(project / f"{name}.jsonl", (age + 1, age + 1))
+
+            def run(command, *args):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    result = command(workspace, *args)
+                self.assertEqual(result, 0)
+                return json.loads(out.getvalue())
+
+            # When listing sessions for /resume.
+            sessions = run(bridge.sessions_list)["sessions"]
+
+            # Then sessions with messages are listed newest first under their best title,
+            # with the modification time kept separate for completion annotations.
+            self.assertEqual(
+                [(session["id"], session["name"]) for session in sessions],
+                [("named", "Chosen name"), ("auto", "Auto title"), ("plain", "Fix the bridge " + "x" * 45)],
+            )
+            self.assertRegex(sessions[0]["modified"], r"^\d{1,2} [A-Z][a-z]{2} \d\d:\d\d$")
+
+            # When resuming one, naming it, and resetting.
+            self.assertEqual(run(bridge.resume_session, "plain")["session_id"], "plain")
+            self.assertEqual(bridge._session_id(workspace), "plain")
+            run(bridge.name_session, "Bridge fix")
+            names = {session["id"]: session["name"] for session in run(bridge.sessions_list)["sessions"]}
+            self.assertEqual(names["plain"], "Bridge fix")
+            reset = run(bridge.reset_session)["session_id"]
+
+            # Then reset selects a new session, which cannot be named before its first message.
+            self.assertNotIn(reset, {"named", "auto", "plain"})
+            self.assertEqual(bridge._session_id(workspace), reset)
+            with redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(bridge.name_session(workspace, "Too early"), 1)
+            self.assertIn("Send a message before naming", err.getvalue())
+
+    def claude_home(self, tmpdir):
+        bridge = load_claude_bridge()
+        root = Path(tmpdir).resolve()
+        bridge.CLAUDE_HOME = root / "claude"
+        bridge.STATE_PATH = root / "state.json"
+        return bridge, root / "repo"
+
+    def test_status_reports_claude_session_model_and_context(self):
+        """Scenario: /status summarizes the current Claude session from its file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge, workspace = self.claude_home(tmpdir)
+            bridge._set_session_id(workspace, "s1")
+            path = bridge._session_path(workspace, "s1")
+            path.parent.mkdir(parents=True)
+            usage = {"input_tokens": 2, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 300, "output_tokens": 50}
+            path.write_text("".join(json.dumps(record, separators=(",", ":")) + "\n" for record in [
+                {"type": "user", "message": {"content": "Hi"}},
+                {"type": "assistant", "message": {"model": "old-model", "usage": {"input_tokens": 1}}},
+                {"type": "custom-title", "customTitle": "Status check"},
+                {"type": "assistant", "message": {"model": "claude-opus-5-5", "usage": usage}},
+                # Written only when a claude process exits, so stale for a live daemon.
+                {"type": "cost-state", "totalCostUSD": 4.4721},
+            ]))
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                result = bridge.session_status(workspace)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["workspace"], str(workspace))
+        self.assertEqual(
+            payload["text"],
+            "\n".join([
+                "Session",
+                "• session_id=s1",
+                "• name=Status check",
+                f"• workspace={workspace}",
+                f"• messages_path={path}",
+                "Session usage",
+                "• model=claude-opus-5-5",
+                "• context_tokens=1,302",
+                "• last_usage=" + json.dumps(usage),
+            ]),
+        )
+
+    def test_prompt_picker_lists_faltoobot_then_claude_commands_with_source(self):
+        """Scenario: C-c p offers FaltooBot prompts and Claude commands, tagged by source."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge, _workspace = self.claude_home(tmpdir)
+            commands = bridge.CLAUDE_HOME / "commands"
+            commands.mkdir(parents=True)
+            (commands / "review.md").write_text(
+                "---\ndescription: Review the diff\nallowed-tools: Bash\n---\nReview $ARGUMENTS carefully.\n"
+            )
+            (commands / "plain.md").write_text("\n  Summarize the change in one line, please, with care.\n")
+            (commands / "notes.txt").write_text("ignored")
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                result = bridge.slash_commands()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            json.loads(out.getvalue())["commands"],
+            [
+                {"command": "/commit", "preview": "Write a commit", "template": "Expanded commit prompt", "source": "faltoobot"},
+                {"command": "/plain", "preview": "Summarize the change in one line, please, with c",
+                 "template": "Summarize the change in one line, please, with care.", "source": "claude"},
+                {"command": "/review", "preview": "Review the diff", "template": "Review $ARGUMENTS carefully.", "source": "claude"},
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Authoritative behavior reference. README covers usage; AGENTS covers code owners
 
 ## Direction
 
-Faltoo is a code-first Emacs client for FaltooBot, inspired by `faltoo.nvim`. Borrow plain-buffer interaction from gptel, not its provider architecture: FaltooBot owns sessions, tools, configuration, and history.
+Faltoo is a code-first Emacs client for FaltooBot and Claude Code, inspired by `faltoo.nvim`. Borrow plain-buffer interaction from gptel, not its provider architecture: the selected core (FaltooBot or Claude Code) owns sessions, tools, configuration, and history.
 
 Use normal Emacs buffers, local modes, completion, overlays, and process filters. The global mode installs the command prefix only. Do not wrap the TUI, convert Markdown to Org, or build broad compatibility layers. Target this user's Emacs 30.2 setup with Magit, posframe, and markdown-mode.
 
@@ -16,8 +16,19 @@ Use normal Emacs buffers, local modes, completion, overlays, and process filters
 - Resolve Python from the selected FaltooBot command's shebang. Run our bridge with that interpreter and import FaltooBot directly; do not scrape CLI/TUI output.
 - Release/local/custom core selection affects one workspace. Local status uses `Faltoo-beta`. Switching core clears capability caching and stops that workspace daemon; plugin reload does not.
 - Websocket configuration selects a persistent bridge daemon per workspace. JSONL requests/events carry request IDs and terminal completion events. FaltooBot owns websocket and hook behavior through its public streaming entrypoint.
-- Daemons poll notifications and expire after 30 idle minutes. Cancellation stops only the current workspace process. Other workspaces continue independently.
+- FaltooBot daemons poll notifications and expire after 30 idle minutes. Cancellation stops only the current workspace process. Other workspaces continue independently. `C-c f R` stops the current workspace's daemon so the next prompt starts one with fresh bridge code.
 - Other bridge calls use one-shot processes. Queue and notification support need only work with websocket-enabled workspaces.
+
+## Claude Code core
+
+- `claude_bridge.py` keeps `faltoo_bridge.py`'s commands and turn events (answer, tool, done, complete); only its daemon's prompt, notification, and turn announcements are Claude-specific, handled in the request layer. It runs on the released FaltooBot's Python and reuses its saved prompts and Git helpers. Do not scrape the TUI: drive `claude -p` with stream-json input and output.
+- One long-lived `claude` child per workspace daemon. Background tasks live inside it, so cancel sends a stream-json interrupt instead of killing it, and the daemon owns its idle expiry, waiting for running background tasks. Background updates come from Claude itself; the Claude daemon does not poll FaltooBot notifications.
+- Claude workspaces are stream-shaped: the bridge translates Claude's turns without tracking requests. Emacs keeps its editable queue but has one prompt in flight, sent when no turn is open. As for FaltooBot, submitting shows the `User` block and opens the answering section; the turn after Claude echoes that prompt streams into it, its popup, and its callback. A turn Claude starts before that echo also streams into the open section (rare; accepted). Otherwise each turn opens one Assistant section. A turn starting without a prompt echo was started by Claude, e.g. after a background task finished, and is headed by a `Background Update`. A notification folded into a running turn is an inline line, live and in history; a prompt taken mid-turn ends that turn. If the daemon exits with a prompt in flight, the prompt returns to the paused queue; if Claude or the bridge's reader fails, the daemon exits so Emacs reports it instead of answering forever.
+- Claude's session files are canonical history. The bridge remembers the selected session per workspace and otherwise continues Claude's most recent session for that directory. Runs use `bypassPermissions` until Emacs has a permission prompt.
+- `/reset`, `/resume`, and `/name` work on Claude's files: names are appended `custom-title` records, so Emacs and the CLI's `/resume` share them. Labels prefer the custom title, then Claude's AI title, then the first prompt. A session cannot be named before its first message because Claude can neither resume nor reuse an id whose file has no conversation. `/status` shows the session, model, context size, and last usage from the session file; it omits cost because Claude writes it only when a process exits. `/tree` is not supported for Claude yet.
+- `/reset`, `/resume`, and core switches stop the workspace's Claude daemon so the next message starts the selected session. When background tasks are running, stopping asks first; declining changes nothing.
+- `C-c p` lists FaltooBot's saved prompts, then `~/.claude/commands/*.md` (frontmatter stripped), with the source as a completion annotation.
+- Tool summaries show repo files relative to the workspace and other paths in full.
 
 ## Queue
 
@@ -25,7 +36,7 @@ One editable Markdown buffer per workspace stores page-separated entries. Manual
 
 Opening it does not pause it. An explicit command pauses consumption; resume starts FIFO consumption when idle. Each consumed entry leaves the queue, enters the transcript, and starts one request. Successful completion starts the next entry; cancellation or failure pauses the queue.
 
-Notification claim/ack/requeue remains in Python. Emacs queues formatted notification text. Display uses a `Background Update` heading and quoted metadata, omitting the protocol's `## message` wrapper; FaltooBot still receives the original prompt.
+FaltooBot notification claim/ack/requeue remains in Python. Emacs queues formatted notification text. Display uses a `Background Update` heading and quoted metadata, omitting the protocol's `## message` wrapper; FaltooBot still receives the original prompt.
 
 ## Ask and comments
 
@@ -41,7 +52,7 @@ Notification claim/ack/requeue remains in Python. Emacs queues formatted notific
 
 ## Transcript and rendering
 
-Per-workspace `*Faltoo: repo-name*` buffers and generic `*Faltoo Chat*` are editable history views with a final user prompt. Sending uses that prompt, not arbitrary buffer edits. FaltooBot's persisted history remains canonical; refreshing restores it. Load recent user turns first; load-more doubles the count or accepts an exact numeric prefix.
+Per-workspace `*Faltoo: repo-name*` buffers and generic `*Faltoo Chat*` are editable history views with a final user prompt. Sending uses that prompt, not arbitrary buffer edits. The core's persisted history remains canonical; refreshing restores it. Load recent user turns first; load-more doubles the count or accepts an exact numeric prefix.
 
 Use shared Markdown styling in transcript and popups: hidden markup and native code fontification. Let font-lock do its work; no synchronous whole-buffer fontification. Batch stream writes and do not force point or scroll to the bottom during append/completion.
 
@@ -49,7 +60,7 @@ Keep one assistant section per response, labeled `answering` while active. Loade
 
 Tool summaries are consecutive blockquote lines, without individual headings. Separate prose from tool groups with blank lines. Hook feedback is complete quoted Markdown with short separators above/below and its own muted face; route live hooks by event metadata. Persisted hook identification still uses the upstream feedback prefix until upstream stores metadata.
 
-Horizontal rules separate turns. Completed answers append elapsed time and any streamed Codex quota to a quoted footer; quota does not require another LLM call. Errors appear in the transcript.
+Horizontal rules separate turns. Completed answers append elapsed time and any streamed rate limits (Codex quota or Claude's 5h/7d limits) to a quoted footer; they do not require another LLM call. Errors appear in the transcript.
 
 Completion reloads only unmodified source buffers in that workspace. Leave unsaved edits to Emacs conflict handling. Do not refresh generated reviews automatically.
 
@@ -70,7 +81,7 @@ Each review owns one hidden plain buffer containing staged and unstaged Magit se
 
 ## Commands and inspection
 
-`C-c /` runs `/reset`, `/resume`, `/name`, `/tree`, or `/status`. These have Emacs-specific plumbing; adding upstream TUI commands does not automatically add them here. Resume uses FaltooBot's recency ordering. Status is a temporary popup.
+`C-c /` runs `/reset`, `/resume`, `/name`, `/tree`, or `/status`. These have Emacs-specific plumbing; adding upstream TUI commands does not automatically add them here. Resume uses the core's recency ordering. Status is a temporary popup.
 
 `C-c p` pastes saved prompt text for editing. Typed slash text is an ordinary prompt. File insertion uses completion and inserts a backtick-wrapped relative path.
 

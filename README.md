@@ -1,6 +1,6 @@
 # faltoo-emacs
 
-Code-first Emacs client for FaltooBot/FaltooChat. Ask about code in popups, batch review comments, and keep the transcript available as history.
+Code-first Emacs client for FaltooBot/FaltooChat and Claude Code. Ask about code in popups, batch review comments, and keep the transcript available as history.
 
 ## Setup
 
@@ -15,7 +15,9 @@ Workspaces follow the buffer's Git root, or its folder outside Git. Generic chat
 
 `faltoo-faltoobot-command` defaults to released `faltoobot` on PATH. `C-c f b` selects release/local/custom per workspace; `faltoo-local-faltoobot-command` points to the local venv's `faltoochat`. Use executable paths, not shell aliases. Local answering status is `Faltoo-beta:answering`.
 
-With websocket mode enabled in FaltooBot, each workspace keeps a bridge daemon for requests and notifications. Queue/notification support targets this mode. Switching core stops that workspace's daemon. `faltoo-reload` reloads Elisp without stopping daemons or restarting Emacs.
+`C-c f b` can also select the Claude Code core, or set `(setq faltoo-faltoobot-command 'claude)` to make it the default. It runs `faltoo-claude-command` (`claude`) headless with `bypassPermissions`, on the released FaltooBot's Python, which still provides the saved prompts and Git helpers. Each workspace continues its most recent Claude session in that directory; `/reset`, `/resume`, and `/name` share sessions and names with the CLI's `claude -r`. `/tree` is not available for Claude yet. `C-c p` also lists `~/.claude/commands`. Switching sessions or core asks first if Claude background tasks are running. The status shows `Faltoo-Claude`. After changing the Python bridge, `C-c f R` restarts the workspace's daemon.
+
+With websocket mode enabled in FaltooBot, each workspace keeps a bridge daemon for requests and notifications. Queue/notification support targets this mode. Claude workspaces always use a daemon. It keeps one `claude` process alive so background tasks survive between turns, and Claude's answers to finished tasks stream in as background updates. Cancelling interrupts the turn without killing background tasks. Claude daemons expire after the idle timeout once no background task is running. Switching core stops that workspace's daemon. `faltoo-reload` reloads Elisp without stopping daemons or restarting Emacs.
 
 ## Main bindings
 
@@ -34,7 +36,7 @@ All use the `C-c f` prefix:
 | `g` | Magit status |
 | `]` / `[` | Next/previous change |
 | `S` / `U` | Stage/unstage file |
-| `b` / `r` | Select core / reload plugin |
+| `b` / `r` / `R` | Select core / reload plugin / restart workspace daemon |
 
 Ask/comments also work on transcript selections. Snippets contain full lines; review snippets mark additions/deletions with `+`/`-`. Saving an empty comment deletes it. Comments submit in creation order and remain separate between workspaces.
 
@@ -78,7 +80,7 @@ Popups are centered, editable Markdown. `C-g` or `C-c C-k` closes them and retur
 | `C-c C-p` / `C-c C-n` | Transcript | Previous/next user message |
 | `C-c C-c` | Queue | Resume FIFO consumption |
 
-Ask answers stream in the popup and transcript; comment batches stream only in the transcript. Completed answers show elapsed time and available Codex quota. Only unmodified source buffers in that workspace reload after completion.
+Ask answers stream in the popup and transcript; comment batches stream only in the transcript. Completed answers show elapsed time and available Codex quota or Claude limits. Only unmodified source buffers in that workspace reload after completion.
 
 The queue is an editable text buffer shared by prompts, finalized comments, and notifications. Opening it does not pause it. User turns enter history when consumed; success starts the next entry, cancellation/error pauses. Finalizing comments clears their highlights and makes queue text the source of truth. Notifications display as `Background Update` sections. Emacs confirms quitting if work remains.
 
@@ -109,7 +111,7 @@ Use `C-c /` for `/reset`, `/resume`, `/name`, `/tree`, and `/status`. Use `C-c p
 emacs -Q --batch -l test/faltoo-behavior-test.el -f ert-run-tests-batch-and-exit
 emacs -Q --batch -l test/faltoo-performance-test.el -f ert-run-tests-batch-and-exit
 emacs -Q --batch -l test/faltoo-review-git-test.el -f ert-run-tests-batch-and-exit
-python3 -m unittest test/faltoo-bridge-behavior-test.py
+python3 test/faltoo-bridge-behavior-test.py
 emacs -Q --batch -l test/load-smoke.el
 emacs -Q --batch -l test/byte-compile-smoke.el
 rm -f *.elc

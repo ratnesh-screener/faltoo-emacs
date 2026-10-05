@@ -190,9 +190,9 @@ def session_status(workspace: Path) -> int:
     return 0
 
 
-def slash_commands() -> int:
+def _slash_command_payload() -> list[dict[str, str]]:
     commands = SlashCommandStore(excluded_commands=BUILTIN_SLASH_COMMANDS).commands()
-    payload = [
+    return [
         {
             "command": command,
             "preview": prompt.preview,
@@ -200,7 +200,10 @@ def slash_commands() -> int:
         }
         for command, prompt in sorted(commands.items())
     ]
-    print(json.dumps({"commands": payload}, ensure_ascii=False))
+
+
+def slash_commands() -> int:
+    print(json.dumps({"commands": _slash_command_payload()}, ensure_ascii=False))
     return 0
 
 TREE_PREVIEW_SOURCE_LIMIT = 2000

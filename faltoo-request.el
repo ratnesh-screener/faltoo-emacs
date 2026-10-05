@@ -18,6 +18,8 @@
 (defvar faltoo-request-pending-answer-chunks (make-hash-table :test #'equal))
 (defvar faltoo-request-pending-popup-buffers (make-hash-table :test #'equal))
 (defvar faltoo-request-stream-flush-timers (make-hash-table :test #'equal))
+(defvar faltoo-request-claude-prompts (make-hash-table :test #'equal)
+  "Queue entry each Claude workspace sent whose turn has not started.")
 
 (defun faltoo-request--event-text (event)
   (or (alist-get 'text event) ""))
@@ -128,48 +130,55 @@
 
 (defun faltoo-request-stream (args payload chat-title &optional popup-buffer on-submitted on-done)
   "Run Faltoo bridge ARGS with PAYLOAD and route stream output."
-  (let ((workspace (alist-get 'workspace payload)))
-    (faltoo-request-ensure-idle workspace)
-    (faltoo-set-workspace-submitting workspace t)
-    (puthash workspace (float-time) faltoo-request-start-times)
-    (remhash workspace faltoo-request-rate-limits)
-    (faltoo-request--clear-pending-answer workspace)
-    (setq faltoo-last-assistant-message "")
-    (puthash workspace "" faltoo-last-assistant-messages)
-    (faltoo-set-status chat-title)
-    (when popup-buffer
-      (faltoo-popup-start-stream popup-buffer))
-    (faltoo-chat-start-stream "Assistant · answering" workspace)
-    (let ((process
-           (faltoo-bridge-stream
-            args payload
-            (lambda (event)
-              (faltoo-request--route-event event workspace popup-buffer on-submitted))
-            (lambda (ok)
-              (let ((elapsed (- (float-time) (gethash workspace faltoo-request-start-times)))
-                    (rate-limit (gethash workspace faltoo-request-rate-limits))
-                    (cancelled (gethash workspace faltoo-request-cancelled)))
-                (remhash workspace faltoo-request-start-times)
-                (remhash workspace faltoo-request-rate-limits)
-                (remhash workspace faltoo-request-processes)
-                (remhash workspace faltoo-request-cancelled)
-                (faltoo-set-workspace-submitting workspace nil)
-                (faltoo-set-status (cond (cancelled "Faltoo cancelled")
-                                         (ok "Faltoo complete")
-                                         (t "Faltoo failed")))
-                (faltoo-request--flush-answer workspace)
-                (faltoo-reload-workspace-buffers workspace)
-                (faltoo-chat-finish-stream workspace elapsed rate-limit)
-                (when (and ok popup-buffer rate-limit)
-                  (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit) t))
-                (when on-done (funcall on-done (and ok (not cancelled))))
-                (if (and ok (not cancelled))
-                    (progn
-                      (ding)
-                      (faltoo-request-consume-queue workspace))
-                  (faltoo-queue-pause workspace)))))))
-      (when (faltoo-workspace-submitting-p workspace)
-        (puthash workspace process faltoo-request-processes)))))
+  (faltoo-request-ensure-idle (alist-get 'workspace payload))
+  (faltoo-request--stream
+   (alist-get 'workspace payload) chat-title popup-buffer on-submitted on-done
+   (lambda (on-event on-finish)
+     (faltoo-bridge-stream args payload on-event on-finish))))
+
+(defun faltoo-request--stream (workspace chat-title popup-buffer on-submitted on-done start)
+  "Route WORKSPACE stream output from the process START returns.
+START is called with the event and completion callbacks."
+  (faltoo-set-workspace-submitting workspace t)
+  (puthash workspace (float-time) faltoo-request-start-times)
+  (remhash workspace faltoo-request-rate-limits)
+  (faltoo-request--clear-pending-answer workspace)
+  (setq faltoo-last-assistant-message "")
+  (puthash workspace "" faltoo-last-assistant-messages)
+  (faltoo-set-status chat-title)
+  (when popup-buffer
+    (faltoo-popup-start-stream popup-buffer))
+  (faltoo-chat-start-stream "Assistant · answering" workspace)
+  (let ((process
+         (funcall
+          start
+          (lambda (event)
+            (faltoo-request--route-event event workspace popup-buffer on-submitted))
+          (lambda (ok)
+            (let ((elapsed (- (float-time) (gethash workspace faltoo-request-start-times)))
+                  (rate-limit (gethash workspace faltoo-request-rate-limits))
+                  (cancelled (gethash workspace faltoo-request-cancelled)))
+              (remhash workspace faltoo-request-start-times)
+              (remhash workspace faltoo-request-rate-limits)
+              (remhash workspace faltoo-request-processes)
+              (remhash workspace faltoo-request-cancelled)
+              (faltoo-set-workspace-submitting workspace nil)
+              (faltoo-set-status (cond (cancelled "Faltoo cancelled")
+                                       (ok "Faltoo complete")
+                                       (t "Faltoo failed")))
+              (faltoo-request--flush-answer workspace)
+              (faltoo-reload-workspace-buffers workspace)
+              (faltoo-chat-finish-stream workspace elapsed rate-limit)
+              (when (and ok popup-buffer rate-limit)
+                (faltoo-popup-append popup-buffer (format "\n\n> %s\n" rate-limit) t))
+              (when on-done (funcall on-done (and ok (not cancelled))))
+              (if (and ok (not cancelled))
+                  (progn
+                    (ding)
+                    (faltoo-request-consume-queue workspace))
+                (faltoo-queue-pause workspace)))))))
+    (when (faltoo-workspace-submitting-p workspace)
+      (puthash workspace process faltoo-request-processes))))
 
 
 (defun faltoo-request--group-review-comments (comments)
@@ -246,15 +255,27 @@
 (defun faltoo-request-consume-queue (workspace)
   "Start WORKSPACE's next queued message when it is idle."
   (unless (or (faltoo-workspace-submitting-p workspace)
-              (faltoo-queue-paused-p workspace))
+              (faltoo-queue-paused-p workspace)
+              (gethash workspace faltoo-request-claude-prompts))
     (when-let ((entry (faltoo-queue-pop workspace)))
       (let ((text (plist-get entry :text)))
         (faltoo-chat-append-user-message text workspace)
-        (faltoo-request-stream
-         (list "append-message")
-         (list (cons 'workspace workspace) (cons 'text text))
-         "Submitting queued message..."
-         (plist-get entry :popup-buffer) nil (plist-get entry :on-done))))))
+        (if (faltoo-bridge-claude-p workspace)
+            ;; The section opens now; the turn after Claude echoes this prompt streams into it.
+            (faltoo-request--stream
+             workspace "Submitting queued message..."
+             (plist-get entry :popup-buffer) nil (plist-get entry :on-done)
+             (lambda (on-event on-done)
+               (puthash workspace (plist-put entry :callbacks (cons on-event on-done))
+                        faltoo-request-claude-prompts)
+               (funcall on-event '((classes . "status")
+                                   (text . "Submitted message. Waiting for assistant...")))
+               (faltoo-bridge-claude-send workspace text)))
+          (faltoo-request-stream
+           (list "append-message")
+           (list (cons 'workspace workspace) (cons 'text text))
+           "Submitting queued message..."
+           (plist-get entry :popup-buffer) nil (plist-get entry :on-done)))))))
 
 (defun faltoo-request--queue-notification (workspace text)
   "Add background notification TEXT to WORKSPACE's submission queue."
@@ -263,6 +284,57 @@
 
 (remove-hook 'faltoo-bridge-queue-hook #'faltoo-request--queue-notification)
 (add-hook 'faltoo-bridge-queue-hook #'faltoo-request--queue-notification)
+
+(defun faltoo-request--claude-event (workspace process event)
+  "Show Claude stream EVENT from daemon PROCESS in WORKSPACE's transcript.
+Claude echoes the sent prompt, already shown, at its turn's start; a turn
+without a prompt echo was started by Claude and follows its notification."
+  (let ((entry (gethash workspace faltoo-request-claude-prompts)))
+    (pcase (alist-get 'type event)
+      ("prompt"
+       (if entry
+           (puthash workspace (plist-put entry :echoed t) faltoo-request-claude-prompts)
+         (faltoo-chat-append-user-message (alist-get 'text event) workspace)))
+      ("notification"
+       ;; A sent prompt's section is already open; its heading would split it.
+       (unless (faltoo-workspace-submitting-p workspace)
+         (faltoo-chat-append-user-message (alist-get 'text event) workspace)))
+      ("turn"
+       (let ((id (alist-get 'id event))
+             (callbacks (plist-get entry :callbacks)))
+         (cond
+          ((plist-get entry :echoed)
+           (remhash workspace faltoo-request-claude-prompts)
+           (faltoo-bridge-attach process id (car callbacks) (cdr callbacks)))
+          ((faltoo-workspace-submitting-p workspace)
+           ;; Claude's own turn raced a sent prompt: stream into its open section.
+           (faltoo-bridge-attach process id
+                                 (lambda (event) (faltoo-request--route-event event workspace nil nil))
+                                 #'ignore))
+          (t
+           (faltoo-request--stream
+            workspace "Background update" nil nil nil
+            (lambda (on-event on-done)
+              (faltoo-bridge-attach process id on-event on-done))))))))))
+
+(remove-hook 'faltoo-bridge-claude-hook #'faltoo-request--claude-event)
+(add-hook 'faltoo-bridge-claude-hook #'faltoo-request--claude-event)
+
+(defun faltoo-request--claude-exit (workspace error)
+  "Requeue WORKSPACE's unanswered Claude prompt, paused, after daemon ERROR."
+  (when-let ((entry (gethash workspace faltoo-request-claude-prompts)))
+    (remhash workspace faltoo-request-claude-prompts)
+    (let ((callbacks (plist-get entry :callbacks)))
+      (funcall (car callbacks)
+               `((classes . "error")
+                 (text . ,(if (string-empty-p error) "Claude stopped" error))))
+      ;; Failing the section pauses the queue before the prompt returns to it.
+      (funcall (cdr callbacks) nil))
+    (faltoo-queue-add (plist-get entry :text) workspace
+                      (plist-get entry :popup-buffer) (plist-get entry :on-done))))
+
+(remove-hook 'faltoo-bridge-daemon-exit-hook #'faltoo-request--claude-exit)
+(add-hook 'faltoo-bridge-daemon-exit-hook #'faltoo-request--claude-exit)
 
 (defun faltoo-request-message (text &optional popup-buffer on-done skip-transcript-user workspace)
   "Queue TEXT as a chat message."

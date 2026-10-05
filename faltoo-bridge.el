@@ -21,7 +21,13 @@
   :group 'faltoo)
 
 (defcustom faltoo-faltoobot-command faltoo-release-faltoobot-command
-  "Default FaltooBot/FaltooChat command used when a workspace has no override."
+  "Default core used when a workspace has no override.
+A FaltooBot/FaltooChat command, or the symbol `claude' for Claude Code."
+  :type '(choice string (const claude))
+  :group 'faltoo)
+
+(defcustom faltoo-claude-command "claude"
+  "Claude Code command used by the Claude core."
   :type 'string
   :group 'faltoo)
 
@@ -39,6 +45,11 @@
 (defvar faltoo-bridge-daemon-idle-timers (make-hash-table :test #'equal))
 (defvar faltoo-bridge-daemon-next-id 0)
 (defvar faltoo-bridge-queue-hook nil)
+(defvar faltoo-bridge-claude-hook nil
+  "Functions called with WORKSPACE, PROCESS and a Claude stream EVENT.
+EVENT is a prompt echo, a notification, or a turn start.")
+(defvar faltoo-bridge-daemon-exit-hook nil
+  "Functions called with WORKSPACE and its stderr text when its daemon exits.")
 (defconst faltoo-bridge--daemon-commands '("append-message"))
 
 (defun faltoo-bridge-command-for-workspace (&optional workspace)
@@ -52,17 +63,22 @@
   (let* ((workspace (faltoo-active-workspace))
          (release (format "release — %s" faltoo-release-faltoobot-command))
          (local (format "local — %s" faltoo-local-faltoobot-command))
+         (claude (format "claude — %s" faltoo-claude-command))
          (custom "custom...")
-         (choice (completing-read "Faltoo core: " (list release local custom) nil t))
+         (choice (completing-read "Faltoo core: " (list release local claude custom) nil t))
          (command (cond
                    ((string= choice release) faltoo-release-faltoobot-command)
                    ((string= choice local) faltoo-local-faltoobot-command)
+                   ((string= choice claude) 'claude)
                    (t (read-string "Faltoo command: "
-                                   (faltoo-bridge-command-for-workspace workspace))))))
-    (faltoo-bridge--command-executable command)
+                                   (format "%s" (faltoo-bridge-command-for-workspace
+                                                 workspace)))))))
+    (faltoo-bridge--command-executable
+     (if (eq command 'claude) faltoo-claude-command command))
+    ;; Stop first: declining to kill Claude background tasks keeps the old core.
+    (faltoo-bridge-stop-daemon workspace)
     (puthash workspace command faltoo-faltoobot-workspace-commands)
     (remhash workspace faltoo-bridge-websocket-enabled-cache)
-    (faltoo-bridge-stop-daemon workspace)
     (message "Faltoo using for %s: %s"
              (file-name-nondirectory (directory-file-name workspace))
              command)))
@@ -98,8 +114,20 @@
    (faltoo-bridge--command-executable
     (faltoo-bridge-command-for-workspace workspace))))
 
+(defun faltoo-bridge-claude-p (workspace)
+  "Return non-nil when WORKSPACE uses the Claude Code core."
+  (eq (faltoo-bridge-command-for-workspace workspace) 'claude))
+
 (defun faltoo-bridge--command (args &optional workspace)
-  (append (list (faltoo-bridge-python workspace) (faltoo-bridge--script)) args))
+  (append
+   (if (faltoo-bridge-claude-p workspace)
+       ;; The Claude bridge reuses FaltooBot's prompt and Git helpers.
+       (list (faltoo-bridge--shebang-python
+              (faltoo-bridge--command-executable faltoo-release-faltoobot-command))
+             (expand-file-name "python/claude_bridge.py" faltoo-bridge-root)
+             "--claude" (faltoo-bridge--command-executable faltoo-claude-command))
+     (list (faltoo-bridge-python workspace) (faltoo-bridge--script)))
+   args))
 
 (defun faltoo-bridge-call-raw (args &optional input workspace)
   "Run bridge ARGS synchronously with INPUT and return stdout."
@@ -153,13 +181,31 @@
 
 (defun faltoo-bridge-stop-daemon (workspace)
   "Stop WORKSPACE's persistent bridge daemon."
+  (when-let* ((process (gethash workspace faltoo-bridge-daemons))
+              (count (process-get process 'faltoo-background-tasks))
+              ((> count 0))
+              ((not (yes-or-no-p
+                     (format "Stopping kills %d Claude background tasks. Continue? " count)))))
+    (user-error "Kept Claude running"))
   (faltoo-bridge--cancel-daemon-idle-timer workspace)
   (when-let ((process (gethash workspace faltoo-bridge-daemons)))
     (remhash workspace faltoo-bridge-daemons)
     (delete-process process)))
 
+(defun faltoo-restart-daemon ()
+  "Restart the current workspace's bridge daemon to pick up bridge changes.
+The next prompt starts a fresh daemon."
+  (interactive)
+  (let ((workspace (faltoo-active-workspace)))
+    (unless (gethash workspace faltoo-bridge-daemons)
+      (user-error "No Faltoo daemon running for this workspace"))
+    (faltoo-bridge-stop-daemon workspace)
+    (message "Faltoo daemon stopped; the next prompt starts a fresh one")))
+
 (defun faltoo-bridge--schedule-daemon-idle-stop (workspace process)
-  (when (= (hash-table-count (process-get process 'faltoo-requests)) 0)
+  ;; Claude daemons expire themselves once their background tasks finish.
+  (when (and (not (process-get process 'faltoo-claude))
+             (= (hash-table-count (process-get process 'faltoo-requests)) 0))
     (faltoo-bridge--cancel-daemon-idle-timer workspace)
     (puthash workspace
              (run-at-time faltoo-bridge-daemon-idle-seconds nil
@@ -169,8 +215,14 @@
 (defun faltoo-bridge--daemon-handle-line (workspace process line)
   (let* ((event (json-parse-string line :object-type 'alist :array-type 'list))
          (type (or (alist-get 'type event) "")))
-    (if (string= type "queue")
-        (run-hook-with-args 'faltoo-bridge-queue-hook workspace (alist-get 'text event))
+    (cond
+     ((string= type "queue")
+      (run-hook-with-args 'faltoo-bridge-queue-hook workspace (alist-get 'text event)))
+     ((string= type "background-tasks")
+      (process-put process 'faltoo-background-tasks (alist-get 'count event)))
+     ((member type '("prompt" "notification" "turn"))
+      (run-hook-with-args 'faltoo-bridge-claude-hook workspace process event))
+     (t
       (let* ((request-id (alist-get 'id event))
              (requests (process-get process 'faltoo-requests))
              (callbacks (gethash request-id requests)))
@@ -182,7 +234,7 @@
                   (remhash request-id requests)
                   (funcall on-done (eq (alist-get 'ok event) t))
                   (faltoo-bridge--schedule-daemon-idle-stop workspace process))
-              (funcall on-event event))))))))
+              (funcall on-event event)))))))))
 
 (defun faltoo-bridge--daemon-filter (workspace process chunk)
   (process-put process 'faltoo-pending
@@ -208,7 +260,8 @@
                                                        "Faltoo bridge failed"
                                                      stderr)))))
                    (funcall on-done nil)))
-               requests))
+               requests)
+      (run-hook-with-args 'faltoo-bridge-daemon-exit-hook workspace stderr))
     (remhash workspace faltoo-bridge-daemons)
     (faltoo-bridge--cancel-daemon-idle-timer workspace)
     (kill-buffer buffer)
@@ -218,8 +271,13 @@
   (or (and-let* ((process (gethash workspace faltoo-bridge-daemons))
                  ((process-live-p process)))
         process)
-      (let* ((cmd (faltoo-bridge--command
-                   (list "daemon" "--workspace" workspace) workspace))
+      (let* ((claude (faltoo-bridge-claude-p workspace))
+             (cmd (faltoo-bridge--command
+                   (append (list "daemon" "--workspace" workspace)
+                           (when claude
+                             (list "--idle-seconds"
+                                   (number-to-string faltoo-bridge-daemon-idle-seconds))))
+                   workspace))
              (buffer (generate-new-buffer " *faltoo-bridge-daemon*"))
              (stderr-buffer (generate-new-buffer " *faltoo-bridge-daemon-stderr*"))
              (process (make-process
@@ -235,6 +293,7 @@
                                    (faltoo-bridge--daemon-sentinel
                                     workspace buffer stderr-buffer proc event)))))
         (process-put process 'faltoo-requests (make-hash-table :test #'equal))
+        (process-put process 'faltoo-claude claude)
         (puthash workspace process faltoo-bridge-daemons)
         process)))
 
@@ -242,10 +301,9 @@
   "Send append ARGS and PAYLOAD through a persistent bridge daemon."
   (let* ((workspace (alist-get 'workspace payload))
          (process (faltoo-bridge--ensure-daemon workspace))
-         (request-id (number-to-string (cl-incf faltoo-bridge-daemon-next-id)))
-         (requests (process-get process 'faltoo-requests)))
+         (request-id (number-to-string (cl-incf faltoo-bridge-daemon-next-id))))
     (faltoo-bridge--cancel-daemon-idle-timer workspace)
-    (puthash request-id (cons on-event on-done) requests)
+    (faltoo-bridge-attach process request-id on-event on-done)
     (process-send-string
      process
      (concat (json-serialize `((id . ,request-id)
@@ -253,6 +311,21 @@
                                (payload . ,payload)))
              "\n"))
     process))
+
+(defun faltoo-bridge-claude-send (workspace text)
+  "Write prompt TEXT to WORKSPACE's Claude daemon and return the daemon.
+Claude's echo and turns come back through `faltoo-bridge-claude-hook'."
+  (let ((process (faltoo-bridge--ensure-daemon workspace)))
+    (process-send-string
+     process
+     (concat (json-serialize `((command . "append-message") (payload . ((text . ,text)))))
+             "\n"))
+    process))
+
+(defun faltoo-bridge-attach (process request-id on-event on-done)
+  "Route daemon PROCESS events for REQUEST-ID to ON-EVENT and ON-DONE."
+  (puthash request-id (cons on-event on-done) (process-get process 'faltoo-requests))
+  process)
 
 (defun faltoo-bridge-stream (args payload on-event on-done)
   "Run bridge ARGS with PAYLOAD.
@@ -349,8 +422,11 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
 
 (defun faltoo-bridge-cancel-stream (process)
   "Cancel a running Faltoo bridge PROCESS."
-  (process-put process 'faltoo-cancelled t)
-  (delete-process process))
+  (if (process-get process 'faltoo-claude)
+      ;; Killing Claude would also kill its background tasks.
+      (process-send-string process (concat (json-serialize '((command . "interrupt"))) "\n"))
+    (process-put process 'faltoo-cancelled t)
+    (delete-process process)))
 
 (defun faltoo-bridge-messages (&optional turns workspace)
   (let* ((workspace (or workspace (faltoo-workspace)))
@@ -372,9 +448,15 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
   (let ((workspace (or workspace (faltoo-active-workspace))))
     (alist-get 'commands (faltoo-bridge-call-json (list "slash-commands") nil workspace))))
 
+(defun faltoo-bridge--switch-claude-session (workspace)
+  "Stop WORKSPACE's Claude daemon so its next message starts the selected session."
+  (when (faltoo-bridge-claude-p workspace)
+    (faltoo-bridge-stop-daemon workspace)))
+
 (defun faltoo-bridge-reset-session (&optional workspace)
   "Start a fresh Faltoo session for WORKSPACE and return session info."
   (let ((workspace (or workspace (faltoo-workspace))))
+    (faltoo-bridge--switch-claude-session workspace)
     (faltoo-bridge-call-json (list "reset-session" "--workspace" workspace) nil workspace)))
 
 (defun faltoo-bridge-name-session (name &optional workspace)
@@ -395,6 +477,7 @@ Call ON-EVENT for each JSONL event and ON-DONE with t/nil at exit."
 (defun faltoo-bridge-resume-session (session-id &optional workspace)
   "Resume SESSION-ID for WORKSPACE and return session info."
   (let ((workspace (or workspace (faltoo-workspace))))
+    (faltoo-bridge--switch-claude-session workspace)
     (faltoo-bridge-call-json
      (list "resume-session" "--workspace" workspace)
      (json-serialize (list (cons 'session_id session-id)))

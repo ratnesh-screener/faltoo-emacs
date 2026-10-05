@@ -293,8 +293,8 @@
        (with-current-buffer (find-file-noselect file-b)
          (should-not (string-match-p "answering" (faltoo-status-string))))))))
 
-(ert-deftest faltoo-status-label-shows-beta-for-local-core ()
-  "Scenario: Mode-line label changes when the current chat uses local Faltoo core."
+(ert-deftest faltoo-status-label-shows-workspace-core ()
+  "Scenario: Mode-line label names the local or Claude core of the current chat."
   (faltoo-test--with-two-temp-git-files
    (lambda (file-a root-a file-b root-b)
      (let ((faltoo-submitting nil)
@@ -302,19 +302,21 @@
            (faltoo-faltoobot-command "faltoobot")
            (faltoo-local-faltoobot-command "/tmp/local-faltoochat")
            (faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal)))
-       ;; Given repo A is answering with the local core and repo B uses release.
+       ;; Given repo A is answering with the local core and repo B uses Claude.
        (puthash (file-name-as-directory (file-truename root-a))
                 "/tmp/local-faltoochat"
+                faltoo-faltoobot-workspace-commands)
+       (puthash (file-name-as-directory (file-truename root-b))
+                'claude
                 faltoo-faltoobot-workspace-commands)
        (faltoo-set-workspace-submitting (file-truename root-a) t)
        (faltoo-set-workspace-submitting (file-truename root-b) t)
 
-       ;; Then only the local-core workspace advertises Faltoo-beta.
+       ;; Then each workspace advertises its own core.
        (with-current-buffer (find-file-noselect file-a)
          (should (string-match-p "Faltoo-beta:answering" (faltoo-status-string))))
        (with-current-buffer (find-file-noselect file-b)
-         (should (string-match-p "Faltoo:answering" (faltoo-status-string)))
-         (should-not (string-match-p "Faltoo-beta" (faltoo-status-string))))))))
+         (should (string-match-p "Faltoo-Claude:answering" (faltoo-status-string))))))))
 
 (ert-deftest faltoo-request-message-targets-current-buffer-workspace ()
   "Scenario: Sending from a source buffer targets that file's Git repo session."
@@ -529,6 +531,167 @@
           (should (= (hash-table-count (process-get process 'faltoo-requests)) 0)))
       (when (process-live-p process)
         (delete-process process)))))
+
+(ert-deftest faltoo-bridge-claude-core-runs-claude-bridge-on-faltoobot-python ()
+  "Scenario: A Claude workspace runs the Claude bridge with FaltooBot's Python."
+  (let ((faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal))
+        (faltoo-release-faltoobot-command "faltoobot")
+        (faltoo-claude-command "claude"))
+    ;; Given one workspace selected the Claude core.
+    (puthash "/repo-a/" 'claude faltoo-faltoobot-workspace-commands)
+    (cl-letf (((symbol-function 'faltoo-bridge--command-executable)
+               (lambda (command) (concat "/bin/" command)))
+              ((symbol-function 'faltoo-bridge--shebang-python)
+               (lambda (path) (concat path "-python"))))
+
+      ;; When building bridge commands for it and for another workspace.
+      ;; Then Claude gets its bridge and executable; the other keeps FaltooBot's.
+      (should (equal (faltoo-bridge--command '("messages") "/repo-a/")
+                     (list "/bin/faltoobot-python"
+                           (expand-file-name "python/claude_bridge.py" faltoo-bridge-root)
+                           "--claude" "/bin/claude" "messages")))
+      (should (equal (faltoo-bridge--command '("messages") "/repo-b/")
+                     (list "/bin/faltoobot-python" (faltoo-bridge--script) "messages"))))))
+
+(ert-deftest faltoo-select-faltoobot-command-offers-claude-core ()
+  "Scenario: The core switcher can move one workspace to Claude Code."
+  (let ((faltoo-faltoobot-command "faltoobot")
+        (faltoo-claude-command "claude")
+        (faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal))
+        validated-command)
+    (cl-letf (((symbol-function 'faltoo-active-workspace) (lambda () "/repo-a/"))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt choices &rest _args)
+                 (seq-find (lambda (choice) (string-prefix-p "claude" choice)) choices)))
+              ((symbol-function 'faltoo-bridge--command-executable)
+               (lambda (command) (setq validated-command command)))
+              ((symbol-function 'faltoo-bridge-stop-daemon) #'ignore))
+      (faltoo-select-faltoobot-command))
+
+    (should (eq (gethash "/repo-a/" faltoo-faltoobot-workspace-commands) 'claude))
+    (should (equal validated-command "claude"))))
+
+(ert-deftest faltoo-select-faltoobot-command-keeps-core-when-stop-is-declined ()
+  "Scenario: Declining to kill Claude background tasks leaves the workspace core unchanged."
+  (let ((faltoo-faltoobot-command 'claude)
+        (faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal)))
+    (cl-letf (((symbol-function 'faltoo-active-workspace) (lambda () "/repo-a/"))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt choices &rest _args) (car choices)))
+              ((symbol-function 'faltoo-bridge--command-executable) #'identity)
+              ((symbol-function 'faltoo-bridge-stop-daemon)
+               (lambda (_workspace) (user-error "Kept Claude running"))))
+      (should-error (faltoo-select-faltoobot-command) :type 'user-error))
+    (should (eq (faltoo-bridge-command-for-workspace "/repo-a/") 'claude))))
+
+(ert-deftest faltoo-restart-daemon-stops-the-current-workspace-daemon ()
+  "Scenario: C-c f R restarts this workspace's daemon so new bridge code takes effect."
+  (should (eq (keymap-lookup faltoo-command-map "R") #'faltoo-restart-daemon))
+  (let ((faltoo-bridge-daemons (make-hash-table :test #'equal))
+        (process (start-process "faltoo-test-daemon" nil "cat"))
+        (other (start-process "faltoo-test-daemon" nil "cat")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'faltoo-active-workspace) (lambda () "/repo-a/")))
+          ;; Given two workspaces have daemons.
+          (puthash "/repo-a/" process faltoo-bridge-daemons)
+          (puthash "/repo-b/" other faltoo-bridge-daemons)
+
+          ;; When restarting from the first.
+          (faltoo-restart-daemon)
+
+          ;; Then only its daemon stops; the next prompt starts a fresh one.
+          (should-not (process-live-p process))
+          (should-not (gethash "/repo-a/" faltoo-bridge-daemons))
+          (should (process-live-p other))
+
+          ;; When nothing is running, it says so.
+          (should-error (faltoo-restart-daemon) :type 'user-error))
+      (dolist (proc (list process other))
+        (when (process-live-p proc) (delete-process proc))))))
+
+(ert-deftest faltoo-bridge-claude-daemon-interrupts-instead-of-dying ()
+  "Scenario: Cancelling a Claude turn keeps its daemon and background tasks alive."
+  (let ((process (start-process "faltoo-test-daemon" nil "cat"))
+        sent)
+    (unwind-protect
+        (progn
+          ;; Given a Claude daemon is running a request.
+          (process-put process 'faltoo-claude t)
+          (process-put process 'faltoo-requests (make-hash-table :test #'equal))
+          (cl-letf (((symbol-function 'process-send-string)
+                     (lambda (_process string) (setq sent string))))
+
+            ;; When cancelling the stream and its idle stop is considered.
+            (faltoo-bridge-cancel-stream process)
+            (faltoo-bridge--schedule-daemon-idle-stop "/repo/" process))
+
+          ;; Then Claude is asked to interrupt; the daemon owns its idle expiry.
+          (should (equal (json-parse-string sent :object-type 'alist)
+                         '((command . "interrupt"))))
+          (should (process-live-p process))
+          (should-not (gethash "/repo/" faltoo-bridge-daemon-idle-timers)))
+      (delete-process process))))
+
+(ert-deftest faltoo-bridge-stopping-claude-daemon-confirms-running-background-tasks ()
+  "Scenario: Stopping a Claude daemon asks first when it would kill background tasks."
+  (dolist (answer '(nil t))
+    (let ((faltoo-bridge-daemons (make-hash-table :test #'equal))
+          (process (start-process "faltoo-test-daemon" nil "cat"))
+          asked)
+      (unwind-protect
+          (progn
+            ;; Given the daemon reported two running background tasks.
+            (puthash "/repo/" process faltoo-bridge-daemons)
+            (faltoo-bridge--daemon-handle-line
+             "/repo/" process "{\"type\":\"background-tasks\",\"count\":2}")
+
+            ;; When stopping it and answering ANSWER.
+            (cl-letf (((symbol-function 'yes-or-no-p)
+                       (lambda (prompt) (setq asked prompt) answer)))
+              (if answer
+                  (faltoo-bridge-stop-daemon "/repo/")
+                (should-error (faltoo-bridge-stop-daemon "/repo/") :type 'user-error)))
+
+            ;; Then the user was asked, and only a yes stops the daemon.
+            (should (string-match-p "2 Claude background tasks" asked))
+            (should (eq (not (process-live-p process)) answer))
+            (should (eq (null (gethash "/repo/" faltoo-bridge-daemons)) answer)))
+        (when (process-live-p process)
+          (delete-process process))))))
+
+(ert-deftest faltoo-bridge-claude-session-switch-restarts-daemon ()
+  "Scenario: /reset and /resume restart only a Claude workspace's daemon."
+  (dolist (case '((claude t) ("faltoobot" nil)))
+    (let ((faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal))
+          stopped)
+      (puthash "/repo/" (car case) faltoo-faltoobot-workspace-commands)
+      (cl-letf (((symbol-function 'faltoo-bridge-call-json) (lambda (&rest _args) nil))
+                ((symbol-function 'faltoo-bridge-stop-daemon)
+                 (lambda (workspace) (push workspace stopped))))
+        (faltoo-bridge-reset-session "/repo/")
+        (faltoo-bridge-resume-session "id" "/repo/"))
+      (should (equal stopped (and (cadr case) '("/repo/" "/repo/")))))))
+
+(ert-deftest faltoo-bridge-daemon-hands-claude-stream-events-to-the-request-layer ()
+  "Scenario: Claude's prompt echoes, notifications, and turn starts reach the request layer."
+  (let ((process (start-process "faltoo-test-daemon" nil "cat"))
+        (faltoo-bridge-claude-hook nil)
+        seen)
+    (unwind-protect
+        (progn
+          (process-put process 'faltoo-requests (make-hash-table :test #'equal))
+          (add-hook 'faltoo-bridge-claude-hook
+                    (lambda (workspace hook-process event)
+                      (push (list workspace (eq hook-process process) (alist-get 'type event)) seen)))
+
+          (dolist (line '("{\"type\":\"prompt\",\"text\":\"Hi\"}"
+                          "{\"type\":\"notification\",\"text\":\"# Background update\"}"
+                          "{\"type\":\"turn\",\"id\":\"turn-1\"}"))
+            (faltoo-bridge--daemon-handle-line "/repo/" process line))
+
+          (should (equal (reverse seen)
+                         '(("/repo/" t "prompt") ("/repo/" t "notification") ("/repo/" t "turn")))))
+      (delete-process process))))
 
 (ert-deftest faltoo-bridge-messages-passes-turn-limit-to-bridge ()
   "Scenario: Transcript history loading asks the bridge for recent user turns."
@@ -808,6 +971,42 @@ Task completed."
     (should (equal completion-labels
                    '("latest - 12 Jun" "middle - 8 Jun" "older - 1 Jun")))
     (should (equal resumed-session "latest"))))
+
+(ert-deftest faltoo-session-resume-annotates-claude-sessions-with-time-and-id ()
+  "Scenario: Claude session titles stay clean; time and id are completion annotations."
+  (let (labels annotations resumed-session)
+    ;; Given two Claude sessions share a title.
+    (cl-letf (((symbol-function 'faltoo-session-workspace) (lambda () "/repo/"))
+              ((symbol-function 'faltoo-bridge-list-sessions)
+               (lambda (_workspace)
+                 '(((id . "aaaaaaaa-1111") (name . "Bridge fix") (modified . "5 Oct 13:58"))
+                   ((id . "bbbbbbbb-2222") (name . "Review") (modified . "4 Oct 09:10"))
+                   ((id . "cccccccc-3333") (name . "Bridge fix") (modified . "1 Oct 18:00")))))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _args)
+                 (let ((annotate (completion-metadata-get
+                                  (completion-metadata "" collection nil)
+                                  'annotation-function)))
+                   (setq labels (all-completions "" collection)
+                         annotations (mapcar (lambda (label)
+                                               (substring-no-properties (funcall annotate label)))
+                                             labels))
+                   (nth 2 labels))))
+              ((symbol-function 'faltoo-bridge-resume-session)
+               (lambda (session-id _workspace)
+                 (setq resumed-session session-id)
+                 `((session_id . ,session-id))))
+              ((symbol-function 'faltoo-chat-refresh) (lambda (&optional _workspace) nil)))
+
+      ;; When picking the older duplicate.
+      (faltoo-session-resume))
+
+    ;; Then only duplicates carry an id in the label, and the right session resumes.
+    (should (equal labels '("Bridge fix" "Review" "Bridge fix · cccccccc")))
+    (should (equal annotations '("  5 Oct 13:58 · aaaaaaaa"
+                                 "  4 Oct 09:10 · bbbbbbbb"
+                                 "  1 Oct 18:00 · cccccccc")))
+    (should (equal resumed-session "cccccccc-3333"))))
 
 (ert-deftest faltoo-session-tree-opens-transcript-inspector ()
   "Scenario: The /tree command opens the structured transcript inspector."
@@ -1648,6 +1847,40 @@ Task completed."
     ;; Then the reusable prompt text is pasted for review/editing.
     (should (equal (buffer-string) "Please write a focused commit message."))))
 
+(ert-deftest faltoo-insert-prompt-template-annotates-prompt-source ()
+  "Scenario: FaltooBot and Claude prompts share the picker; the source is an annotation."
+  (with-temp-buffer
+    (let (labels annotations)
+      ;; Given a FaltooBot prompt was copied into Claude's commands.
+      (cl-letf (((symbol-function 'faltoo-bridge-slash-commands)
+                 (lambda ()
+                   '(((command . "/commit") (preview . "Write a commit")
+                      (template . "FaltooBot commit") (source . "faltoobot"))
+                     ((command . "/commit") (preview . "Write a commit")
+                      (template . "Claude commit") (source . "claude"))
+                     ((command . "/review") (preview . "Review")
+                      (template . "Claude review") (source . "claude")))))
+                ((symbol-function 'completing-read)
+                 (lambda (_prompt collection &rest _args)
+                   (let ((annotate (completion-metadata-get
+                                    (completion-metadata "" collection nil)
+                                    'annotation-function)))
+                     (setq labels (all-completions "" collection)
+                           annotations (mapcar (lambda (label)
+                                                 (substring-no-properties (funcall annotate label)))
+                                               labels))
+                     (nth 1 labels)))))
+
+        ;; When picking the Claude copy.
+        (faltoo-insert-prompt-template))
+
+      ;; Then duplicates stay selectable and the chosen template is inserted.
+      (should (equal labels '("/commit — Write a commit"
+                              "/commit — Write a commit · claude"
+                              "/review — Review")))
+      (should (equal annotations '("  faltoobot" "  claude" "  claude")))
+      (should (equal (buffer-string) "Claude commit")))))
+
 (ert-deftest faltoo-markdown-modes-enable-pretty-rendering ()
   "Scenario: Transcript and popup buffers hide Markdown noise where possible."
   ;; Given a transcript and popup buffer are created.
@@ -2381,6 +2614,160 @@ removed")
        (kill-buffer popup)))))
 
 ;;; Request specs
+
+(defun faltoo-test--claude-workspace (body)
+  "Call BODY with a Claude test workspace, its daemon process, and the sent prompts."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (_file root)
+     (faltoo-test--kill-chat-buffer)
+     (let* ((workspace (file-truename root))
+            (faltoo-submitting-workspaces (make-hash-table :test #'equal))
+            (faltoo-request-processes (make-hash-table :test #'equal))
+            (faltoo-request-claude-prompts (make-hash-table :test #'equal))
+            (faltoo-queue-paused-workspaces (make-hash-table :test #'equal))
+            (process (start-process "faltoo-test-daemon" nil "cat"))
+            sent)
+       (process-put process 'faltoo-requests (make-hash-table :test #'equal))
+       (unwind-protect
+           (cl-letf (((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
+                     ((symbol-function 'faltoo-bridge-claude-send)
+                      (lambda (_workspace text) (setq sent (append sent (list text))) process))
+                     ((symbol-function 'ding) #'ignore))
+             (funcall body workspace process (lambda () sent)))
+         (delete-process process)
+         (with-current-buffer (faltoo-queue-buffer workspace) (erase-buffer))
+         (kill-buffer (faltoo-queue-buffer-name-for workspace)))))))
+
+(defun faltoo-test--claude-event (workspace process &rest event)
+  "Deliver Claude stream EVENT, an alist of key/value pairs, for WORKSPACE."
+  (run-hook-with-args 'faltoo-bridge-claude-hook workspace process
+                      (cl-loop for (key value) on event by #'cddr collect (cons key value))))
+
+(defun faltoo-test--claude-turn (process id &rest texts)
+  "Stream answer TEXTS for Claude turn ID and complete it."
+  (let ((callbacks (gethash id (process-get process 'faltoo-requests))))
+    (dolist (text texts)
+      (funcall (car callbacks) `((classes . "answer") (text . ,text))))
+    (funcall (cdr callbacks) t)))
+
+(ert-deftest faltoo-request-claude-prompt-stays-visible-and-owns-its-echoed-turn ()
+  "Scenario: A Claude prompt shows when sent, and the turn after its echo streams to its popup."
+  (faltoo-test--claude-workspace
+   (lambda (workspace process sent)
+     (let ((popup (get-buffer-create "*Faltoo Test Popup*"))
+           done)
+       (with-current-buffer popup (erase-buffer))
+       ;; Given an Ask prompt is sent to Claude.
+       (faltoo-request-message "question" popup (lambda (ok) (setq done ok)) nil workspace)
+       (faltoo-request-message "follow-up" nil nil nil workspace)
+
+       ;; Then it is shown with an answering section, and the next prompt waits.
+       (should (equal (funcall sent) '("question")))
+       (should (faltoo-workspace-submitting-p workspace))
+       (should (eq (gethash workspace faltoo-request-processes) process))
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "# User\n\nquestion\n\n---\n# Assistant · answering\n\n> Submitted message"
+                                 (buffer-string))))
+
+       ;; When Claude echoes it and answers in a turn.
+       (faltoo-test--claude-event workspace process 'type "prompt" 'text "question")
+       (faltoo-test--claude-event workspace process 'type "turn" 'id "turn-1")
+       (faltoo-test--claude-turn process "turn-1" "the answer")
+
+       ;; Then the echo adds no second copy, transcript and popup show the answer,
+       ;; its callback runs, and the queue moves on.
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "# User\n\nquestion\n\n---\n# Assistant[^\n]*\n\n> Submitted message[^\n]*\n\nthe answer"
+                                 (buffer-string)))
+         (should (= (how-many "^question$" (point-min) (point-max)) 1))
+         (should (= (how-many "^# Assistant" (point-min)
+                              (save-excursion (goto-char (point-min)) (search-forward "follow-up")))
+            1)))
+       (with-current-buffer popup
+         (should (string-match-p "the answer" (buffer-string))))
+       (should (eq done t))
+       (should (equal (funcall sent) '("question" "follow-up")))
+       (kill-buffer popup)))))
+
+(ert-deftest faltoo-request-claude-turn-without-prompt-streams-under-background-update ()
+  "Scenario: A turn Claude starts while idle streams under its notification."
+  (faltoo-test--claude-workspace
+   (lambda (workspace process _sent)
+     ;; Given Claude starts a turn itself while the workspace is idle.
+     (faltoo-test--claude-event workspace process 'type "notification"
+                                'text "# Background update\n\nsource: Claude Code\n\n## message\nTask done")
+     (faltoo-test--claude-event workspace process 'type "turn" 'id "turn-1")
+
+     ;; Then it is a running, cancellable request.
+     (should (faltoo-workspace-submitting-p workspace))
+     (should (eq (gethash workspace faltoo-request-processes) process))
+     (faltoo-test--claude-turn process "turn-1" "bg-ok")
+
+     ;; And it streams under its own Background Update heading.
+     (with-current-buffer (faltoo-test--chat-buffer-name)
+       (should (string-match-p
+                "# Background Update\n\n> Source: Claude Code\n\nTask done\n\n---\n# Assistant[^\n]*\n\nbg-ok"
+                (buffer-string))))
+     (should-not (faltoo-workspace-submitting-p workspace)))))
+
+(ert-deftest faltoo-request-claude-turn-racing-a-sent-prompt-joins-its-section ()
+  "Scenario: A background turn before a sent prompt's echo streams into that prompt's section."
+  (faltoo-test--claude-workspace
+   (lambda (workspace process sent)
+     (let ((popup (get-buffer-create "*Faltoo Test Popup*"))
+           done)
+       (with-current-buffer popup (erase-buffer))
+       ;; Given a prompt is in flight when Claude starts a background turn.
+       (faltoo-request-message "question" popup (lambda (ok) (setq done ok)) nil workspace)
+       (faltoo-request-message "follow-up" nil nil nil workspace)
+       (faltoo-test--claude-event workspace process 'type "notification" 'text "# Background update")
+       (faltoo-test--claude-event workspace process 'type "turn" 'id "turn-1")
+       (faltoo-test--claude-turn process "turn-1" "bg-ok")
+
+       ;; Then the prompt is still answering, the popup did not get the
+       ;; background text, and the queue waits.
+       (should (faltoo-workspace-submitting-p workspace))
+       (should-not done)
+       (with-current-buffer popup
+         (should-not (string-match-p "bg-ok" (buffer-string))))
+       (should (equal (funcall sent) '("question")))
+
+       ;; When the prompt's own turn follows.
+       (faltoo-test--claude-event workspace process 'type "prompt" 'text "question")
+       (faltoo-test--claude-event workspace process 'type "turn" 'id "turn-2")
+       (faltoo-test--claude-turn process "turn-2" "the answer")
+
+       ;; Then one section holds both, the popup gets its answer, and the queue continues.
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "question[^z]*bg-ok[^z]*the answer" (buffer-string)))
+         (should (= (how-many "^# Assistant" (point-min)
+                              (save-excursion (goto-char (point-min)) (search-forward "follow-up")))
+            1)))
+       (with-current-buffer popup
+         (should (string-match-p "the answer" (buffer-string))))
+       (should (eq done t))
+       (should (equal (funcall sent) '("question" "follow-up")))
+       (kill-buffer popup)))))
+
+(ert-deftest faltoo-request-claude-daemon-exit-requeues-the-in-flight-prompt ()
+  "Scenario: A Claude daemon dying before echoing a prompt returns it to a paused queue."
+  (faltoo-test--claude-workspace
+   (lambda (workspace _process _sent)
+     ;; Given a prompt is in flight.
+     (faltoo-request-message "question" nil nil nil workspace)
+
+     ;; When the daemon exits.
+     (run-hook-with-args 'faltoo-bridge-daemon-exit-hook workspace "No conversation found")
+
+     ;; Then its section shows the error, the workspace is idle, the queue
+     ;; paused, and the prompt kept.
+     (with-current-buffer (faltoo-test--chat-buffer-name)
+       (should (string-match-p "Error: No conversation found" (buffer-string))))
+     (should-not (faltoo-workspace-submitting-p workspace))
+     (should-not (gethash workspace faltoo-request-processes))
+     (should (faltoo-queue-paused-p workspace))
+     (should (= (faltoo-queue-count workspace) 1)))))
 
 (ert-deftest faltoo-request-message-records-source-prompt-in-transcript ()
   "Scenario: Source-buffer prompts are written to transcript before assistant output."

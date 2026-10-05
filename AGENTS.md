@@ -18,6 +18,7 @@
 | `faltoo-core.el` | Workspace state, source context, status, source reload |
 | `faltoo-bridge.el` | Python processes, JSON/JSONL transport, core selection |
 | `python/faltoo_bridge.py` | FaltooBot imports, sessions, stream events, notification polling |
+| `python/claude_bridge.py` | Claude Code core: bridge CLI over `claude -p` stream-json, turn translation, sessions |
 | `faltoo-request.el` | Shared request and stream routing |
 | `faltoo-chat.el` | Workspace transcripts and history rendering |
 | `faltoo-queue.el` | Editable workspace FIFO and consumption |

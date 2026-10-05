@@ -58,6 +58,7 @@
                    ("o" . faltoo-chat-directory)
                    ("b" . faltoo-select-faltoobot-command)
                    ("r" . faltoo-reload)
+                   ("R" . faltoo-restart-daemon)
                    ("q" . faltoo-request-cancel)
                    ("u" . faltoo-review-unstaged)
                    ("x" . faltoo-review-stop)

@@ -131,11 +131,13 @@ The result is (BEG END START-LINE END-LINE CODE)."
                (boundp 'faltoo-faltoobot-workspace-commands)
                (hash-table-p faltoo-faltoobot-workspace-commands))
       (setq command (or (gethash workspace faltoo-faltoobot-workspace-commands) command)))
-    (if (and command
-             (boundp 'faltoo-local-faltoobot-command)
-             (equal command faltoo-local-faltoobot-command))
-        "Faltoo-beta"
-      "Faltoo")))
+    (cond
+     ((eq command 'claude) "Faltoo-Claude")
+     ((and command
+           (boundp 'faltoo-local-faltoobot-command)
+           (equal command faltoo-local-faltoobot-command))
+      "Faltoo-beta")
+     (t "Faltoo"))))
 
 (defun faltoo-status-string ()
   "Return a compact status string for mode-line use."
