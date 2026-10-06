@@ -1026,9 +1026,9 @@ Task completed."
                    ((role . "assistant") (text . "17")))))
               ((symbol-function 'completing-read)
                (lambda (&rest _args) (error "Should open the agent at point without asking"))))
-      ;; Given point is on a transcript Agent line.
+      ;; Given point is on a transcript Agent line naming its model.
       (with-temp-buffer
-        (insert "> Agent: Review diff\n")
+        (insert "> Agent (sonnet): Review diff\n")
         (goto-char (point-min))
 
         ;; When opening sub-agents.

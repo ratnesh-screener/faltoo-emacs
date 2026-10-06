@@ -1141,6 +1141,11 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             ({"name": "Read", "input": {"file_path": "/tmp/task.output"}}, "Read: /tmp/task.output"),
             ({"name": "Read", "input": {"file_path": "/repository/x.el"}}, "Read: /repository/x.el"),
             ({"name": "TodoWrite", "input": {"todos": []}}, "TodoWrite"),
+            # Sub-agents name the model asked for, else their type, whose definition decides.
+            ({"name": "Agent", "input": {"description": "Map clients", "subagent_type": "Explore", "model": "sonnet"}},
+             "Agent (sonnet): Map clients"),
+            ({"name": "Agent", "input": {"description": "Map clients", "subagent_type": "Explore"}},
+             "Agent (Explore · default model): Map clients"),
         )
 
         for block, expected in cases:

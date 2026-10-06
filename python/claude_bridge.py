@@ -74,7 +74,11 @@ def _tool_summary(block: dict[str, Any], workspace: Path) -> str:
     if key in {"file_path", "path"} and Path(detail).is_relative_to(workspace):
         detail = str(Path(detail).relative_to(workspace))
     detail = " ".join(detail.split())[:200]
-    return f"{block['name']}: {detail}" if detail else block["name"]
+    name = block["name"]
+    if name in {"Agent", "Task"}:
+        # The model asked for, else the type whose definition (or the parent) decides.
+        name += f" ({tool_input.get('model') or tool_input.get('subagent_type', 'agent') + ' · default model'})"
+    return f"{name}: {detail}" if detail else name
 
 
 def _rate_limit_text(info: dict[str, Any]) -> str | None:

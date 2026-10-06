@@ -289,7 +289,9 @@ On a transcript `Agent:' line, open that sub-agent directly."
            (labels (mapcar (lambda (agent) (alist-get 'description agent)) agents))
            (at-point (save-excursion
                        (beginning-of-line)
-                       (and (looking-at "> Agent: \\(.*\\)$") (match-string-no-properties 1))))
+                       ;; The line may name the model: "> Agent (sonnet): description".
+                       (and (looking-at "> Agent\\(?: ([^)]*)\\)?: \\(.*\\)$")
+                            (match-string-no-properties 1))))
            (choice (if (member at-point labels)
                        at-point
                      (completing-read
