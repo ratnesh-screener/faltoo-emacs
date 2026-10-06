@@ -30,6 +30,13 @@ RATE_LIMIT_WINDOWS = {"five_hour": "5h", "seven_day": "7d"}
 # FaltooBot's prompt preview length.
 PREVIEW_LIMIT = 48
 BACKGROUND_NOTICE = "Claude continued in the background."
+# A fork otherwise takes the question as the next message and resumes unfinished
+# work, e.g. relaunching a lost sub-agent. In the message, so the cache still hits.
+BTW_FRAMING = (
+    "This is a side question about our conversation, asked while you may be working on "
+    "something else. Answer it from what is already in the conversation, in one reply. "
+    "Don't continue or resume any task, don't use tools, and don't start sub-agents."
+)
 
 
 def _project_dir(workspace: Path) -> Path:
@@ -389,7 +396,7 @@ async def btw(workspace: Path, claude: str, question: str) -> int:
         "--verbose",
         "--include-partial-messages",
         "--permission-mode", "bypassPermissions",
-        question,
+        f"{BTW_FRAMING}\n\n{question}",
         cwd=workspace,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,

@@ -933,7 +933,10 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(args[:5], ["-p", "--resume", "s1", "--fork-session", "--no-session-persistence"])
-        self.assertEqual(args[-1], "How many words?")
+        # Framed as a side question so the fork answers instead of resuming the task.
+        self.assertTrue(args[-1].startswith("This is a side question"))
+        self.assertIn("Don't continue or resume any task", args[-1])
+        self.assertTrue(args[-1].endswith("\n\nHow many words?"))
         self.assertEqual(
             [(event.get("classes") or event["type"], event.get("text")) for event in emitted],
             [("turn", None), ("answer", "Twelve."), ("done", "Assistant response saved."), ("complete", None)],
