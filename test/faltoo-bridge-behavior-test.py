@@ -102,11 +102,15 @@ def install_faltoobot_stubs() -> None:
 
 def load_bridge():
     install_faltoobot_stubs()
-    path = Path(__file__).resolve().parents[1] / "python" / "faltoo_bridge.py"
-    spec = importlib.util.spec_from_file_location("faltoo_bridge_under_test", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
+    python_dir = Path(__file__).resolve().parents[1] / "python"
+    sys.path.insert(0, str(python_dir))
+    try:
+        spec = importlib.util.spec_from_file_location("faltoo_bridge_under_test", python_dir / "faltoo_bridge.py")
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(python_dir))
     return module
 
 
@@ -554,6 +558,28 @@ class BridgeCliBehaviorTest(unittest.TestCase):
         # Claude always sends prompts through its daemon.
         self.assertLessEqual(commands - {"append-message"}, set(load_claude_bridge().COMMANDS))
 
+    def test_claude_bridge_starts_without_importing_faltoobot(self):
+        """Scenario: Claude's own commands skip FaltooBot's slow import (about 0.4 s per call)."""
+        import subprocess
+        python_dir = Path(__file__).resolve().parents[1] / "python"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Given any FaltooBot import fails, as if FaltooBot were missing.
+            script = (
+                "import sys; sys.modules['faltoobot'] = None\n"
+                f"sys.path.insert(0, {str(python_dir)!r})\n"
+                "import claude_bridge\n"
+                f"sys.argv = ['claude_bridge', 'list-sessions', '--workspace', {tmpdir!r}]\n"
+                "raise SystemExit(claude_bridge.main())\n"
+            )
+            env = dict(os.environ, CLAUDE_CONFIG_DIR=tmpdir, XDG_STATE_HOME=tmpdir, PYTHONDONTWRITEBYTECODE="1")
+
+            # When running a Claude-only command.
+            result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env)
+
+        # Then it works without FaltooBot.
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"sessions": []})
+
     def test_shared_cli_parses_emacs_argument_shapes(self):
         """Scenario: One table-driven CLI handles workspace, limit, and core-specific options."""
         bridge = load_bridge()
@@ -583,6 +609,8 @@ def load_claude_bridge():
     sys.path.insert(0, str(python_dir))
     sys.modules.pop("faltoo_bridge", None)
     try:
+        # Its lazy FaltooBot imports resolve against the stubs, as the real script dir would.
+        importlib.import_module("faltoo_bridge")
         spec = importlib.util.spec_from_file_location(
             "claude_bridge_under_test", python_dir / "claude_bridge.py"
         )

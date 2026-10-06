@@ -12,6 +12,15 @@ import traceback
 from typing import Any
 
 
+from bridge_common import (
+    TREE_PREVIEW_SOURCE_LIMIT,
+    _emit_payload,
+    _last_user_turns,
+    _stdin_payload,
+    _tree_one_line,
+    _workspace,
+    run_cli,
+)
 from faltoobot import notify_queue
 from faltoobot.faltoochat.git import get_unstaged_files, is_git_workspace  # ty: ignore[unresolved-import]
 from faltoobot.faltoochat.slash_commands import SlashCommandStore  # ty: ignore[unresolved-import]
@@ -29,10 +38,6 @@ from faltoobot.sessions import (  # ty: ignore[unresolved-import]
     list_sessions,
     set_session_name,
 )
-
-
-def _workspace(workspace: Path) -> Path:
-    return workspace.expanduser().resolve()
 
 
 def _chat_key(workspace: Path) -> str:
@@ -68,13 +73,6 @@ def _message_role(classes: str, text: str) -> str:
     return "assistant" if classes in {"answer", "thinking"} else classes
 
 
-def _stdin_payload() -> dict[str, Any]:
-    payload = json.loads(sys.stdin.read() or "{}")
-    if isinstance(payload, dict):
-        return payload
-    return {}
-
-
 def messages_path(workspace: Path) -> int:
     session = _session(workspace)
     print(session.messages_path)
@@ -101,23 +99,6 @@ def unstaged_files(workspace: Path) -> int:
 
     print(json.dumps({"ok": True, "files": files}, ensure_ascii=False))
     return 0
-
-
-def _last_user_turns(
-    messages_payload: list[dict[str, str]], turns: int | None
-) -> list[dict[str, str]]:
-    if turns is None:
-        return messages_payload
-
-    seen = 0
-    start = 0
-    for index in range(len(messages_payload) - 1, -1, -1):
-        if messages_payload[index]["role"] == "user":
-            seen += 1
-            if seen == turns:
-                start = index
-                break
-    return messages_payload[start:]
 
 
 def messages(workspace: Path, limit: int, turns: int | None) -> int:
@@ -201,20 +182,6 @@ def _slash_command_payload() -> list[dict[str, str]]:
 def slash_commands() -> int:
     print(json.dumps({"commands": _slash_command_payload()}, ensure_ascii=False))
     return 0
-
-TREE_PREVIEW_SOURCE_LIMIT = 2000
-
-
-def _tree_one_line(value: Any) -> str:
-    if isinstance(value, str):
-        text = value[:TREE_PREVIEW_SOURCE_LIMIT].replace("\n", " ").strip()
-        if "data:image/" in text:
-            text = text.split("data:image/", maxsplit=1)[0] + "[inline image omitted]"
-        return " ".join(text.split())
-    if isinstance(value, (dict, list)):
-        return "[structured output]"
-    return str(value)
-
 
 def _tree_content_part_summary(part: Any) -> str | None:
     if not isinstance(part, dict):
@@ -354,10 +321,6 @@ def tree_rows(workspace: Path) -> int:
     return 0
 
 
-def _emit_payload(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=False), flush=True)
-
-
 def _emit(is_new: bool, classes: str, text: str) -> None:
     _emit_payload({"is_new": is_new, "classes": classes, "text": text})
 
@@ -493,24 +456,6 @@ async def daemon(workspace: Path) -> int:
         except asyncio.CancelledError:
             pass
     return 0
-
-
-def run_cli(
-    prog: str,
-    commands: dict[str, Callable[[argparse.Namespace], int]],
-    argv: list[str] | None = None,
-    options: dict[str, dict[str, Any]] | None = None,
-) -> int:
-    """Run the bridge command Emacs named; all commands share one option set."""
-    parser = argparse.ArgumentParser(prog=prog)
-    parser.add_argument("command", choices=sorted(commands))
-    parser.add_argument("--workspace", type=Path, default=Path.cwd())
-    parser.add_argument("--limit", type=int, default=100)
-    parser.add_argument("--turns", type=int)
-    for flag, kwargs in (options or {}).items():
-        parser.add_argument(flag, **kwargs)
-    args = parser.parse_args(argv)
-    return commands[args.command](args)
 
 
 def _append_message_command(_args: argparse.Namespace) -> int:

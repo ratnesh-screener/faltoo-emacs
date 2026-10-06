@@ -15,16 +15,7 @@ import traceback
 from typing import Any
 from uuid import uuid4
 
-from faltoo_bridge import (
-    _emit_payload,
-    _last_user_turns,
-    _slash_command_payload,
-    _stdin_payload,
-    _tree_one_line,
-    _workspace,
-    run_cli,
-    unstaged_files,
-)
+from bridge_common import _emit_payload, _last_user_turns, _stdin_payload, _tree_one_line, _workspace, run_cli
 
 CLAUDE_HOME = Path(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")).expanduser()
 STATE_PATH = (
@@ -645,6 +636,9 @@ def _claude_command(path: Path) -> dict[str, str]:
 
 
 def slash_commands() -> int:
+    # FaltooBot's prompts need FaltooBot; import it only here.
+    from faltoo_bridge import _slash_command_payload
+
     commands = [{**command, "source": "faltoobot"} for command in _slash_command_payload()]
     commands += [_claude_command(path) for path in sorted((CLAUDE_HOME / "commands").glob("*.md"))]
     print(json.dumps({"commands": commands}, ensure_ascii=False))
@@ -671,6 +665,13 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "btw": lambda args: asyncio.run(btw(args.workspace, args.claude, str(_stdin_payload()["question"]))),
     "slash-commands": lambda _args: slash_commands(),
 }
+
+
+def unstaged_files(workspace: Path) -> int:
+    # Review's Git helper comes from FaltooBot; import it only here.
+    from faltoo_bridge import unstaged_files as faltoobot_unstaged_files
+
+    return faltoobot_unstaged_files(workspace)
 
 
 def main() -> int:
