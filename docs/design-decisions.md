@@ -29,6 +29,8 @@ Use normal Emacs buffers, local modes, completion, overlays, and process filters
 - `/reset`, `/resume`, and core switches stop the workspace's Claude daemon so the next message starts the selected session. When background tasks are running, stopping asks first; declining changes nothing.
 - `C-c p` lists FaltooBot's saved prompts, then `~/.claude/commands/*.md` (frontmatter stripped), with the source as a completion annotation.
 - Tool summaries show repo files relative to the workspace and other paths in full.
+- `/steer` bypasses the queue: the daemon writes it at once as a `steer` command, and Claude takes it at its next step. The bridge shows its mid-turn echo as an inline `Steer:` line instead of ending the turn (Claude stores it as a `queued_command` prompt attachment, rendered the same in history); taken after the turn ended, it is an ordinary next turn.
+- `/btw` runs a one-shot `claude -p --resume --fork-session --no-session-persistence`, so the side answer sees the saved session but is never written back; it re-reads the context from Claude's prompt cache, keeping it cheap while the cache is warm. Its reusable buffer is shown without focus, and a newer question replaces it and ignores older streams.
 - Sub-agents are inspected from Claude's saved `subagents/agent-*.jsonl` files, not the live stream: `C-c f A` opens the one on a transcript `Agent:` line or one picked by description, rendered like history in a read-only buffer that `g` re-reads while it runs. The transcript itself shows only the `Agent:` line and the outcome.
 
 ## Queue

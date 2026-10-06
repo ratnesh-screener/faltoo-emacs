@@ -549,8 +549,8 @@ class BridgeCliBehaviorTest(unittest.TestCase):
         commands = emacs_bridge_commands()
         self.assertIn("messages", commands)
 
-        # Emacs checks for the Claude core before asking for sub-agents.
-        self.assertLessEqual(commands - {"subagents", "subagent-messages"}, set(load_bridge().COMMANDS))
+        # Emacs checks for the Claude core before asking for sub-agents or side questions.
+        self.assertLessEqual(commands - {"subagents", "subagent-messages", "btw"}, set(load_bridge().COMMANDS))
         # Claude has no /tree yet and always sends prompts through its daemon.
         self.assertLessEqual(commands - {"tree-rows", "append-message"}, set(load_claude_bridge().COMMANDS))
 
@@ -817,6 +817,87 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
         self.assertEqual(written, [{"type": "user", "message": {"role": "user", "content": "Hi"}}])
         self.assertEqual(emitted, [{"type": "submitted"}])
 
+    def test_steer_shows_inline_where_claude_takes_it(self):
+        """Scenario: A steer Claude takes mid-turn is a line in that answer, not a new turn."""
+        bridge = load_claude_bridge()
+        cases = (
+            # Taken mid-turn: one answer with an inline steer line.
+            ([replay("Run three"), tool_use("Bash", {"description": "First"}), replay("skip the third"),
+              text_delta("Stopping."), RESULT_OK],
+             [(None, "prompt"), ("turn-1", "turn"), ("turn-1", "tool"), ("turn-1", "status"),
+              ("turn-1", "answer"), ("turn-1", "done"), ("turn-1", "complete")]),
+            # Taken after the turn ended: it is simply the next prompt's turn.
+            ([replay("Run three"), text_delta("Done."), RESULT_OK, replay("skip the third"),
+              text_delta("Nothing left."), RESULT_OK],
+             [(None, "prompt"), ("turn-1", "turn"), ("turn-1", "answer"), ("turn-1", "done"), ("turn-1", "complete"),
+              (None, "prompt"), ("turn-2", "turn"), ("turn-2", "answer"), ("turn-2", "done"), ("turn-2", "complete")]),
+        )
+
+        for messages, expected in cases:
+            with self.subTest(expected=expected[-1]):
+                emitted = []
+                bridge._emit_payload = emitted.append
+                turns = bridge.ClaudeTurns(Path("/repo"))
+                for message in messages:
+                    if message.get("isReplay") and message["message"]["content"] == "skip the third":
+                        turns.steer = "skip the third"
+                    turns.handle(message)
+
+                self.assertEqual(self.outline(emitted), expected)
+                if expected[3][1] == "status":
+                    self.assertEqual(emitted[3]["text"], "Steer: skip the third")
+                self.assertIsNone(turns.steer)
+
+    def test_daemon_writes_a_steer_without_queueing_it(self):
+        """Scenario: A steer goes straight to Claude and is remembered for its echo."""
+        bridge = load_claude_bridge()
+        emitted, written = [], []
+        bridge._emit_payload = emitted.append
+
+        async def steer():
+            daemon = bridge.ClaudeDaemon(Path("/repo"), "claude", 60)
+            daemon.child = types.SimpleNamespace(
+                stdin=types.SimpleNamespace(write=lambda data: written.append(json.loads(data)))
+            )
+            await daemon.request({"command": "steer", "payload": {"text": "use the helper"}})
+            daemon.idle_timer.cancel()
+            return daemon.turns.steer
+
+        self.assertEqual(asyncio.run(steer()), "use the helper")
+        self.assertEqual(written, [{"type": "user", "message": {"role": "user", "content": "use the helper"}}])
+        self.assertEqual(emitted, [])
+
+    def test_btw_asks_a_fork_that_is_never_saved_and_streams_its_answer(self):
+        """Scenario: A side question forks the session without persisting and streams like a turn."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge, workspace = self.claude_home(tmpdir)
+            workspace.mkdir()
+            bridge._set_session_id(workspace, "s1")
+            bridge._session_path(workspace, "s1").parent.mkdir(parents=True)
+            bridge._session_path(workspace, "s1").write_text("")
+            argv = Path(tmpdir) / "argv.json"
+            fake = Path(tmpdir) / "fake-claude"
+            lines = [SYSTEM_INIT, text_block_start(), text_delta("Twelve."), RESULT_OK]
+            fake.write_text(
+                "#!/usr/bin/env python3\nimport json, sys\n"
+                f"json.dump(sys.argv[1:], open({str(argv)!r}, 'w'))\n"
+                + "".join(f"print({json.dumps(json.dumps(line))})\n" for line in lines)
+            )
+            fake.chmod(0o755)
+            emitted = []
+            bridge._emit_payload = emitted.append
+
+            result = asyncio.run(bridge.btw(workspace, str(fake), "How many words?"))
+            args = json.loads(argv.read_text())
+
+        self.assertEqual(result, 0)
+        self.assertEqual(args[:5], ["-p", "--resume", "s1", "--fork-session", "--no-session-persistence"])
+        self.assertEqual(args[-1], "How many words?")
+        self.assertEqual(
+            [(event.get("classes") or event["type"], event.get("text")) for event in emitted],
+            [("turn", None), ("answer", "Twelve."), ("done", "Assistant response saved."), ("complete", None)],
+        )
+
     def test_failed_claude_turns_report_cancel_or_error(self):
         """Scenario: Interrupted turns read as cancelled; other failures show their error."""
         bridge = load_claude_bridge()
@@ -894,6 +975,8 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "task-notification",
                                                   "prompt": "<task-notification>\n<summary>Folded done</summary>\n</task-notification>"}},
             {"type": "attachment", "attachment": {"type": "total_tokens_reminder"}},
+            {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "prompt",
+                                                  "prompt": "skip the tests"}},
             {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "sub"}]}},
             {"type": "assistant", "message": {"content": [{"type": "text", "text": "Fixed.\n"}]}},
             {"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}},
@@ -912,6 +995,7 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
                 ("user", "Fix it"),
                 ("tool", "Bash: ls"),
                 ("tool", "Folded done"),
+                ("tool", "Steer: skip the tests"),
                 ("assistant", "Fixed."),
                 ("user", "# Background update\n\nsource: Claude Code\n\n## message\nTask done"),
             ],

@@ -73,6 +73,8 @@
     ((command . "/reset") (preview . "start a fresh session"))
     ((command . "/resume") (preview . "resume another session"))
     ((command . "/status") (preview . "show Faltoo status"))
+    ((command . "/steer") (preview . "nudge the running Claude answer"))
+    ((command . "/btw") (preview . "ask Claude a side question, kept out of the session"))
     ((command . "/tree") (preview . "inspect current session messages")))
   "Built-in Faltoo session commands handled by Emacs.")
 
@@ -92,6 +94,67 @@
       (faltoo-chat-refresh))
     (message "Faltoo session named: %s" (alist-get 'session_id info))))
 
+
+(defvar faltoo-request-processes)
+
+(defun faltoo-session-steer ()
+  "Steer the running Claude answer; Claude takes the text at its next step."
+  (interactive)
+  (let ((workspace (faltoo-session-workspace)))
+    (unless (and (faltoo-bridge-claude-p workspace)
+                 (gethash workspace faltoo-request-processes))
+      (user-error "No running Claude answer to steer"))
+    (faltoo-bridge-claude-send workspace (read-string "Steer: ") "steer")
+    (message "Steer sent; Claude takes it at its next step")))
+
+(defvar-local faltoo-btw-question nil
+  "Side question this buffer shows; streams for older ones are ignored.")
+
+(define-derived-mode faltoo-btw-mode markdown-mode "Faltoo-BTW"
+  "Read-only answer to the latest side question."
+  (faltoo-ui-enable-pretty-markdown)
+  (setq-local truncate-lines nil)
+  (setq buffer-read-only t))
+
+(defun faltoo-session-btw ()
+  "Ask Claude a side question, answered from an unsaved fork of the session.
+The answer streams into a reusable buffer shown without taking focus."
+  (interactive)
+  (let ((workspace (faltoo-session-workspace)))
+    (unless (faltoo-bridge-claude-p workspace)
+      (user-error "Side questions need the Claude core"))
+    (let* ((question (read-string "Side question: "))
+           ;; A fresh string per ask identifies its stream even for equal text.
+           (token (copy-sequence question))
+           (buf (get-buffer-create
+                 (format "*Faltoo BTW: %s*" (file-name-nondirectory (directory-file-name workspace))))))
+      (with-current-buffer buf
+        (faltoo-btw-mode)
+        (setq default-directory workspace
+              faltoo-btw-question token)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert "# Side question\n\n" question "\n\n---\n# Answer\n\n"))
+        (faltoo-popup-start-stream buf))
+      (faltoo-bridge-btw
+       workspace question
+       (lambda (event)
+         (when (and (buffer-live-p buf)
+                    (eq token (buffer-local-value 'faltoo-btw-question buf)))
+           (let ((text (or (alist-get 'text event) "")))
+             (pcase (or (alist-get 'classes event) (alist-get 'type event))
+               ("answer" (faltoo-popup-append-stream buf text))
+               ((or "tool" "status")
+                (faltoo-popup-append-stream-block buf (faltoo-compose-tool-summary text)
+                                                  'faltoo-chat-tool-face))
+               ("error"
+                (faltoo-popup-append-stream-block buf (format "Error: %s" (string-trim text))
+                                                  'faltoo-chat-error-face))))))
+       (lambda (ok)
+         (when (and (buffer-live-p buf)
+                    (eq token (buffer-local-value 'faltoo-btw-question buf)))
+           (message (if ok "Side question answered" "Side question failed")))))
+      (display-buffer buf))))
 
 (defun faltoo-session-tree ()
   "Open the current Faltoo session transcript inspector."
@@ -207,6 +270,8 @@ ANNOTATE, when non-nil, returns the annotation for a label."
       ("/name" (call-interactively #'faltoo-session-name))
       ("/resume" (faltoo-session-resume))
       ("/status" (faltoo-session-status))
+      ("/steer" (faltoo-session-steer))
+      ("/btw" (faltoo-session-btw))
       ("/tree" (faltoo-session-tree)))))
 
 (defun faltoo-insert-file-reference ()

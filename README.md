@@ -89,7 +89,7 @@ Comment-list keys: `RET` jump, `e` edit, `d` delete, `g` refresh.
 
 ## Session commands and tree
 
-Use `C-c /` for `/reset`, `/resume`, `/name`, `/tree`, and `/status`. Use `C-c p` to paste a saved prompt for editing. Typed slash text is sent as ordinary prompt text.
+Use `C-c /` for `/reset`, `/resume`, `/name`, `/tree`, and `/status`. In Claude workspaces, `/steer` writes into the running answer (Claude takes it at its next step, shown as an inline `Steer:` line), and `/btw` asks a side question answered in `*Faltoo BTW: repo*` from an unsaved fork of the session; a new `/btw` replaces it. Use `C-c p` to paste a saved prompt for editing. Typed slash text is sent as ordinary prompt text.
 
 `/tree` opens a compact, no-wrap `messages.json` inspector in another window. Full payloads load for inspection/search; token view shows colored, comma-formatted input/output/cached/total counts.
 

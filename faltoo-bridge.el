@@ -312,15 +312,23 @@ The next prompt starts a fresh daemon."
              "\n"))
     process))
 
-(defun faltoo-bridge-claude-send (workspace text)
+(defun faltoo-bridge-claude-send (workspace text &optional command)
   "Write prompt TEXT to WORKSPACE's Claude daemon and return the daemon.
+COMMAND is \"append-message\" by default, or \"steer\" for the running turn.
 Claude's echo and turns come back through `faltoo-bridge-claude-hook'."
   (let ((process (faltoo-bridge--ensure-daemon workspace)))
     (process-send-string
      process
-     (concat (json-serialize `((command . "append-message") (payload . ((text . ,text)))))
+     (concat (json-serialize `((command . ,(or command "append-message"))
+                               (payload . ((text . ,text)))))
              "\n"))
     process))
+
+(defun faltoo-bridge-btw (workspace question on-event on-done)
+  "Stream the answer to side QUESTION from an unsaved fork of WORKSPACE's session."
+  (faltoo-bridge--oneshot-stream (list "btw" "--workspace" workspace)
+                                 `((workspace . ,workspace) (question . ,question))
+                                 on-event on-done))
 
 (defun faltoo-bridge-attach (process request-id on-event on-done)
   "Route daemon PROCESS events for REQUEST-ID to ON-EVENT and ON-DONE."

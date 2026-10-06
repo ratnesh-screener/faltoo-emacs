@@ -1074,6 +1074,71 @@ Task completed."
       (cl-letf (((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) nil)))
         (should-error (faltoo-subagent) :type 'user-error)))))
 
+(ert-deftest faltoo-session-steer-writes-into-the-running-claude-answer ()
+  "Scenario: /steer sends text straight into the running Claude answer, not the queue."
+  (should (assoc "/steer" (mapcar (lambda (cmd) (cons (alist-get 'command cmd) cmd))
+                                  faltoo-session-commands)))
+  (let ((faltoo-request-processes (make-hash-table :test #'equal))
+        sent)
+    (cl-letf (((symbol-function 'faltoo-session-workspace) (lambda () "/repo/"))
+              ((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
+              ((symbol-function 'read-string) (lambda (&rest _args) "use the helper"))
+              ((symbol-function 'faltoo-bridge-claude-send)
+               (lambda (&rest args) (setq sent args))))
+      ;; Given nothing is running, there is nothing to steer.
+      (should-error (faltoo-session-steer) :type 'user-error)
+      (should-not sent)
+
+      ;; When a Claude answer is running.
+      (puthash "/repo/" 'daemon faltoo-request-processes)
+      (faltoo-session-steer)
+
+      ;; Then the text is written as a steer.
+      (should (equal sent '("/repo/" "use the helper" "steer"))))))
+
+(ert-deftest faltoo-session-btw-streams-a-side-answer-into-a-reusable-buffer ()
+  "Scenario: /btw answers in its own buffer without taking focus; a new one replaces it."
+  (should (assoc "/btw" (mapcar (lambda (cmd) (cons (alist-get 'command cmd) cmd))
+                                faltoo-session-commands)))
+  (let ((questions '("How many words?" "Which file?"))
+        calls)
+    (cl-letf (((symbol-function 'faltoo-session-workspace) (lambda () "/tmp/repo/"))
+              ((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
+              ((symbol-function 'read-string) (lambda (&rest _args) (pop questions)))
+              ((symbol-function 'faltoo-bridge-btw)
+               (lambda (workspace question on-event on-done)
+                 (push (list workspace question on-event on-done) calls)
+                 (start-process "faltoo-test-btw" nil "cat"))))
+      (with-temp-buffer
+        (let ((origin (current-buffer)))
+          ;; Given a side question streams an answer.
+          (faltoo-session-btw)
+          (pcase-let ((`(,workspace ,question ,on-event ,on-done) (car calls)))
+            (should (equal (list workspace question) '("/tmp/repo/" "How many words?")))
+            (funcall on-event '((classes . "tool") (text . "Read: notes.txt")))
+            (funcall on-event '((classes . "answer") (text . "Twelve.")))
+            (funcall on-done t))
+
+          ;; Then its buffer shows the question and answer, read-only, and focus stays put.
+          (should (eq (current-buffer) origin))
+          (with-current-buffer "*Faltoo BTW: repo*"
+            (should buffer-read-only)
+            (should (string-match-p "How many words\\?[^z]*> Read: notes.txt[^z]*Twelve\\." (buffer-string))))
+
+          ;; When asking another, then late output of the first arrives.
+          (faltoo-session-btw)
+          (funcall (nth 2 (cadr calls)) '((classes . "answer") (text . "stale")))
+          (funcall (nth 2 (car calls)) '((classes . "answer") (text . "src/app.el")))
+
+          ;; Then the buffer holds only the new question and its answer.
+          (with-current-buffer "*Faltoo BTW: repo*"
+            (should (string-match-p "Which file\\?[^z]*src/app\\.el" (buffer-string)))
+            (should-not (string-match-p "How many words\\|stale\\|Twelve" (buffer-string)))
+            (kill-buffer)))))
+    (dolist (process (process-list))
+      (when (string-prefix-p "faltoo-test-btw" (process-name process))
+        (delete-process process)))))
+
 (ert-deftest faltoo-session-tree-opens-transcript-inspector ()
   "Scenario: The /tree command opens the structured transcript inspector."
   (let (opened-workspace)

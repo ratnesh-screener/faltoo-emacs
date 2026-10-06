@@ -113,6 +113,8 @@ class ClaudeTurns:
         self.turn: str | None = None
         self.turns = 0
         self.prompted = False
+        # A steer written mid-turn; Claude echoes it where it takes it.
+        self.steer: str | None = None
         self.interrupting = False
         self.background_tasks = 0
         self.notice = BACKGROUND_NOTICE
@@ -146,7 +148,14 @@ class ClaudeTurns:
                 self.notice = summary.group(1) if summary else BACKGROUND_NOTICE
                 if self.turn is not None:
                     self._emit("status", self.notice)
+            elif self.turn is not None and text == self.steer:
+                # Claude took the steer mid-turn: a line in the running answer.
+                self.steer = None
+                self._emit("status", f"Steer: {text}")
             else:
+                if text == self.steer:
+                    # Claude finished before taking the steer; it is the next prompt.
+                    self.steer = None
                 if self.turn is not None:
                     # Claude took the prompt mid-turn; the prompt starts the next turn.
                     self._complete(True)
@@ -282,6 +291,10 @@ class ClaudeDaemon:
                 await self._start_child()
             self._write({"type": "user", "message": {"role": "user", "content": str(payload["text"])}})
             _emit_payload({"type": "submitted"})
+        elif command == "steer":
+            # Written now, not queued: Claude takes it at its next step.
+            self.turns.steer = str(payload["text"])
+            self._write({"type": "user", "message": {"role": "user", "content": self.turns.steer}})
         elif command == "interrupt":
             if self.child:
                 self.turns.interrupting = True
@@ -318,6 +331,34 @@ async def daemon(workspace: Path, claude: str, idle_seconds: float) -> int:
     return 0
 
 
+async def btw(workspace: Path, claude: str, question: str) -> int:
+    """Answer QUESTION in a fork of the workspace session that is never saved.
+    The fork re-reads the session from Claude's prompt cache, so it stays cheap."""
+    workspace = _workspace(workspace)
+    child = await asyncio.create_subprocess_exec(
+        claude,
+        "-p",
+        "--resume", _session_id(workspace),
+        "--fork-session",
+        "--no-session-persistence",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--permission-mode", "bypassPermissions",
+        question,
+        cwd=workspace,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        limit=LINE_LIMIT,
+    )
+    turns = ClaudeTurns(workspace)
+    # The question is the turn's prompt, so no Background Update heading.
+    turns.prompted = True
+    while line := await child.stdout.readline():
+        turns.handle(json.loads(line))
+    return await child.wait()
+
+
 def _content_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -334,6 +375,10 @@ def _history(path: Path, workspace: Path, sidechain: bool = False) -> list[dict[
         for line in handle:
             item = json.loads(line)
             attachment = item.get("attachment") or {}
+            if attachment.get("commandMode") == "prompt":
+                # A steer Claude took mid-turn, shown inline live.
+                messages.append({"role": "tool", "class": "tool", "text": f"Steer: {attachment['prompt']}"})
+                continue
             if attachment.get("commandMode") == "task-notification":
                 # A notification Claude folded into a running turn, shown inline live.
                 summary = re.search(r"<summary>(.*?)</summary>", attachment["prompt"], re.S)
@@ -555,6 +600,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     # Claude always runs as a persistent daemon so background tasks survive turns.
     "websocket-enabled": lambda _args: _emit_payload({"enabled": True}) or 0,
     "daemon": lambda args: asyncio.run(daemon(args.workspace, args.claude, args.idle_seconds)),
+    "btw": lambda args: asyncio.run(btw(args.workspace, args.claude, str(_stdin_payload()["question"]))),
     "slash-commands": lambda _args: slash_commands(),
 }
 
