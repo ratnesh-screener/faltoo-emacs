@@ -649,6 +649,19 @@ def replay(text):
 
 
 SYSTEM_INIT = {"type": "system", "subtype": "init"}
+
+
+def compact_boundary(trigger, pre, post):
+    return {"type": "system", "subtype": "compact_boundary",
+            "compact_metadata": {"trigger": trigger, "pre_tokens": pre, "post_tokens": post}}
+
+
+def usage_reply(prompt_tokens, output_tokens=0):
+    """An answer whose request carried PROMPT_TOKENS of context, mostly from the cache."""
+    return {"type": "assistant", "message": {
+        "usage": {"input_tokens": 2, "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": prompt_tokens - 2, "output_tokens": output_tokens},
+        "content": [{"type": "text", "text": "ok"}]}}
 RESULT_OK = {"type": "result", "subtype": "success", "is_error": False, "result": "ok"}
 
 
@@ -926,6 +939,91 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             [("turn", None), ("answer", "Twelve."), ("done", "Assistant response saved."), ("complete", None)],
         )
 
+    def test_context_warnings_fire_once_per_level_until_a_compaction(self):
+        """Scenario: Long contexts warn once at each level, and again only after compacting."""
+        bridge = load_claude_bridge()
+        emitted = []
+        bridge._emit_payload = emitted.append
+        turns = bridge.ClaudeTurns(Path("/repo"), context_warnings=[500_000, 750_000])
+
+        def turn(prompt_tokens, before=()):
+            start = len(emitted)
+            for message in [replay("go"), *before, text_delta("ok"), usage_reply(prompt_tokens, 1_000), RESULT_OK]:
+                turns.handle(message)
+            return [event["text"] for event in emitted[start:] if event.get("classes") == "status"]
+
+        self.assertEqual(turn(400_000), [])
+        self.assertEqual(turn(520_000), ["Context is 521k tokens; consider /compact"])
+        self.assertEqual(turn(600_000), [])
+        self.assertEqual(turn(760_000), ["Context is 761k tokens; consider /compact"])
+        self.assertEqual(turn(800_000), [])
+        # A compaction resets the levels.
+        self.assertEqual(turn(510_000, before=[compact_boundary("auto", 966_000, 30_000)]),
+                         ["Context compacted automatically: 966,000 → 30,000 tokens",
+                          "Context is 511k tokens; consider /compact"])
+
+    def test_compactions_show_as_answer_lines(self):
+        """Scenario: Manual /compact gets its own answer; automatic ones are a line in the turn."""
+        bridge = load_claude_bridge()
+        cases = (
+            # /compact: no echo, a boundary, its summary, a stdout echo, an empty result.
+            ("/compact keep the bridge",
+             [SYSTEM_INIT, compact_boundary("manual", 18_862, 1_737),
+              {"type": "user", "message": {"content": "This session is being continued..."}},
+              replay("<local-command-stdout>Compacted </local-command-stdout>"),
+              {"type": "result", "subtype": "success", "is_error": False, "result": ""}],
+             [("prompt", None), ("turn", None), ("status", "Conversation compacted: 18,862 → 1,737 tokens"),
+              ("done", None), ("complete", True)]),
+            # /compact failing before any boundary still ends its answer.
+            ("/compact",
+             [SYSTEM_INIT, {"type": "result", "subtype": "success", "is_error": True, "result": "Not enough messages"}],
+             [("prompt", None), ("turn", None), ("error", "Not enough messages"), ("complete", False)]),
+            # Automatic: after the prompt's echo, before its answer.
+            (None,
+             [replay("Reply"), compact_boundary("auto", 126_678, 3_036), text_delta("after"), RESULT_OK],
+             [("prompt", None), ("turn", None), ("status", "Context compacted automatically: 126,678 → 3,036 tokens"),
+              ("answer", None), ("done", None), ("complete", True)]),
+        )
+
+        for compacting, messages, expected in cases:
+            with self.subTest(expected=expected[2]):
+                emitted = []
+                bridge._emit_payload = emitted.append
+                turns = bridge.ClaudeTurns(Path("/repo"))
+                turns.compacting = compacting
+                for message in messages:
+                    turns.handle(message)
+
+                self.assertEqual(
+                    [(event.get("classes") or event["type"],
+                      event.get("ok") if event.get("type") == "complete"
+                      else event.get("text") if event.get("classes") in {"status", "error"} else None)
+                     for event in emitted],
+                    expected,
+                )
+                self.assertIsNone(turns.compacting)
+                self.assertTrue(turns.idle())
+
+    def test_daemon_sends_compact_with_its_optional_focus(self):
+        """Scenario: /compact reaches Claude as its own command, focus included when given."""
+        bridge = load_claude_bridge()
+        emitted, written = [], []
+        bridge._emit_payload = emitted.append
+
+        async def compact(focus):
+            daemon = bridge.ClaudeDaemon(Path("/repo"), "claude", 60)
+            daemon.child = types.SimpleNamespace(
+                stdin=types.SimpleNamespace(write=lambda data: written.append(json.loads(data)["message"]["content"]))
+            )
+            await daemon.request({"command": "compact", "payload": {"text": focus}})
+            daemon.idle_timer.cancel()
+            return daemon.turns.compacting
+
+        self.assertEqual(asyncio.run(compact("keep the bridge")), "/compact keep the bridge")
+        self.assertEqual(asyncio.run(compact("")), "/compact")
+        self.assertEqual(written, ["/compact keep the bridge", "/compact"])
+        self.assertEqual(emitted, [{"type": "submitted"}, {"type": "submitted"}])
+
     def test_failed_claude_turns_report_cancel_or_error(self):
         """Scenario: Interrupted turns read as cancelled; other failures show their error."""
         bridge = load_claude_bridge()
@@ -1005,6 +1103,9 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             {"type": "attachment", "attachment": {"type": "total_tokens_reminder"}},
             {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "prompt",
                                                   "prompt": "skip the tests"}},
+            {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
+             "compactMetadata": {"trigger": "manual", "preTokens": 18862, "postTokens": 1737}},
+            {"type": "user", "isCompactSummary": True, "message": {"content": "This session is being continued..."}},
             {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "sub"}]}},
             {"type": "assistant", "message": {"content": [{"type": "text", "text": "Fixed.\n"}]}},
             {"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}},
@@ -1024,6 +1125,7 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
                 ("tool", "Bash: ls"),
                 ("tool", "Folded done"),
                 ("tool", "Steer: skip the tests"),
+                ("tool", "Conversation compacted: 18,862 → 1,737 tokens"),
                 ("assistant", "Fixed."),
                 ("user", "# Background update\n\nsource: Claude Code\n\n## message\nTask done"),
             ],
@@ -1255,6 +1357,9 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             {"type": "user", "origin": {"kind": "task-notification"}, "message": {
                 "role": "user", "content": "<task-notification>\n<summary>Task done</summary>\n</task-notification>"}},
             {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "sub"}]}},
+            {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
+             "compactMetadata": {"trigger": "auto", "preTokens": 966000, "postTokens": 30000}},
+            {"type": "user", "isCompactSummary": True, "message": {"content": "This session is being continued from..."}},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             bridge, _workspace = self.claude_home(tmpdir)
@@ -1284,6 +1389,8 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
                 (5, "tool", "function_call_output", "tool output", "output: line one line two"),
                 (6, "user", "message", "steer", "skip tests"),
                 (8, "user", "message", "background", "Task done"),
+                (10, "assistant", "compaction", "compaction", "Context compacted automatically: 966,000 → 30,000 tokens"),
+                (11, "user", "message", "summary", "This session is being continued from..."),
             ],
         )
         # One response's usage is counted once, with cache reads as a share of all input.

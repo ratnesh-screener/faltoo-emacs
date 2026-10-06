@@ -259,21 +259,29 @@ START is called with the event and completion callbacks."
               (gethash workspace faltoo-request-claude-prompts))
     (when-let ((entry (faltoo-queue-pop workspace)))
       (let ((text (plist-get entry :text)))
-        (faltoo-chat-append-user-message text workspace)
         (if (faltoo-bridge-claude-p workspace)
-            ;; The section opens now; the turn after Claude echoes this prompt streams into it.
-            (faltoo-request--stream
-             workspace "Submitting queued message..."
-             (plist-get entry :popup-buffer) nil (plist-get entry :on-done)
-             (lambda (on-event on-done)
-               (puthash workspace (plist-put entry :callbacks (cons on-event on-done))
-                        faltoo-request-claude-prompts)
-               (faltoo-bridge-claude-send workspace text)))
+            (faltoo-request-claude-submit workspace entry)
+          (faltoo-chat-append-user-message text workspace)
           (faltoo-request-stream
            (list "append-message")
            (list (cons 'workspace workspace) (cons 'text text))
            "Submitting queued message..."
            (plist-get entry :popup-buffer) nil (plist-get entry :on-done)))))))
+
+(defun faltoo-request-claude-submit (workspace entry &optional command)
+  "Show ENTRY's :text and send it to WORKSPACE's Claude daemon as COMMAND.
+COMMAND defaults to a prompt; ENTRY's :send, when present, is sent instead
+of its text. The section opens now; the turn after Claude echoes it streams
+into it."
+  (faltoo-chat-append-user-message (plist-get entry :text) workspace)
+  (faltoo-request--stream
+   workspace "Submitting queued message..."
+   (plist-get entry :popup-buffer) nil (plist-get entry :on-done)
+   (lambda (on-event on-done)
+     (puthash workspace (plist-put entry :callbacks (cons on-event on-done))
+              faltoo-request-claude-prompts)
+     (faltoo-bridge-claude-send workspace (or (plist-get entry :send) (plist-get entry :text))
+                                command))))
 
 (defun faltoo-request--queue-notification (workspace text)
   "Add background notification TEXT to WORKSPACE's submission queue."

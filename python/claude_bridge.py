@@ -91,6 +91,11 @@ def _background_text(summary: str) -> str:
     return f"# Background update\n\nsource: Claude Code\n\n## message\n{summary}"
 
 
+def _compaction_text(trigger: str | None, pre: int, post: int) -> str:
+    label = "Context compacted automatically" if trigger == "auto" else "Conversation compacted"
+    return f"{label}: {pre:,} → {post:,} tokens"
+
+
 class ClaudeTurns:
     """Translate Claude's stream of turns into Faltoo events.
 
@@ -100,8 +105,14 @@ class ClaudeTurns:
     task finished, and is headed by that task's notification.
     """
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, context_warnings: list[int] | tuple[int, ...] = ()) -> None:
         self.workspace = workspace
+        # Context sizes to warn at once each; a compaction resets them.
+        self.context_warnings = sorted(context_warnings)
+        self.warned: set[int] = set()
+        self.context = 0
+        # The /compact text sent; Claude neither echoes it nor answers in text.
+        self.compacting: str | None = None
         self.turn: str | None = None
         self.turns = 0
         self.prompted = False
@@ -123,6 +134,20 @@ class ClaudeTurns:
         _emit_payload({"id": self.turn, "type": "complete", "ok": ok})
         self.turn = None
         self.interrupting = False
+        self.compacting = None
+
+    def _open_turn(self) -> None:
+        if self.compacting:
+            # Stands in for the echo Claude does not send for /compact.
+            _emit_payload({"type": "prompt", "text": self.compacting})
+        elif not self.prompted:
+            _emit_payload({"type": "notification", "text": _background_text(self.notice)})
+        self.prompted = False
+        self.notice = BACKGROUND_NOTICE
+        self.turns += 1
+        self.turn = f"turn-{self.turns}"
+        self.last_class = None
+        _emit_payload({"type": "turn", "id": self.turn})
 
     def handle(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
@@ -132,6 +157,17 @@ class ClaudeTurns:
             _emit_payload({"type": "background-tasks", "count": self.background_tasks})
         elif kind == "system" and subtype == "task_notification":
             self.notice = message.get("summary") or BACKGROUND_NOTICE
+        elif kind == "system" and subtype == "compact_boundary":
+            meta = message["compact_metadata"]
+            if self.turn is None:
+                self._open_turn()
+            self._emit("status", _compaction_text(meta.get("trigger"), meta["pre_tokens"], meta["post_tokens"]))
+            self.warned.clear()
+            self.context = meta["post_tokens"]
+            return
+        elif kind == "user" and message.get("isReplay") and self.compacting:
+            # Only /compact's own "Compacted" stdout is echoed while compacting.
+            return
         elif kind == "user" and message.get("isReplay"):
             text = _content_text(message["message"]["content"]).strip()
             if text.startswith("<task-notification>"):
@@ -162,16 +198,10 @@ class ClaudeTurns:
         }:
             return
         if self.turn is None:
-            if kind not in {"stream_event", "assistant"}:
+            # A failed /compact ends with a result and nothing else.
+            if kind not in {"stream_event", "assistant"} and not (kind == "result" and self.compacting):
                 return
-            if not self.prompted:
-                _emit_payload({"type": "notification", "text": _background_text(self.notice)})
-            self.prompted = False
-            self.notice = BACKGROUND_NOTICE
-            self.turns += 1
-            self.turn = f"turn-{self.turns}"
-            self.last_class = None
-            _emit_payload({"type": "turn", "id": self.turn})
+            self._open_turn()
 
         if kind == "stream_event":
             event = message["event"]
@@ -181,6 +211,12 @@ class ClaudeTurns:
             elif event.get("type") == "content_block_delta" and event["delta"].get("type") == "text_delta":
                 self._emit("answer", event["delta"]["text"])
         elif kind == "assistant":
+            usage = message["message"].get("usage")
+            if usage:
+                self.context = sum(
+                    usage.get(key, 0)
+                    for key in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
+                )
             for block in message["message"]["content"]:
                 if block.get("type") == "tool_use":
                     self._emit("tool", _tool_summary(block, self.workspace))
@@ -189,6 +225,10 @@ class ClaudeTurns:
             if text:
                 self._emit("rate-limit", text)
         else:
+            crossed = [level for level in self.context_warnings if self.context >= level and level not in self.warned]
+            if crossed:
+                self.warned.update(crossed)
+                self._emit("status", f"Context is {round(self.context / 1000)}k tokens; consider /compact")
             ok = not message.get("is_error")
             if ok:
                 self._emit("done", "Assistant response saved.")
@@ -203,11 +243,13 @@ class ClaudeTurns:
 class ClaudeDaemon:
     """One long-lived `claude` child per workspace; background tasks live inside it."""
 
-    def __init__(self, workspace: Path, claude: str, idle_seconds: float) -> None:
+    def __init__(
+        self, workspace: Path, claude: str, idle_seconds: float, context_warnings: list[int] | tuple[int, ...] = ()
+    ) -> None:
         self.workspace = workspace
         self.claude = claude
         self.idle_seconds = idle_seconds
-        self.turns = ClaudeTurns(workspace)
+        self.turns = ClaudeTurns(workspace, context_warnings)
         self.child: asyncio.subprocess.Process | None = None
         self.idle_timer: asyncio.TimerHandle | None = None
         self.main = asyncio.current_task()
@@ -283,6 +325,12 @@ class ClaudeDaemon:
                 await self._start_child()
             self._write({"type": "user", "message": {"role": "user", "content": str(payload["text"])}})
             _emit_payload({"type": "submitted"})
+        elif command == "compact":
+            self.turns.compacting = f"/compact {str(payload['text']).strip()}".strip()
+            if not self.child:
+                await self._start_child()
+            self._write({"type": "user", "message": {"role": "user", "content": self.turns.compacting}})
+            _emit_payload({"type": "submitted"})
         elif command == "steer":
             # Written now, not queued: Claude takes it at its next step.
             self.turns.steer = str(payload["text"])
@@ -306,11 +354,11 @@ class ClaudeDaemon:
         return False
 
 
-async def daemon(workspace: Path, claude: str, idle_seconds: float) -> int:
+async def daemon(workspace: Path, claude: str, idle_seconds: float, context_warnings: list[int]) -> int:
     loop = asyncio.get_running_loop()
     stdin = asyncio.StreamReader(limit=LINE_LIMIT)
     await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(stdin), sys.stdin)
-    bridge = ClaudeDaemon(_workspace(workspace), claude, idle_seconds)
+    bridge = ClaudeDaemon(_workspace(workspace), claude, idle_seconds, context_warnings)
     bridge.schedule_idle_stop()
     try:
         while line := await stdin.readline():
@@ -367,6 +415,11 @@ def _history(path: Path, workspace: Path, sidechain: bool = False) -> list[dict[
         for line in handle:
             item = json.loads(line)
             attachment = item.get("attachment") or {}
+            if item.get("subtype") == "compact_boundary":
+                meta = item.get("compactMetadata") or {}
+                messages.append({"role": "tool", "class": "tool", "text": _compaction_text(
+                    meta.get("trigger"), meta.get("preTokens", 0), meta.get("postTokens", 0))})
+                continue
             if attachment.get("commandMode") == "prompt":
                 # A steer Claude took mid-turn, shown inline live.
                 messages.append({"role": "tool", "class": "tool", "text": f"Steer: {attachment['prompt']}"})
@@ -380,6 +433,8 @@ def _history(path: Path, workspace: Path, sidechain: bool = False) -> list[dict[
                 item.get("type") not in {"user", "assistant"}
                 or bool(item.get("isSidechain")) != sidechain
                 or item.get("isMeta")
+                # The compaction line stands in for its long summary.
+                or item.get("isCompactSummary")
             ):
                 continue
             content = item["message"]["content"]
@@ -416,6 +471,13 @@ def messages_path(workspace: Path) -> int:
 def _tree_row(item: dict[str, Any], workspace: Path) -> dict[str, Any] | None:
     """Return a record's inspector row in FaltooBot's row shape, or None for bookkeeping."""
     attachment = item.get("attachment") or {}
+    if item.get("subtype") == "compact_boundary":
+        meta = item.get("compactMetadata") or {}
+        return {"role": "assistant", "message_type": "compaction", "kind": "compaction",
+                "preview": _compaction_text(meta.get("trigger"), meta.get("preTokens", 0), meta.get("postTokens", 0))}
+    if item.get("isCompactSummary"):
+        return {"role": "user", "message_type": "message", "kind": "summary",
+                "preview": _tree_one_line(_content_text(item["message"]["content"]))}
     if attachment.get("commandMode") == "prompt":
         return {"role": "user", "message_type": "message", "kind": "steer",
                 "preview": _tree_one_line(attachment["prompt"])}
@@ -661,7 +723,10 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "subagent-messages": lambda args: subagent_messages(args.workspace, str(_stdin_payload()["agent_id"])),
     # Claude always runs as a persistent daemon so background tasks survive turns.
     "websocket-enabled": lambda _args: _emit_payload({"enabled": True}) or 0,
-    "daemon": lambda args: asyncio.run(daemon(args.workspace, args.claude, args.idle_seconds)),
+    "daemon": lambda args: asyncio.run(
+        daemon(args.workspace, args.claude, args.idle_seconds,
+               [int(level) for level in args.context_warnings.split(",") if level])
+    ),
     "btw": lambda args: asyncio.run(btw(args.workspace, args.claude, str(_stdin_payload()["question"]))),
     "slash-commands": lambda _args: slash_commands(),
 }
@@ -678,7 +743,11 @@ def main() -> int:
     return run_cli(
         "claude_bridge",
         COMMANDS,
-        options={"--claude": {"default": "claude"}, "--idle-seconds": {"type": float, "default": 1800}},
+        options={
+            "--claude": {"default": "claude"},
+            "--idle-seconds": {"type": float, "default": 1800},
+            "--context-warnings": {"default": ""},
+        },
     )
 
 

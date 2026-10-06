@@ -31,6 +31,12 @@ A FaltooBot/FaltooChat command, or the symbol `claude' for Claude Code."
   :type 'string
   :group 'faltoo)
 
+(defcustom faltoo-claude-context-warnings '(500000 750000)
+  "Context sizes, in tokens, at which a Claude workspace warns once each.
+A compaction resets them; Claude itself auto-compacts near its limit."
+  :type '(repeat integer)
+  :group 'faltoo)
+
 (defvar faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal)
   "Per-workspace FaltooBot/FaltooChat command overrides.")
 
@@ -276,7 +282,9 @@ The next prompt starts a fresh daemon."
                    (append (list "daemon" "--workspace" workspace)
                            (when claude
                              (list "--idle-seconds"
-                                   (number-to-string faltoo-bridge-daemon-idle-seconds))))
+                                   (number-to-string faltoo-bridge-daemon-idle-seconds)
+                                   "--context-warnings"
+                                   (mapconcat #'number-to-string faltoo-claude-context-warnings ","))))
                    workspace))
              (buffer (generate-new-buffer " *faltoo-bridge-daemon*"))
              (stderr-buffer (generate-new-buffer " *faltoo-bridge-daemon-stderr*"))

@@ -89,7 +89,7 @@ Comment-list keys: `RET` jump, `e` edit, `d` delete, `g` refresh.
 
 ## Session commands and tree
 
-Use `C-c /` for `/reset`, `/resume`, `/name`, `/tree`, and `/status`. In Claude workspaces, `/steer` and `/btw` take their text in a small popup (`C-c C-c` sends, `C-c C-k` cancels). `/steer` writes into the running answer (Claude takes it at its next step, shown as an inline `Steer:` line), and `/btw` asks a side question answered in `*Faltoo BTW: repo*` from an unsaved fork of the session; a new `/btw` replaces it. Use `C-c p` to paste a saved prompt for editing. Typed slash text is sent as ordinary prompt text.
+Use `C-c /` for `/reset`, `/resume`, `/name`, `/tree`, and `/status`. In Claude workspaces, `/steer`, `/btw`, and `/compact` take their text in a small popup (`C-c C-c` sends, `C-c C-k` cancels). `/compact` summarizes the conversation to free context; its optional focus says what the summary keeps. Answers warn once at each of `faltoo-claude-context-warnings` (500k and 750k tokens by default); Claude still auto-compacts near its limit (about 967k). `/steer` writes into the running answer (Claude takes it at its next step, shown as an inline `Steer:` line), and `/btw` asks a side question answered in `*Faltoo BTW: repo*` from an unsaved fork of the session; a new `/btw` replaces it. Use `C-c p` to paste a saved prompt for editing. Typed slash text is sent as ordinary prompt text.
 
 `/tree` opens a compact, no-wrap inspector of the session file (`messages.json`, or Claude's JSONL with one row per record) in another window. Full payloads load for inspection/search; token view shows colored, comma-formatted input/output/cached/total counts.
 

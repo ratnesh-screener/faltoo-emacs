@@ -2881,7 +2881,9 @@ removed")
        (unwind-protect
            (cl-letf (((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
                      ((symbol-function 'faltoo-bridge-claude-send)
-                      (lambda (_workspace text) (setq sent (append sent (list text))) process))
+                      (lambda (_workspace text &optional command)
+                        (setq sent (append sent (list (if command (list command text) text))))
+                        process))
                      ((symbol-function 'ding) #'ignore))
              (funcall body workspace process (lambda () sent)))
          (delete-process process)
@@ -2943,6 +2945,60 @@ removed")
        (should (eq done t))
        (should (equal (funcall sent) '("question" "follow-up")))
        (kill-buffer popup)))))
+
+(ert-deftest faltoo-session-compact-sends-its-focus-as-a-request ()
+  "Scenario: /compact asks for an optional focus and runs as a request in the transcript."
+  (should (assoc "/compact" (mapcar (lambda (cmd) (cons (alist-get 'command cmd) cmd))
+                                    faltoo-session-commands)))
+  (faltoo-test--claude-workspace
+   (lambda (workspace process sent)
+     (cl-letf (((symbol-function 'faltoo-session-workspace) (lambda () workspace))
+               ((symbol-function 'faltoo-popup-read)
+                (lambda (title popup-workspace on-submit allow-empty)
+                  ;; The focus is optional.
+                  (should (equal (list title popup-workspace allow-empty)
+                                 (list "Compact the conversation (optional focus)" workspace t)))
+                  (funcall on-submit "keep the bridge"))))
+       ;; When compacting an idle workspace.
+       (faltoo-session-compact)
+
+       ;; Then it is a request with the focus shown and sent as a compaction.
+       (should (equal (funcall sent) '(("compact" "keep the bridge"))))
+       (should (faltoo-workspace-submitting-p workspace))
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "# User\n\n/compact keep the bridge\n\n---\n# Assistant · answering"
+                                 (buffer-string))))
+
+       ;; And its answer streams in when Claude starts the turn.
+       (faltoo-test--claude-event workspace process 'type "prompt" 'text "/compact keep the bridge")
+       (faltoo-test--claude-event workspace process 'type "turn" 'id "turn-1")
+       (let ((callbacks (gethash "turn-1" (process-get process 'faltoo-requests))))
+         (funcall (car callbacks) '((classes . "status") (text . "Conversation compacted: 812,402 → 24,310 tokens")))
+         (funcall (cdr callbacks) t))
+       (with-current-buffer (faltoo-test--chat-buffer-name)
+         (should (string-match-p "> Conversation compacted: 812,402 → 24,310 tokens" (buffer-string))))
+
+       ;; Given an answer is running, compacting waits for it.
+       (faltoo-set-workspace-submitting workspace t)
+       (should-error (faltoo-session-compact) :type 'user-error)))))
+
+(ert-deftest faltoo-bridge-claude-daemon-gets-the-context-warning-levels ()
+  "Scenario: Claude daemons start with the configured context warning levels."
+  (let ((faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal))
+        (faltoo-bridge-daemons (make-hash-table :test #'equal))
+        (faltoo-claude-context-warnings '(500000 750000))
+        (real-make-process (symbol-function 'make-process))
+        command)
+    (puthash "/repo/" 'claude faltoo-faltoobot-workspace-commands)
+    (cl-letf (((symbol-function 'faltoo-bridge--command) (lambda (args &rest _) args))
+              ((symbol-function 'make-process)
+               (lambda (&rest plist)
+                 (setq command (plist-get plist :command))
+                 (funcall real-make-process :name "faltoo-test" :command '("cat")))))
+      (unwind-protect
+          (faltoo-bridge--ensure-daemon "/repo/")
+        (delete-process (gethash "/repo/" faltoo-bridge-daemons))))
+    (should (equal (member "--context-warnings" command) '("--context-warnings" "500000,750000")))))
 
 (ert-deftest faltoo-request-claude-turn-without-prompt-streams-under-background-update ()
   "Scenario: A turn Claude starts while idle streams under its notification."

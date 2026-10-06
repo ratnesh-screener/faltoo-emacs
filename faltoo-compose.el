@@ -75,6 +75,7 @@
     ((command . "/status") (preview . "show Faltoo status"))
     ((command . "/steer") (preview . "nudge the running Claude answer"))
     ((command . "/btw") (preview . "ask Claude a side question, kept out of the session"))
+    ((command . "/compact") (preview . "summarize the Claude conversation to free context"))
     ((command . "/tree") (preview . "inspect current session messages")))
   "Built-in Faltoo session commands handled by Emacs.")
 
@@ -154,6 +155,23 @@ empty text is refused unless ALLOW-EMPTY."
              (message "Steer sent; Claude takes it at its next step"))
          ;; The answer finished while typing; Claude would take it as the next prompt too.
          (faltoo-request-message text nil nil nil workspace))))))
+
+(declare-function faltoo-request-claude-submit "faltoo-request")
+
+(defun faltoo-session-compact ()
+  "Compact the Claude conversation; an optional focus says what the summary keeps."
+  (interactive)
+  (let ((workspace (faltoo-session-workspace)))
+    (unless (faltoo-bridge-claude-p workspace)
+      (user-error "Compacting needs the Claude core"))
+    (when (faltoo-workspace-submitting-p workspace)
+      (user-error "Wait for the running answer to finish"))
+    (faltoo-popup-read
+     "Compact the conversation (optional focus)" workspace
+     (lambda (focus)
+       (faltoo-request-claude-submit
+        workspace (list :text (string-trim (concat "/compact " focus)) :send focus) "compact"))
+     t)))
 
 (defvar-local faltoo-btw-question nil
   "Side question this buffer shows; streams for older ones are ignored.")
@@ -324,6 +342,7 @@ ANNOTATE, when non-nil, returns the annotation for a label."
       ("/status" (faltoo-session-status))
       ("/steer" (faltoo-session-steer))
       ("/btw" (faltoo-session-btw))
+      ("/compact" (faltoo-session-compact))
       ("/tree" (faltoo-session-tree)))))
 
 (defun faltoo-insert-file-reference ()
