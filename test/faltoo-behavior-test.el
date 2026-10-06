@@ -1642,6 +1642,83 @@ Task completed."
       (should (equal (substring-no-properties (aref row 4)) "7"))
       (should (equal (substring-no-properties (aref row 5)) "33")))))
 
+(defconst faltoo-test--claude-session-lines
+  (list "{\"type\":\"queue-operation\",\"operation\":\"enqueue\"}"
+        "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Fix it\"}}"
+        "{\"type\":\"assistant\",\"message\":{\"model\":\"claude-opus-5-5\",\"usage\":{\"output_tokens\":50},\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/repo/a.py\"}}]}}"
+        "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":\"line one\"}]}}"
+        "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Thanks\"}}")
+  "A small Claude session file: one record per line.")
+
+(defun faltoo-test--claude-tree-rows ()
+  "Bridge rows for `faltoo-test--claude-session-lines', in the bridge's row shape."
+  '(((index . 1) (role . "user") (message_type . "message") (kind . "message") (preview . "Fix it"))
+    ((index . 2) (role . "assistant") (message_type . "function_call") (kind . "tool call") (preview . "Read: a.py"))
+    ((index . 3) (role . "tool") (message_type . "function_call_output") (kind . "tool output") (preview . "output: line one"))
+    ((index . 4) (role . "user") (message_type . "message") (kind . "message") (preview . "Thanks"))))
+
+(ert-deftest faltoo-tree-inspects-a-claude-jsonl-session-by-line ()
+  "Scenario: For a Claude session, row N is line N for detail, navigation, and raw view."
+  (let ((path (make-temp-file "faltoo-claude-session" nil ".jsonl"
+                              (concat (string-join faltoo-test--claude-session-lines "\n") "\n"))))
+    (unwind-protect
+        (with-temp-buffer
+          ;; Given the tree streamed Claude rows keyed by line.
+          (faltoo-tree-mode)
+          (setq faltoo-tree-path path)
+          (faltoo-tree--stream-event `((type . "rows") (rows . ,(faltoo-test--claude-tree-rows))))
+
+          ;; When inspecting the tool call row.
+          (faltoo-tree--goto-id 2)
+          (faltoo-tree-inspect)
+
+          ;; Then the full record of line 2 shows its tool input and usage.
+          (with-current-buffer "*Faltoo Tree Detail*"
+            (should (string-match-p "# Transcript item 2" (buffer-string)))
+            (should (string-match-p "### Read[^z]*\"file_path\": \"/repo/a.py\"" (buffer-string)))
+            (should (string-match-p "\"output_tokens\": 50" (buffer-string)))
+
+            ;; And user navigation in the detail view follows the rows.
+            (faltoo-tree-next-user)
+            (should (= faltoo-tree-detail-index 4))
+            (should (string-match-p "Thanks" (buffer-string)))
+
+            ;; And the raw view opens at that record's line.
+            (faltoo-tree-open-raw)
+            (should (equal (buffer-file-name) path))
+            (should (= (line-number-at-pos) 5))
+            (kill-buffer)
+            (kill-buffer "*Faltoo Tree Detail*")))
+      (delete-file path))))
+
+(ert-deftest faltoo-tree-prunes-a-claude-session-by-lines-and-restarts-its-daemon ()
+  "Scenario: Pruning a Claude session keeps earlier raw lines and restarts the workspace daemon."
+  (let ((path (make-temp-file "faltoo-claude-session" nil ".jsonl"
+                              (concat (string-join faltoo-test--claude-session-lines "\n") "\n")))
+        stopped streamed refreshed)
+    (unwind-protect
+        (with-temp-buffer
+          (faltoo-tree-mode)
+          (setq faltoo-tree-path path
+                faltoo-tree-workspace "/repo/")
+          (faltoo-tree--stream-event `((type . "rows") (rows . ,(faltoo-test--claude-tree-rows))))
+          (faltoo-tree--goto-id 3)
+          (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_prompt) t))
+                    ((symbol-function 'faltoo-bridge-stop-daemon) (lambda (workspace) (push workspace stopped)))
+                    ((symbol-function 'faltoo-tree-refresh-stream) (lambda () (setq streamed t)))
+                    ((symbol-function 'faltoo-chat-refresh) (lambda (workspace) (setq refreshed workspace))))
+            ;; When pruning from the tool output row.
+            (faltoo-tree-prune-from-row))
+
+          ;; Then the daemon restarts, a backup exists, and lines before the row stay byte for byte.
+          (should (equal stopped '("/repo/")))
+          (should (file-expand-wildcards (concat path ".bak-*")))
+          (should (equal (with-temp-buffer (insert-file-contents path) (buffer-string))
+                         (concat (string-join (seq-take faltoo-test--claude-session-lines 3) "\n") "\n")))
+          (should streamed)
+          (should (equal refreshed "/repo/")))
+      (mapc #'delete-file (cons path (file-expand-wildcards (concat path ".bak-*")))))))
+
 (ert-deftest faltoo-tree-mode-jumps-between-user-and-answer-rows ()
   "Scenario: Transcript tree has direct jumps to recent user and answer rows."
   (let ((messages-file (make-temp-file "faltoo-tree" nil ".json")))

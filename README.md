@@ -15,7 +15,7 @@ Workspaces follow the buffer's Git root, or its folder outside Git. Generic chat
 
 `faltoo-faltoobot-command` defaults to released `faltoobot` on PATH. `C-c f b` selects release/local/custom per workspace; `faltoo-local-faltoobot-command` points to the local venv's `faltoochat`. Use executable paths, not shell aliases. Local answering status is `beta:answering`; release shows `FaltooBot:answering`.
 
-`C-c f b` can also select the Claude Code core, or set `(setq faltoo-faltoobot-command 'claude)` to make it the default. It runs `faltoo-claude-command` (`claude`) headless with `bypassPermissions`, on the released FaltooBot's Python, which still provides the saved prompts and Git helpers. Each workspace continues its most recent Claude session in that directory; `/reset`, `/resume`, and `/name` share sessions and names with the CLI's `claude -r`. `/tree` is not available for Claude yet. `C-c p` also lists `~/.claude/commands`. Switching sessions or core asks first if Claude background tasks are running. The status shows `Claude:answering`. After changing the Python bridge, `C-c f R` restarts the workspace's daemon.
+`C-c f b` can also select the Claude Code core, or set `(setq faltoo-faltoobot-command 'claude)` to make it the default. It runs `faltoo-claude-command` (`claude`) headless with `bypassPermissions`, on the released FaltooBot's Python, which still provides the saved prompts and Git helpers. Each workspace continues its most recent Claude session in that directory; `/reset`, `/resume`, and `/name` share sessions and names with the CLI's `claude -r`. `C-c p` also lists `~/.claude/commands`. Switching sessions or core asks first if Claude background tasks are running. The status shows `Claude:answering`. After changing the Python bridge, `C-c f R` restarts the workspace's daemon.
 
 With websocket mode enabled in FaltooBot, each workspace keeps a bridge daemon for requests and notifications. Queue/notification support targets this mode. Claude workspaces always use a daemon. It keeps one `claude` process alive so background tasks survive between turns, and Claude's answers to finished tasks stream in as background updates. Cancelling interrupts the turn without killing background tasks. Claude daemons expire after the idle timeout once no background task is running. Switching core stops that workspace's daemon. `faltoo-reload` reloads Elisp without stopping daemons or restarting Emacs.
 
@@ -91,7 +91,7 @@ Comment-list keys: `RET` jump, `e` edit, `d` delete, `g` refresh.
 
 Use `C-c /` for `/reset`, `/resume`, `/name`, `/tree`, and `/status`. In Claude workspaces, `/steer` writes into the running answer (Claude takes it at its next step, shown as an inline `Steer:` line), and `/btw` asks a side question answered in `*Faltoo BTW: repo*` from an unsaved fork of the session; a new `/btw` replaces it. Use `C-c p` to paste a saved prompt for editing. Typed slash text is sent as ordinary prompt text.
 
-`/tree` opens a compact, no-wrap `messages.json` inspector in another window. Full payloads load for inspection/search; token view shows colored, comma-formatted input/output/cached/total counts.
+`/tree` opens a compact, no-wrap inspector of the session file (`messages.json`, or Claude's JSONL with one row per record) in another window. Full payloads load for inspection/search; token view shows colored, comma-formatted input/output/cached/total counts.
 
 | Key | Tree | Detail |
 |---|---|---|

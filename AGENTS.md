@@ -28,7 +28,7 @@
 | `faltoo-ask.el` | Ask and last-response popups |
 | `faltoo-comments.el` | Pending comments, overlays, navigation, batch prompts |
 | `faltoo-review.el` | Generated full-file review, Magit integration, navigation |
-| `faltoo-tree.el` | Incremental `messages.json` inspector, details, tokens, pruning |
+| `faltoo-tree.el` | Incremental session inspector (`messages.json` or Claude JSONL), details, tokens, pruning |
 | `faltoo-quit.el` | Quit guard |
 
 Shared UI belongs in UI/compose; shared stream behavior belongs in request. Do not duplicate these in individual popups.

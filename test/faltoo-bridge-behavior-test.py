@@ -551,8 +551,8 @@ class BridgeCliBehaviorTest(unittest.TestCase):
 
         # Emacs checks for the Claude core before asking for sub-agents or side questions.
         self.assertLessEqual(commands - {"subagents", "subagent-messages", "btw"}, set(load_bridge().COMMANDS))
-        # Claude has no /tree yet and always sends prompts through its daemon.
-        self.assertLessEqual(commands - {"tree-rows", "append-message"}, set(load_claude_bridge().COMMANDS))
+        # Claude always sends prompts through its daemon.
+        self.assertLessEqual(commands - {"append-message"}, set(load_claude_bridge().COMMANDS))
 
     def test_shared_cli_parses_emacs_argument_shapes(self):
         """Scenario: One table-driven CLI handles workspace, limit, and core-specific options."""
@@ -1205,6 +1205,64 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             [("user", "Run ls /"), ("tool", "Read: a.txt"), ("assistant", "17")],
         )
 
+    def test_tree_rows_map_claude_records_onto_inspector_rows(self):
+        """Scenario: /tree lists one row per Claude record, keyed by line, with usage counted once."""
+        usage = {"input_tokens": 2, "cache_creation_input_tokens": 300, "cache_read_input_tokens": 1000,
+                 "output_tokens": 50}
+
+        def assistant(block):
+            return {"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "usage": usage,
+                                                     "content": [block]}}
+
+        records = [
+            {"type": "queue-operation", "operation": "enqueue"},
+            {"type": "user", "message": {"role": "user", "content": "Fix the\nbridge"}},
+            assistant({"type": "thinking", "thinking": ""}),
+            assistant({"type": "text", "text": "Looking."}),
+            assistant({"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/a.py"}}),
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "line one\nline two"}]}},
+            {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "prompt", "prompt": "skip tests"}},
+            {"type": "attachment", "attachment": {"type": "total_tokens_reminder"}},
+            {"type": "user", "origin": {"kind": "task-notification"}, "message": {
+                "role": "user", "content": "<task-notification>\n<summary>Task done</summary>\n</task-notification>"}},
+            {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "sub"}]}},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge, _workspace = self.claude_home(tmpdir)
+            workspace = Path("/repo")
+            bridge._set_session_id(workspace, "s1")
+            path = bridge._session_path(workspace, "s1")
+            path.parent.mkdir(parents=True)
+            path.write_text("".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records))
+            bridge._workspace = lambda value: value
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                result = bridge.tree_rows(workspace)
+
+        events = [json.loads(line) for line in out.getvalue().splitlines()]
+        rows = [row for event in events if event["type"] == "rows" for row in event["rows"]]
+        self.assertEqual(result, 0)
+        self.assertEqual(events[0], {"type": "start", "path": str(path)})
+        self.assertEqual(events[-1], {"type": "done", "count": len(records)})
+        self.assertEqual(
+            [(row["index"], row["role"], row["message_type"], row["kind"], row["preview"]) for row in rows],
+            [
+                (1, "user", "message", "message", "Fix the bridge"),
+                (2, "assistant", "reasoning", "reasoning", "[reasoning]"),
+                (3, "assistant", "message", "answer", "Looking."),
+                (4, "assistant", "function_call", "tool call", "Read: a.py"),
+                (5, "tool", "function_call_output", "tool output", "output: line one line two"),
+                (6, "user", "message", "steer", "skip tests"),
+                (8, "user", "message", "background", "Task done"),
+            ],
+        )
+        # One response's usage is counted once, with cache reads as a share of all input.
+        tokens = [{key: row[key] for key in ("input_tokens", "output_tokens", "cached_tokens", "total_tokens") if key in row}
+                  for row in rows]
+        self.assertEqual(tokens[1], {"input_tokens": 1302, "output_tokens": 50, "cached_tokens": 1000, "total_tokens": 1352})
+        self.assertEqual([index for index, row in enumerate(tokens) if row], [1])
 
 
 if __name__ == "__main__":

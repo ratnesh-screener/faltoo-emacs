@@ -99,9 +99,20 @@
       (let ((inhibit-message t))
         (toggle-truncate-lines 1)))))
 
+(defun faltoo-tree--jsonl-p ()
+  "Return non-nil when the tree shows a Claude JSONL session, one record per line."
+  (string-suffix-p ".jsonl" faltoo-tree-path))
+
 (defun faltoo-tree-refresh ()
   "Reload the current transcript tree synchronously."
   (interactive)
+  (if (faltoo-tree--jsonl-p)
+      ;; Claude rows come from the bridge; full records are not row-shaped.
+      (faltoo-tree-refresh-stream)
+    (faltoo-tree--refresh-from-messages)))
+
+(defun faltoo-tree--refresh-from-messages ()
+  "Render rows from the full FaltooBot messages."
   (faltoo-tree--load-messages)
   (setq faltoo-tree-row-entries (cl-loop for item in faltoo-tree-messages
                                          for index from 0
@@ -135,10 +146,19 @@
   "Load full transcript JSON into the current tree/detail buffer."
   (unless faltoo-tree-messages
     (let ((path faltoo-tree-path))
-      (setq faltoo-tree-payload (with-temp-buffer
-                                  (insert-file-contents path)
-                                  (json-parse-buffer :object-type 'alist :array-type 'array))
-            faltoo-tree-messages (append (alist-get 'messages faltoo-tree-payload) nil)))))
+      (if (faltoo-tree--jsonl-p)
+          ;; Item N is line N, matching the bridge's row indexes.
+          (setq faltoo-tree-messages
+                (with-temp-buffer
+                  (insert-file-contents path)
+                  (let (items)
+                    (while (progn (skip-chars-forward "\n") (not (eobp)))
+                      (push (json-parse-buffer :object-type 'alist :array-type 'array) items))
+                    (nreverse items))))
+        (setq faltoo-tree-payload (with-temp-buffer
+                                    (insert-file-contents path)
+                                    (json-parse-buffer :object-type 'alist :array-type 'array))
+              faltoo-tree-messages (append (alist-get 'messages faltoo-tree-payload) nil))))))
 
 (defun faltoo-tree--stream-event (event)
   "Apply one streamed tree EVENT."
@@ -452,12 +472,15 @@
   (let* ((index (faltoo-tree--current-index))
          (path faltoo-tree-path)
          (messages faltoo-tree-messages)
+         (rows faltoo-tree-row-entries)
          (visible-indexes (mapcar #'car faltoo-tree-row-entries))
          (buf (get-buffer-create "*Faltoo Tree Detail*")))
     (with-current-buffer buf
       (faltoo-tree-detail-mode)
       (setq faltoo-tree-path path
             faltoo-tree-messages messages
+            ;; Navigation matches rows; Claude's full records are not row-shaped.
+            faltoo-tree-row-entries rows
             faltoo-tree-detail-indexes visible-indexes
             faltoo-tree-detail-index index)
       (faltoo-tree-detail-render))
@@ -500,7 +523,9 @@
                    faltoo-tree-detail-index
                  (faltoo-tree--current-index))))
     (find-file path)
-    (faltoo-tree--goto-raw-message-index index)
+    (if (string-suffix-p ".jsonl" path)
+        (progn (goto-char (point-min)) (forward-line index))
+      (faltoo-tree--goto-raw-message-index index))
     (when (get-buffer-window (current-buffer))
       (recenter))))
 
@@ -545,8 +570,43 @@
       (user-error "No message object at index %s" index))
     (goto-char target)))
 
-(defun faltoo-tree--insert-detail (_index item)
+(defun faltoo-tree--insert-detail (index item)
   "Insert readable detail for ITEM."
+  (cond
+   ((alist-get 'message item) (faltoo-tree--insert-claude-detail item))
+   ((alist-get 'attachment item) (insert "```json\n" (faltoo-tree--limit (faltoo-tree--json item)) "\n```\n"))
+   (t (faltoo-tree--insert-faltoobot-detail index item))))
+
+(defun faltoo-tree--insert-claude-detail (item)
+  "Insert readable detail for Claude session record ITEM."
+  (let ((message (alist-get 'message item)))
+    (dolist (field `((type . ,(alist-get 'type item))
+                     (model . ,(alist-get 'model message))
+                     (uuid . ,(alist-get 'uuid item))
+                     (timestamp . ,(alist-get 'timestamp item))))
+      (when (cdr field)
+        (insert (format "- %s: `%s`\n" (car field) (cdr field)))))
+    (when-let ((usage (alist-get 'usage message)))
+      (insert "\n## Usage\n\n```json\n" (faltoo-tree--json usage) "\n```\n"))
+    (insert "\n## Content\n\n")
+    (let ((content (alist-get 'content message)))
+      (if (stringp content)
+          (insert (faltoo-tree--limit content) "\n")
+        (dolist (block (append content nil))
+          (pcase (alist-get 'type block)
+            ("text" (insert (faltoo-tree--limit (alist-get 'text block)) "\n\n"))
+            ("thinking" (insert "[thinking] " (or (alist-get 'thinking block) "") "\n\n"))
+            ("tool_use"
+             (insert "### " (alist-get 'name block) "\n\n```json\n"
+                     (faltoo-tree--limit (faltoo-tree--json (alist-get 'input block))) "\n```\n\n"))
+            ("tool_result"
+             (insert "### Tool output\n\n```\n"
+                     (faltoo-tree--limit (faltoo-tree--content-full (alist-get 'content block)))
+                     "\n```\n\n"))
+            (_ (insert "```json\n" (faltoo-tree--limit (faltoo-tree--json block)) "\n```\n\n"))))))))
+
+(defun faltoo-tree--insert-faltoobot-detail (_index item)
+  "Insert readable detail for FaltooBot messages.json ITEM."
   (dolist (key '(role type phase status id response_id call_id name))
     (when-let ((value (alist-get key item)))
       (insert (format "- %s: `%s`\n" key value))))
@@ -581,6 +641,30 @@
 (defun faltoo-tree-prune-from-row ()
   "Delete transcript items from the selected row to the end after backing up JSON."
   (interactive)
+  (if (faltoo-tree--jsonl-p)
+      (faltoo-tree--prune-jsonl (faltoo-tree--current-index))
+    (faltoo-tree--prune-messages-json)))
+
+(defun faltoo-tree--prune-jsonl (index)
+  "Cut the Claude session at line INDEX after a backup, keeping earlier lines verbatim."
+  (when (yes-or-no-p (format "Delete transcript items %s..end? " index))
+    ;; The workspace's claude process holds the session and would write over the cut.
+    (faltoo-bridge-stop-daemon faltoo-tree-workspace)
+    (let ((path faltoo-tree-path))
+      (copy-file path (format "%s.bak-%s" path (format-time-string "%Y%m%d-%H%M%S")) t)
+      (with-temp-buffer
+        (insert-file-contents path)
+        (goto-char (point-min))
+        (forward-line index)
+        (delete-region (point) (point-max))
+        (write-region nil nil path nil 'silent)))
+    (faltoo-tree-refresh-stream)
+    (when (fboundp 'faltoo-chat-refresh)
+      (faltoo-chat-refresh faltoo-tree-workspace)
+      (goto-char (point-max)))))
+
+(defun faltoo-tree--prune-messages-json ()
+  "Prune FaltooBot messages.json from the selected row onward."
   (faltoo-tree--load-messages)
   (let ((index (faltoo-tree--current-index)))
     (when (yes-or-no-p (format "Delete transcript items %s..end? " index))

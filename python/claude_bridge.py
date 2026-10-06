@@ -20,6 +20,7 @@ from faltoo_bridge import (
     _last_user_turns,
     _slash_command_payload,
     _stdin_payload,
+    _tree_one_line,
     _workspace,
     run_cli,
     unstaged_files,
@@ -421,6 +422,72 @@ def messages_path(workspace: Path) -> int:
     return 0
 
 
+def _tree_row(item: dict[str, Any], workspace: Path) -> dict[str, Any] | None:
+    """Return a record's inspector row in FaltooBot's row shape, or None for bookkeeping."""
+    attachment = item.get("attachment") or {}
+    if attachment.get("commandMode") == "prompt":
+        return {"role": "user", "message_type": "message", "kind": "steer",
+                "preview": _tree_one_line(attachment["prompt"])}
+    if item.get("type") not in {"user", "assistant"} or item.get("isSidechain") or item.get("isMeta"):
+        return None
+    content = item["message"]["content"]
+    first = next(iter(content), {}) if isinstance(content, list) else {}
+    if item["type"] == "user":
+        if (item.get("origin") or {}).get("kind") == "task-notification":
+            summary = re.search(r"<summary>(.*?)</summary>", _content_text(content), re.S)
+            return {"role": "user", "message_type": "message", "kind": "background",
+                    "preview": _tree_one_line(summary.group(1) if summary else BACKGROUND_NOTICE)}
+        if first.get("type") == "tool_result":
+            output = first.get("content") or ""
+            text = output if isinstance(output, str) else _content_text(output)
+            return {"role": "tool", "message_type": "function_call_output", "kind": "tool output",
+                    "preview": "output: " + _tree_one_line(text)}
+        return {"role": "user", "message_type": "message", "kind": "message",
+                "preview": _tree_one_line(_content_text(content))}
+    if first.get("type") == "thinking":
+        return {"role": "assistant", "message_type": "reasoning", "kind": "reasoning",
+                "preview": ("[reasoning] " + _tree_one_line(first.get("thinking") or "")).strip()}
+    if first.get("type") == "tool_use":
+        return {"role": "assistant", "message_type": "function_call", "kind": "tool call",
+                "preview": _tool_summary(first, workspace)}
+    return {"role": "assistant", "message_type": "message", "kind": "answer",
+            "preview": _tree_one_line(first.get("text") or "")}
+
+
+def tree_rows(workspace: Path) -> int:
+    """Stream one compact row per Claude record, indexed by its line in the session file."""
+    workspace = _workspace(workspace)
+    path = _session_path(workspace, _session_id(workspace))
+    _emit_payload({"type": "start", "path": str(path)})
+    rows: list[dict[str, Any]] = []
+    counted: set[str] = set()
+    count = 0
+    if path.exists():
+        with path.open(encoding="utf-8") as handle:
+            for count, line in enumerate(handle, 1):
+                item = json.loads(line)
+                row = _tree_row(item, workspace)
+                if row is None:
+                    continue
+                message = item.get("message") or {}
+                usage = message.get("usage")
+                # A response split over several records repeats its usage; count it once.
+                if usage and message.get("id") not in counted:
+                    counted.add(message.get("id"))
+                    cached = usage.get("cache_read_input_tokens", 0)
+                    prompt = usage.get("input_tokens", 0) + usage.get("cache_creation_input_tokens", 0) + cached
+                    output = usage.get("output_tokens", 0)
+                    row.update(input_tokens=prompt, output_tokens=output, cached_tokens=cached,
+                               total_tokens=prompt + output)
+                row["index"] = count - 1
+                row["preview"] = row["preview"][:200]
+                rows.append(row)
+    for start in range(0, len(rows), 100):
+        _emit_payload({"type": "rows", "rows": rows[start:start + 100]})
+    _emit_payload({"type": "done", "count": count})
+    return 0
+
+
 def _subagent_dir(workspace: Path) -> Path:
     return _session_path(workspace, _session_id(workspace)).with_suffix("") / "subagents"
 
@@ -595,6 +662,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
         args.workspace, str(_stdin_payload().get("session_id") or "")
     ),
     "status": lambda args: session_status(args.workspace),
+    "tree-rows": lambda args: tree_rows(args.workspace),
     "subagents": lambda args: subagents(args.workspace),
     "subagent-messages": lambda args: subagent_messages(args.workspace, str(_stdin_payload()["agent_id"])),
     # Claude always runs as a persistent daemon so background tasks survive turns.

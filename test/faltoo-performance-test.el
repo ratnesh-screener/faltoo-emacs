@@ -208,6 +208,38 @@
                (faltoo-tree-refresh)))))
       (delete-file messages-file))))
 
+(ert-deftest faltoo-performance-inspecting-a-large-claude-session-stays-interactive ()
+  "Scenario: Inspecting a row of a large Claude JSONL session loads it quickly."
+  (let ((path (make-temp-file "faltoo-claude-perf" nil ".jsonl"))
+        (output (make-string 4000 ?x)))
+    (unwind-protect
+        (progn
+          ;; Given a session of 1500 records, about 6 MB, like a long working day.
+          (with-temp-file path
+            (dotimes (index 1500)
+              (insert (json-serialize
+                       `((type . "user")
+                         (message . ((role . "user")
+                                     (content . [((type . "tool_result")
+                                                  (content . ,(format "%d %s" index output)))])))))
+                      "\n")))
+          ;; When inspecting its last row, which parses the full session once.
+          ;; Then it stays interactive.
+          (faltoo-perf--should-finish-under
+           0.75
+           (lambda ()
+             (with-temp-buffer
+               (faltoo-tree-mode)
+               (setq faltoo-tree-path path
+                     faltoo-tree-row-entries `((1499 . ((index . 1499) (role . "tool")))))
+               (faltoo-tree--stream-event '((type . "rows") (rows . (((index . 1499) (role . "tool"))))))
+               (goto-char (point-min))
+               (faltoo-tree-inspect)
+               (with-current-buffer "*Faltoo Tree Detail*"
+                 (should (string-match-p "^1499 xxx" (buffer-string)))
+                 (kill-buffer))))))
+      (delete-file path))))
+
 (ert-deftest faltoo-performance-routing-many-stream-chunks-stays-interactive ()
   "Scenario: Routing many stream chunks to popup and transcript stays interactive."
   (let ((popup (get-buffer-create "*Faltoo Perf Popup*")))
