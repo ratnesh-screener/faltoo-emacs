@@ -1070,27 +1070,69 @@ Task completed."
       (cl-letf (((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) nil)))
         (should-error (faltoo-subagent) :type 'user-error)))))
 
+(ert-deftest faltoo-popup-read-hands-trimmed-text-to-its-callback ()
+  "Scenario: The reusable input popup submits trimmed text, refuses empty text, and cancels."
+  (let (shown submitted closed)
+    (cl-letf (((symbol-function 'faltoo-popup-show) (lambda (buffer &rest _) (setq shown buffer)))
+              ((symbol-function 'faltoo-popup-close) (lambda () (setq closed t))))
+      ;; Given an input popup for a workspace.
+      (faltoo-popup-read "Steer" "/tmp/repo/" (lambda (text) (push text submitted)))
+      (with-current-buffer shown
+        (should (eq major-mode 'faltoo-input-mode))
+        (should (equal default-directory "/tmp/repo/"))
+        (should (string-match-p "# Steer" (buffer-string)))
+        (should (eq (keymap-lookup (current-local-map) "C-c C-c") #'faltoo-input-submit))
+        (should (eq (keymap-lookup (current-local-map) "C-c C-k") #'faltoo-popup-close))
+
+        ;; When submitting nothing, it is refused and stays open.
+        (should-error (faltoo-input-submit) :type 'user-error)
+        (should-not closed)
+
+        ;; When submitting text, the popup closes and the callback gets it trimmed.
+        (goto-char (point-max))
+        (insert "  use the helper \n")
+        (faltoo-input-submit))
+      (should closed)
+      (should (equal submitted '("use the helper")))
+
+      ;; Given a caller allows empty text, an empty submit still calls back.
+      (faltoo-popup-read "Compact" "/tmp/repo/" (lambda (text) (push text submitted)) t)
+      (with-current-buffer shown (faltoo-input-submit))
+      (should (equal submitted '("" "use the helper"))))))
+
 (ert-deftest faltoo-session-steer-writes-into-the-running-claude-answer ()
-  "Scenario: /steer sends text straight into the running Claude answer, not the queue."
+  "Scenario: /steer sends popup text straight into the running Claude answer."
   (should (assoc "/steer" (mapcar (lambda (cmd) (cons (alist-get 'command cmd) cmd))
                                   faltoo-session-commands)))
   (let ((faltoo-request-processes (make-hash-table :test #'equal))
-        sent)
+        sent queued)
     (cl-letf (((symbol-function 'faltoo-session-workspace) (lambda () "/repo/"))
               ((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
-              ((symbol-function 'read-string) (lambda (&rest _args) "use the helper"))
-              ((symbol-function 'faltoo-bridge-claude-send)
-               (lambda (&rest args) (setq sent args))))
+              ((symbol-function 'faltoo-popup-read)
+               (lambda (title workspace on-submit &rest _)
+                 (should (equal (list title workspace) '("Steer the running answer" "/repo/")))
+                 (funcall on-submit "use the helper")))
+              ((symbol-function 'faltoo-bridge-claude-send) (lambda (&rest args) (setq sent args)))
+              ((symbol-function 'faltoo-request-message)
+               (lambda (text &rest args) (setq queued (cons text args)))))
       ;; Given nothing is running, there is nothing to steer.
       (should-error (faltoo-session-steer) :type 'user-error)
       (should-not sent)
 
-      ;; When a Claude answer is running.
+      ;; When a Claude answer is running, the popup text is written as a steer.
       (puthash "/repo/" 'daemon faltoo-request-processes)
       (faltoo-session-steer)
+      (should (equal sent '("/repo/" "use the helper" "steer")))
 
-      ;; Then the text is written as a steer.
-      (should (equal sent '("/repo/" "use the helper" "steer"))))))
+      ;; When the answer finished while typing, the text becomes the next prompt.
+      (setq sent nil)
+      (cl-letf (((symbol-function 'faltoo-popup-read)
+                 (lambda (_title _workspace on-submit &rest _)
+                   (remhash "/repo/" faltoo-request-processes)
+                   (funcall on-submit "use the helper"))))
+        (faltoo-session-steer))
+      (should-not sent)
+      (should (equal queued '("use the helper" nil nil nil "/repo/"))))))
 
 (ert-deftest faltoo-session-btw-streams-a-side-answer-into-a-reusable-buffer ()
   "Scenario: /btw answers in its own buffer without taking focus; a new one replaces it."
@@ -1100,7 +1142,10 @@ Task completed."
         calls)
     (cl-letf (((symbol-function 'faltoo-session-workspace) (lambda () "/tmp/repo/"))
               ((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
-              ((symbol-function 'read-string) (lambda (&rest _args) (pop questions)))
+              ((symbol-function 'faltoo-popup-read)
+               (lambda (title _workspace on-submit &rest _)
+                 (should (equal title "Side question"))
+                 (funcall on-submit (pop questions))))
               ((symbol-function 'faltoo-bridge-btw)
                (lambda (workspace question on-event on-done)
                  (push (list workspace question on-event on-done) calls)

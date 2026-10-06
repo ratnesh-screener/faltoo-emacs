@@ -46,6 +46,7 @@ FaltooBot notification claim/ack/requeue remains in Python. Emacs queues formatt
 - Ask accepts only the current line or region, expanded to full lines. Include both endpoint lines even when point/mark is at the start of a line. Infer fenced-code language from the source mode. Review snippets prefix additions/deletions with `+`/`-`.
 - Ask and comments work in source, review, and transcript buffers. Transcript excerpts use `Your response`, not filename/range boilerplate.
 - Popups are centered, focusable, editable, padded, and bordered. Closing returns focus to the prior window. No plain `q` binding in editable buffers. Submission deactivates the source selection.
+- Short command inputs (`/steer`, `/btw`) use one shared input popup, `faltoo-popup-read`, instead of the minibuffer: it keeps the workspace, refuses empty text unless the caller allows it, and hands the trimmed text to a callback. A steer submitted after its answer finished goes in as the next prompt.
 - Ask always rebuilds context on invocation. Its answer streams in the popup and transcript. Follow-ups in that popup retain code context.
 - Last-response popups preserve follow-up drafts across close/reopen and send follow-ups as plain chat prompts.
 - Comments support line/range/file targets. Source and review buffers share workspace/canonical-path identity. Pending lines have overlays, not diagnostic/fringe markers.

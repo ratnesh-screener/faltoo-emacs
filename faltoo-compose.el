@@ -97,6 +97,47 @@
 
 (defvar faltoo-request-processes)
 
+(declare-function faltoo-request-message "faltoo-request")
+
+(defvar-local faltoo-input-text-marker nil)
+(defvar-local faltoo-input-on-submit nil)
+(defvar-local faltoo-input-allow-empty nil)
+
+(defvar faltoo-input-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map faltoo-popup-mode-map)
+    (define-key map (kbd "C-c C-c") #'faltoo-input-submit)
+    (define-key map (kbd "C-c C-f") #'faltoo-insert-file-reference)
+    map))
+
+(define-derived-mode faltoo-input-mode faltoo-popup-mode "Faltoo-Input"
+  "Editable popup that hands its text to a callback on submit.")
+
+(defun faltoo-popup-read (title workspace on-submit &optional allow-empty)
+  "Read text for WORKSPACE in a popup titled TITLE.
+\\[faltoo-input-submit] closes it and calls ON-SUBMIT with the trimmed text;
+empty text is refused unless ALLOW-EMPTY."
+  (let ((buf (faltoo-popup-buffer "*Faltoo Input*" #'faltoo-input-mode)))
+    (with-current-buffer buf
+      (setq default-directory workspace
+            faltoo-input-on-submit on-submit
+            faltoo-input-allow-empty allow-empty)
+      (faltoo-compose-insert-title title)
+      (faltoo-compose-insert-help "C-c C-c send · C-c C-k/C-g close · C-c C-f file")
+      (insert "\n")
+      (setq faltoo-input-text-marker (point-marker)))
+    (faltoo-popup-show buf 80 12)))
+
+(defun faltoo-input-submit ()
+  "Close the input popup and hand its text to its callback."
+  (interactive)
+  (let ((text (string-trim (buffer-substring-no-properties faltoo-input-text-marker (point-max))))
+        (on-submit faltoo-input-on-submit))
+    (when (and (string-empty-p text) (not faltoo-input-allow-empty))
+      (user-error "Nothing to send"))
+    (faltoo-popup-close)
+    (funcall on-submit text)))
+
 (defun faltoo-session-steer ()
   "Steer the running Claude answer; Claude takes the text at its next step."
   (interactive)
@@ -104,8 +145,15 @@
     (unless (and (faltoo-bridge-claude-p workspace)
                  (gethash workspace faltoo-request-processes))
       (user-error "No running Claude answer to steer"))
-    (faltoo-bridge-claude-send workspace (read-string "Steer: ") "steer")
-    (message "Steer sent; Claude takes it at its next step")))
+    (faltoo-popup-read
+     "Steer the running answer" workspace
+     (lambda (text)
+       (if (gethash workspace faltoo-request-processes)
+           (progn
+             (faltoo-bridge-claude-send workspace text "steer")
+             (message "Steer sent; Claude takes it at its next step"))
+         ;; The answer finished while typing; Claude would take it as the next prompt too.
+         (faltoo-request-message text nil nil nil workspace))))))
 
 (defvar-local faltoo-btw-question nil
   "Side question this buffer shows; streams for older ones are ignored.")
@@ -123,38 +171,42 @@ The answer streams into a reusable buffer shown without taking focus."
   (let ((workspace (faltoo-session-workspace)))
     (unless (faltoo-bridge-claude-p workspace)
       (user-error "Side questions need the Claude core"))
-    (let* ((question (read-string "Side question: "))
-           ;; A fresh string per ask identifies its stream even for equal text.
-           (token (copy-sequence question))
-           (buf (get-buffer-create
-                 (format "*Faltoo BTW: %s*" (file-name-nondirectory (directory-file-name workspace))))))
-      (with-current-buffer buf
-        (faltoo-btw-mode)
-        (setq default-directory workspace
-              faltoo-btw-question token)
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (insert "# Side question\n\n" question "\n\n---\n# Answer\n\n"))
-        (faltoo-popup-start-stream buf))
-      (faltoo-bridge-btw
-       workspace question
-       (lambda (event)
-         (when (and (buffer-live-p buf)
-                    (eq token (buffer-local-value 'faltoo-btw-question buf)))
-           (let ((text (or (alist-get 'text event) "")))
-             (pcase (or (alist-get 'classes event) (alist-get 'type event))
-               ("answer" (faltoo-popup-append-stream buf text))
-               ((or "tool" "status")
-                (faltoo-popup-append-stream-block buf (faltoo-compose-tool-summary text)
-                                                  'faltoo-chat-tool-face))
-               ("error"
-                (faltoo-popup-append-stream-block buf (format "Error: %s" (string-trim text))
-                                                  'faltoo-chat-error-face))))))
-       (lambda (ok)
-         (when (and (buffer-live-p buf)
-                    (eq token (buffer-local-value 'faltoo-btw-question buf)))
-           (message (if ok "Side question answered" "Side question failed")))))
-      (display-buffer buf))))
+    (faltoo-popup-read "Side question" workspace
+                       (lambda (question) (faltoo-session--btw-ask workspace question)))))
+
+(defun faltoo-session--btw-ask (workspace question)
+  "Stream the answer to side QUESTION for WORKSPACE into its reusable buffer."
+  (let* (;; A fresh string per ask identifies its stream even for equal text.
+         (token (copy-sequence question))
+         (buf (get-buffer-create
+               (format "*Faltoo BTW: %s*" (file-name-nondirectory (directory-file-name workspace))))))
+    (with-current-buffer buf
+      (faltoo-btw-mode)
+      (setq default-directory workspace
+            faltoo-btw-question token)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "# Side question\n\n" question "\n\n---\n# Answer\n\n"))
+      (faltoo-popup-start-stream buf))
+    (faltoo-bridge-btw
+     workspace question
+     (lambda (event)
+       (when (and (buffer-live-p buf)
+                  (eq token (buffer-local-value 'faltoo-btw-question buf)))
+         (let ((text (or (alist-get 'text event) "")))
+           (pcase (or (alist-get 'classes event) (alist-get 'type event))
+             ("answer" (faltoo-popup-append-stream buf text))
+             ((or "tool" "status")
+              (faltoo-popup-append-stream-block buf (faltoo-compose-tool-summary text)
+                                                'faltoo-chat-tool-face))
+             ("error"
+              (faltoo-popup-append-stream-block buf (format "Error: %s" (string-trim text))
+                                                'faltoo-chat-error-face))))))
+     (lambda (ok)
+       (when (and (buffer-live-p buf)
+                  (eq token (buffer-local-value 'faltoo-btw-question buf)))
+         (message (if ok "Side question answered" "Side question failed")))))
+    (display-buffer buf)))
 
 (defun faltoo-session-tree ()
   "Open the current Faltoo session transcript inspector."
