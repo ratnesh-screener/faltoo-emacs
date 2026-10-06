@@ -14,7 +14,7 @@ Use normal Emacs buffers, local modes, completion, overlays, and process filters
 - Generic chat is anchored at `faltoo-generic-chat-directory`, not the current source repo.
 - Transcripts and popups retain their workspace in `default-directory`. Running requests, queues, comments, and core overrides are scoped by workspace.
 - Resolve Python from the selected FaltooBot command's shebang. Run our bridge with that interpreter and import FaltooBot directly; do not scrape CLI/TUI output.
-- Release/local/custom core selection affects one workspace. Local status uses `Faltoo-beta`. Switching core clears capability caching and stops that workspace daemon; plugin reload does not.
+- Release/local/custom core selection affects one workspace. The global status names only the core (`FaltooBot`, local `beta`, or `Claude`); the transcript's mode name already says Faltoo. Switching core clears capability caching and stops that workspace daemon; plugin reload does not.
 - Websocket configuration selects a persistent bridge daemon per workspace. JSONL requests/events carry request IDs and terminal completion events. FaltooBot owns websocket and hook behavior through its public streaming entrypoint.
 - FaltooBot daemons poll notifications and expire after 30 idle minutes. Cancellation stops only the current workspace process. Other workspaces continue independently. `C-c f R` stops the current workspace's daemon so the next prompt starts one with fresh bridge code.
 - Other bridge calls use one-shot processes. Queue and notification support need only work with websocket-enabled workspaces.

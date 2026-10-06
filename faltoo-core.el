@@ -131,13 +131,14 @@ The result is (BEG END START-LINE END-LINE CODE)."
                (boundp 'faltoo-faltoobot-workspace-commands)
                (hash-table-p faltoo-faltoobot-workspace-commands))
       (setq command (or (gethash workspace faltoo-faltoobot-workspace-commands) command)))
+    ;; The transcript's mode name already says Faltoo; name only the core.
     (cond
-     ((eq command 'claude) "Faltoo-Claude")
+     ((eq command 'claude) "Claude")
      ((and command
            (boundp 'faltoo-local-faltoobot-command)
            (equal command faltoo-local-faltoobot-command))
-      "Faltoo-beta")
-     (t "Faltoo"))))
+      "beta")
+     (t "FaltooBot"))))
 
 (defun faltoo-status-string ()
   "Return a compact status string for mode-line use."

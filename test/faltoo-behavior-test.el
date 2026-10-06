@@ -293,30 +293,26 @@
        (with-current-buffer (find-file-noselect file-b)
          (should-not (string-match-p "answering" (faltoo-status-string))))))))
 
-(ert-deftest faltoo-status-label-shows-workspace-core ()
-  "Scenario: Mode-line label names the local or Claude core of the current chat."
-  (faltoo-test--with-two-temp-git-files
-   (lambda (file-a root-a file-b root-b)
+(ert-deftest faltoo-status-label-names-only-the-workspace-core ()
+  "Scenario: The global status names the core, not Faltoo; the transcript mode says Faltoo."
+  (faltoo-test--with-temp-git-file
+   '("one")
+   (lambda (file-a root-a)
      (let ((faltoo-submitting nil)
            (faltoo-submitting-workspaces (make-hash-table :test #'equal))
            (faltoo-faltoobot-command "faltoobot")
            (faltoo-local-faltoobot-command "/tmp/local-faltoochat")
-           (faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal)))
-       ;; Given repo A is answering with the local core and repo B uses Claude.
-       (puthash (file-name-as-directory (file-truename root-a))
-                "/tmp/local-faltoochat"
-                faltoo-faltoobot-workspace-commands)
-       (puthash (file-name-as-directory (file-truename root-b))
-                'claude
-                faltoo-faltoobot-workspace-commands)
+           (faltoo-faltoobot-workspace-commands (make-hash-table :test #'equal))
+           (workspace (file-name-as-directory (file-truename root-a))))
        (faltoo-set-workspace-submitting (file-truename root-a) t)
-       (faltoo-set-workspace-submitting (file-truename root-b) t)
-
-       ;; Then each workspace advertises its own core.
-       (with-current-buffer (find-file-noselect file-a)
-         (should (string-match-p "Faltoo-beta:answering" (faltoo-status-string))))
-       (with-current-buffer (find-file-noselect file-b)
-         (should (string-match-p "Faltoo-Claude:answering" (faltoo-status-string))))))))
+       (dolist (case '(("faltoobot" "\\` FaltooBot:answering\\'")
+                       ("/tmp/local-faltoochat" "\\` beta:answering\\'")
+                       (claude "\\` Claude:answering\\'")))
+         ;; Given the answering workspace uses this core.
+         (puthash workspace (car case) faltoo-faltoobot-workspace-commands)
+         ;; Then a source buffer's status names just that core.
+         (with-current-buffer (find-file-noselect file-a)
+           (should (string-match-p (cadr case) (faltoo-status-string)))))))))
 
 (ert-deftest faltoo-request-message-targets-current-buffer-workspace ()
   "Scenario: Sending from a source buffer targets that file's Git repo session."
