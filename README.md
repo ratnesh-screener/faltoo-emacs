@@ -52,13 +52,13 @@ Single keys in review:
 | Key | Action |
 |---|---|
 | `n` / `p` | Next/previous file |
-| `]` / `[` / `=` | Next/previous hunk / recenter hunk |
+| `]` / `[` / `=` | Next/previous change / recenter change |
 | `g` / `G` | Top/bottom |
 | `a` / `l` | Ask / last response |
 | `c` / `C` | Line/region comment / file comment |
 | `m` / `d` | Comment list / delete comment |
 | `N` / `P` | Next/previous comment |
-| `s` / `u` | Stage/unstage current or selected hunks |
+| `s` / `u` | Stage/unstage current change or selected lines |
 | `S` / `U` | Stage/unstage whole file |
 | `r` / `R` | Refresh current/all loaded review files |
 | `o` | Cycle full → removed → added → full; keep unchanged context |

@@ -10,7 +10,8 @@
 (require 'faltoo-comments)
 (require 'faltoo-ask)
 
-(declare-function magit-apply-hunks "magit-apply")
+(declare-function magit-apply-patch "magit-apply")
+(declare-function magit-apply--adjust-hunk-new-starts "magit-apply")
 (defvar magit-root-section)
 
 (defvar-local faltoo-review-source-file nil)
@@ -183,13 +184,14 @@ The unstaged pass maps worktree to index; the staged pass uses that same map."
                    (rows (with-current-buffer (marker-buffer (oref section start))
                            (split-string (buffer-substring-no-properties
                                           (oref section content) (oref section end)) "\n" t)))
-                   (first-change t))
+                   (row-start (oref section content))
+                   (block-start t))
         (dotimes (_ (- (if (zerop count) (1+ start) start) line))
           (push (pop positions) previous)
           (cl-incf line))
         (dolist (row rows)
           (pcase (aref row 0)
-            (?\s (push (pop positions) previous) (cl-incf line))
+            (?\s (push (pop positions) previous) (cl-incf line) (setq block-start t))
             ((or ?+ ?-)
              (goto-char (caar positions))
              ;; Keep a blue snapshot when a staged addition was later deleted.
@@ -212,14 +214,16 @@ The unstaged pass maps worktree to index; the staged pass uses that same map."
                    (overlay-put overlay 'invisible (eq type faltoo-review-hidden-type))
                    (overlay-put overlay 'priority -100)
                    (overlay-put overlay 'faltoo-review-diff t)
-                   (overlay-put overlay 'faltoo-review-hunk section))
-                 (when first-change
+                   (overlay-put overlay 'faltoo-review-hunk section)
+                   (overlay-put overlay 'faltoo-review-diff-row row-start))
+                 (when block-start
                    (push (copy-marker beg t) faltoo-review-hunk-positions)
-                   (setq first-change nil))
+                   (setq block-start nil))
                  (if (eq type 'delete)
                      (push (cons (copy-marker beg t) source-line) previous)
                    (pop positions)
-                   (cl-incf line)))))))))
+                   (cl-incf line))))))
+          (cl-incf row-start (1+ (length row))))))
     (nconc (nreverse previous) positions)))
 
 (defun faltoo-review--refresh-text-buffer ()
@@ -382,35 +386,58 @@ The unstaged pass maps worktree to index; the staged pass uses that same map."
   (force-mode-line-update t))
 
 (defun faltoo-review--apply-hunks (reverse)
-  "Apply the selected Magit sections, unstaging when REVERSE."
+  "Apply the change block at point or the selected rows, unstaging when REVERSE.
+Magit builds region patches from the full hunks, so context stays intact."
   (let* ((range (and (use-region-p) (faltoo-current-line-range)))
          (overlays (if range
                        (overlays-in (car range) (min (point-max) (1+ (cadr range))))
                      (overlays-at (point))))
-         (sections (delete-dups
-                    (cl-loop for overlay in overlays
-                             for section = (overlay-get overlay 'faltoo-review-hunk)
-                             when (and section
-                                       (magit-section-match
-                                        (if reverse [hunk file staged] [hunk file unstaged])
-                                        section))
-                             collect section))))
-    (unless sections (user-error "No %s hunk selected" (if reverse "staged" "unstaged")))
-    (setq sections (sort sections (lambda (a b) (< (oref a start) (oref b start)))))
+         (rows (cl-loop for overlay in overlays
+                        for section = (overlay-get overlay 'faltoo-review-hunk)
+                        when (and section
+                                  (magit-section-match
+                                   (if reverse [hunk file staged] [hunk file unstaged])
+                                   section))
+                        collect (cons section (overlay-get overlay 'faltoo-review-diff-row))))
+         (sections (sort (delete-dups (mapcar #'car rows))
+                         (lambda (a b) (< (oref a start) (oref b start)))))
+         (args (cons "--cached" (and reverse '("--reverse")))))
+    (unless sections (user-error "No %s change selected" (if reverse "staged" "unstaged")))
     (with-current-buffer faltoo-review-diff-buffer
-      (let ((this-command (if reverse 'magit-unstage 'magit-stage)))
-        (apply #'magit-apply-hunks sections "--cached" (and reverse '("--reverse")))))
+      (let ((this-command (if reverse 'magit-unstage 'magit-stage))
+            patches)
+        (dolist (section sections)
+          (let* ((starts (sort (cl-loop for (row-section . start) in rows
+                                        when (eq row-section section) collect start)
+                               #'<))
+                 (beg (car starts)))
+            ;; Without a region, widen to the whole contiguous change block.
+            (goto-char beg)
+            (unless range
+              (while (progn (forward-line -1) (looking-at-p "[-+\\]"))
+                (setq beg (point))))
+            (goto-char (car (last starts)))
+            (forward-line 1)
+            (while (looking-at-p (if range "\\\\" "[-+\\]"))
+              (forward-line 1))
+            (set-mark beg)
+            (goto-char (line-end-position 0))
+            (push (magit-diff-hunk-region-patch section args) patches)))
+        (magit-apply-patch (oref (car sections) parent) args
+                           (concat (magit-diff-file-header (car sections))
+                                   (string-join (magit-apply--adjust-hunk-new-starts
+                                                 (nreverse patches)))))))
     (faltoo-review-refresh-buffer)
     (faltoo-comments-refresh (faltoo-workspace))
     (deactivate-mark)))
 
 (defun faltoo-stage-current-hunk ()
-  "Stage the hunk at point or every hunk in the active region."
+  "Stage the change block at point or the rows in the active region."
   (interactive)
   (faltoo-review--apply-hunks nil))
 
 (defun faltoo-unstage-current-hunk ()
-  "Unstage the hunk at point or every hunk in the active region."
+  "Unstage the change block at point or the rows in the active region."
   (interactive)
   (faltoo-review--apply-hunks t))
 
