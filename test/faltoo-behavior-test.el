@@ -841,7 +841,7 @@ Task completed."))
                       faltoo-chat-prompt-marker nil
                       faltoo-chat-prompt-heading-marker nil)
                 (erase-buffer)))
-            (faltoo-chat-append-user-message notification root))
+            (faltoo-chat-append-message notification root))
           (with-current-buffer (faltoo-chat-buffer root)
             (should (string-prefix-p "# Background Update
 
@@ -2902,6 +2902,30 @@ removed")
       (funcall (car callbacks) `((classes . "answer") (text . ,text))))
     (funcall (cdr callbacks) t)))
 
+(ert-deftest faltoo-request-claude-status-lines-follow-the-last-answer-or-join-the-open-one ()
+  "Scenario: A model switch shows as a quoted line, never as a user turn."
+  (faltoo-test--claude-workspace
+   (lambda (workspace process _sent)
+     ;; Given an answered prompt.
+     (faltoo-request-message "question" nil nil nil workspace)
+     (faltoo-test--claude-event workspace process 'type "prompt" 'text "question")
+     (faltoo-test--claude-event workspace process 'type "turn" 'id "turn-1")
+     (faltoo-test--claude-turn process "turn-1" "the answer")
+
+     ;; When Claude reports a switch while idle, it follows the last answer.
+     (faltoo-test--claude-event workspace process 'type "status" 'text "Set model to `opus`")
+     (with-current-buffer (faltoo-test--chat-buffer-name)
+       (should (string-match-p "the answer\n\n> Assistant took[^\n]*\n\n> Set model to `opus`\n\\'"
+                               (buffer-string)))
+       (should (= (how-many "^# User" (point-min) (point-max)) 1)))
+
+     ;; When one arrives while an answer is open, it joins that answer.
+     (faltoo-request-message "next" nil nil nil workspace)
+     (faltoo-test--claude-event workspace process 'type "status" 'text "Set model to `sonnet`")
+     (with-current-buffer (faltoo-test--chat-buffer-name)
+       (should (string-match-p "next\n\n---\n# Assistant · answering\n\n> Set model to `sonnet`\n"
+                               (buffer-string)))))))
+
 (ert-deftest faltoo-request-claude-prompt-stays-visible-and-owns-its-echoed-turn ()
   "Scenario: A Claude prompt shows when sent, and the turn after its echo streams to its popup."
   (faltoo-test--claude-workspace
@@ -2945,6 +2969,52 @@ removed")
        (should (eq done t))
        (should (equal (funcall sent) '("question" "follow-up")))
        (kill-buffer popup)))))
+
+(ert-deftest faltoo-session-model-and-effort-pick-from-what-claude-offers ()
+  "Scenario: /model lists Claude's models and /effort the current model's levels, current marked."
+  (dolist (case '((faltoo-session-model "Sonnet 5.5" "set-model" "sonnet"
+                                        ("Opus 5.5" "Sonnet 5.5" "Haiku 4.5")
+                                        ("  current · Complex work" "  Everyday tasks" "  Quick answers"))
+                  (faltoo-session-effort "high" "set-effort" "high"
+                                         ("low" "medium" "high" "max")
+                                         ("" "  current" "" ""))))
+    (pcase-let ((`(,command ,pick ,request ,value ,labels ,annotations) case)
+                (requests nil) (shown nil))
+      (cl-letf (((symbol-function 'faltoo-session-workspace) (lambda () "/repo/"))
+                ((symbol-function 'faltoo-bridge-claude-p) (lambda (_workspace) t))
+                ;; Given Claude runs Opus 5.5 at medium effort.
+                ((symbol-function 'faltoo-bridge-claude-request)
+                 (lambda (workspace name &optional payload)
+                   (push (list workspace name payload) requests)
+                   '((models ((value . "opus") (resolvedModel . "claude-opus-5-5")
+                              (displayName . "Opus 5.5") (description . "Complex work")
+                              (supportedEffortLevels "low" "medium" "high" "max"))
+                             ((value . "sonnet") (resolvedModel . "claude-sonnet-5-5")
+                              (displayName . "Sonnet 5.5") (description . "Everyday tasks")
+                              (supportedEffortLevels "low" "high"))
+                             ((value . "haiku") (resolvedModel . "claude-haiku-4-5")
+                              (displayName . "Haiku 4.5") (description . "Quick answers")))
+                     (model . "claude-opus-5-5")
+                     (effort . "medium"))))
+                ((symbol-function 'completing-read)
+                 (lambda (_prompt collection &rest _args)
+                   (let ((annotate (completion-metadata-get
+                                    (completion-metadata "" collection nil)
+                                    'annotation-function))
+                         (all (all-completions "" collection)))
+                     (setq shown (list all (mapcar (lambda (label)
+                                                     (substring-no-properties
+                                                      (or (funcall annotate label) "")))
+                                                   all)))
+                     pick))))
+        ;; When picking from the command's list.
+        (funcall command))
+
+      ;; Then the list is Claude's, the current choice is marked, and the pick is sent.
+      (should (equal shown (list labels annotations)))
+      (should (equal (reverse requests)
+                     `(("/repo/" "models" nil)
+                       ("/repo/" ,request ((value . ,value)))))))))
 
 (ert-deftest faltoo-session-compact-sends-its-focus-as-a-request ()
   "Scenario: /compact asks for an optional focus and runs as a request in the transcript."

@@ -76,6 +76,8 @@
     ((command . "/steer") (preview . "nudge the running Claude answer"))
     ((command . "/btw") (preview . "ask Claude a side question, kept out of the session"))
     ((command . "/compact") (preview . "summarize the Claude conversation to free context"))
+    ((command . "/model") (preview . "switch the Claude model for this session"))
+    ((command . "/effort") (preview . "set Claude's reasoning effort for this session"))
     ((command . "/tree") (preview . "inspect current session messages")))
   "Built-in Faltoo session commands handled by Emacs.")
 
@@ -172,6 +174,57 @@ empty text is refused unless ALLOW-EMPTY."
        (faltoo-request-claude-submit
         workspace (list :text (string-trim (concat "/compact " focus)) :send focus) "compact"))
      t)))
+
+(defun faltoo-session--claude-models (workspace)
+  "Return Claude's models for WORKSPACE with the current model and effort."
+  (unless (faltoo-bridge-claude-p workspace)
+    (user-error "Models and effort need the Claude core"))
+  (faltoo-bridge-claude-request workspace "models"))
+
+(defun faltoo-session-model ()
+  "Switch the Claude model for this session; the current one is annotated."
+  (interactive)
+  (let* ((workspace (faltoo-session-workspace))
+         (reply (faltoo-session--claude-models workspace))
+         (models (mapcar (lambda (model) (cons (alist-get 'displayName model) model))
+                         (alist-get 'models reply)))
+         (choice (completing-read
+                  "Model: "
+                  (faltoo-session-completion-table
+                   (mapcar #'car models)
+                   (lambda (label)
+                     (let ((model (cdr (assoc label models))))
+                       (propertize (format "  %s%s"
+                                           (if (equal (alist-get 'resolvedModel model)
+                                                      (alist-get 'model reply))
+                                               "current · " "")
+                                           (alist-get 'description model))
+                                   'face 'completions-annotations))))
+                  nil t))
+         (value (alist-get 'value (cdr (assoc choice models)))))
+    (faltoo-bridge-claude-request workspace "set-model" `((value . ,value)))
+    (message "Claude model: %s" choice)))
+
+(defun faltoo-session-effort ()
+  "Set Claude's reasoning effort from the levels the current model supports."
+  (interactive)
+  (let* ((workspace (faltoo-session-workspace))
+         (reply (faltoo-session--claude-models workspace))
+         (model (cl-find (alist-get 'model reply) (alist-get 'models reply)
+                         :key (lambda (model) (alist-get 'resolvedModel model))
+                         :test #'equal))
+         (levels (or (alist-get 'supportedEffortLevels model)
+                     (user-error "%s has no effort levels" (alist-get 'model reply))))
+         (choice (completing-read
+                  "Effort: "
+                  (faltoo-session-completion-table
+                   levels
+                   (lambda (level)
+                     (when (equal level (alist-get 'effort reply))
+                       (propertize "  current" 'face 'completions-annotations))))
+                  nil t)))
+    (faltoo-bridge-claude-request workspace "set-effort" `((value . ,choice)))
+    (message "Claude effort: %s" choice)))
 
 (defvar-local faltoo-btw-question nil
   "Side question this buffer shows; streams for older ones are ignored.")
@@ -343,6 +396,8 @@ ANNOTATE, when non-nil, returns the annotation for a label."
       ("/steer" (faltoo-session-steer))
       ("/btw" (faltoo-session-btw))
       ("/compact" (faltoo-session-compact))
+      ("/model" (faltoo-session-model))
+      ("/effort" (faltoo-session-effort))
       ("/tree" (faltoo-session-tree)))))
 
 (defun faltoo-insert-file-reference ()

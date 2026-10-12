@@ -30,6 +30,8 @@ RATE_LIMIT_WINDOWS = {"five_hour": "5h", "seven_day": "7d"}
 # FaltooBot's prompt preview length.
 PREVIEW_LIMIT = 48
 BACKGROUND_NOTICE = "Claude continued in the background."
+# Claude echoes and stores the output of a session switch such as set_model as a user record.
+LOCAL_COMMAND_OUTPUT = re.compile(r"<local-command-stdout>(.*)</local-command-stdout>", re.S)
 # A fork otherwise takes the question as the next message and resumes unfinished
 # work, e.g. relaunching a lost sub-agent. In the message, so the cache still hits.
 BTW_FRAMING = (
@@ -60,6 +62,29 @@ def _set_session_id(workspace: Path, session_id: str) -> None:
     state[str(workspace)] = session_id
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _session_settings_path() -> Path:
+    return STATE_PATH.with_name("claude-session-settings.json")
+
+
+def _session_settings(session_id: str) -> dict[str, str]:
+    """Return the model and effort picked for SESSION_ID; resuming forgets the effort."""
+    try:
+        return json.loads(_session_settings_path().read_text(encoding="utf-8")).get(session_id, {})
+    except FileNotFoundError:
+        return {}
+
+
+def _set_session_setting(session_id: str, key: str, value: str) -> None:
+    path = _session_settings_path()
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        settings = {}
+    settings.setdefault(session_id, {})[key] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
 
 def _session_id(workspace: Path) -> str:
@@ -181,7 +206,10 @@ class ClaudeTurns:
             return
         elif kind == "user" and message.get("isReplay"):
             text = _content_text(message["message"]["content"]).strip()
-            if text.startswith("<task-notification>"):
+            if output := LOCAL_COMMAND_OUTPUT.fullmatch(text):
+                # Not a prompt; Emacs shows it in the open answer or after the last one.
+                _emit_payload({"type": "status", "text": output.group(1).strip()})
+            elif text.startswith("<task-notification>"):
                 # Claude folded a finished task into the running turn.
                 summary = re.search(r"<summary>(.*?)</summary>", text, re.S)
                 self.notice = summary.group(1) if summary else BACKGROUND_NOTICE
@@ -262,6 +290,7 @@ class ClaudeDaemon:
         self.idle_seconds = idle_seconds
         self.turns = ClaudeTurns(workspace, context_warnings)
         self.child: asyncio.subprocess.Process | None = None
+        self.controls: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.idle_timer: asyncio.TimerHandle | None = None
         self.main = asyncio.current_task()
 
@@ -276,6 +305,7 @@ class ClaudeDaemon:
         # Emacs restarts the daemon when the workspace switches sessions.
         session_id = _session_id(self.workspace)
         exists = _session_path(self.workspace, session_id).exists()
+        settings = _session_settings(session_id)
         self.child = child = await asyncio.create_subprocess_exec(
             self.claude,
             "-p",
@@ -286,6 +316,7 @@ class ClaudeDaemon:
             "--replay-user-messages",
             "--permission-mode", "bypassPermissions",
             "--resume" if exists else "--session-id", session_id,
+            *(arg for key in ("model", "effort") if key in settings for arg in (f"--{key}", settings[key])),
             cwd=self.workspace,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -297,7 +328,7 @@ class ClaudeDaemon:
     async def _read(self, child: asyncio.subprocess.Process, stderr: asyncio.Task[bytes]) -> None:
         try:
             while line := await child.stdout.readline():
-                self.turns.handle(json.loads(line))
+                self.handle(json.loads(line))
                 self.schedule_idle_stop()
         except Exception:
             # A dead reader would leave Emacs answering forever; exiting lets
@@ -311,6 +342,23 @@ class ClaudeDaemon:
         if child is self.child:
             print(error or f"Claude exited with code {child.returncode}", file=sys.stderr, flush=True)
             os._exit(1)
+
+    def handle(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "control_response":
+            response = message["response"]
+            if future := self.controls.pop(response.get("request_id"), None):
+                future.set_result(response)
+        else:
+            self.turns.handle(message)
+
+    async def _control(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Send a control REQUEST to Claude and return its response; Claude answers even mid-turn."""
+        if not self.child:
+            await self._start_child()
+        request_id = str(uuid4())
+        self.controls[request_id] = future = asyncio.get_running_loop().create_future()
+        self._write({"type": "control_request", "request_id": request_id, "request": request})
+        return await future
 
     async def stop_child(self) -> None:
         child, self.child = self.child, None
@@ -352,6 +400,35 @@ class ClaudeDaemon:
                 self._write(
                     {"type": "control_request", "request_id": str(uuid4()), "request": {"subtype": "interrupt"}}
                 )
+        elif command == "models":
+            models = (await self._control({"subtype": "list_models"}))["response"]["models"]
+            applied = (await self._control({"subtype": "get_settings"}))["response"]["applied"]
+            _emit_payload(
+                {
+                    "id": request_id,
+                    "type": "models",
+                    # Disabled models need a newer Claude Code.
+                    "models": [model for model in models if not model.get("disabled")],
+                    "model": applied["model"],
+                    "effort": applied.get("effort"),
+                }
+            )
+            _emit_payload({"id": request_id, "type": "complete", "ok": True})
+        elif command in {"set-model", "set-effort"}:
+            value = str(payload["value"])
+            key, control = (
+                ("model", {"subtype": "set_model", "model": value})
+                if command == "set-model"
+                else ("effort", {"subtype": "apply_flag_settings", "settings": {"effortLevel": value}})
+            )
+            response = await self._control(control)
+            ok = response.get("subtype") == "success"
+            if ok:
+                # Claude only switches the running child; restarts pass the choice as flags.
+                _set_session_setting(_session_id(self.workspace), key, value)
+            else:
+                emit("error", str(response.get("error")))
+            _emit_payload({"id": request_id, "type": "complete", "ok": ok})
         elif command == "ping":
             emit("status", "pong")
             _emit_payload({"id": request_id, "type": "complete", "ok": True})
@@ -451,6 +528,9 @@ def _history(path: Path, workspace: Path, sidechain: bool = False) -> list[dict[
             content = item["message"]["content"]
             if item["type"] == "user":
                 text = _content_text(content).strip()
+                if output := LOCAL_COMMAND_OUTPUT.fullmatch(text):
+                    messages.append({"role": "tool", "class": "tool", "text": output.group(1).strip()})
+                    continue
                 if (item.get("origin") or {}).get("kind") == "task-notification":
                     summary = re.search(r"<summary>(.*?)</summary>", text, re.S)
                     text = _background_text(summary.group(1) if summary else BACKGROUND_NOTICE)

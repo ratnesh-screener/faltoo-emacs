@@ -226,7 +226,7 @@ The next prompt starts a fresh daemon."
       (run-hook-with-args 'faltoo-bridge-queue-hook workspace (alist-get 'text event)))
      ((string= type "background-tasks")
       (process-put process 'faltoo-background-tasks (alist-get 'count event)))
-     ((member type '("submitted" "prompt" "notification" "turn"))
+     ((member type '("submitted" "prompt" "status" "notification" "turn"))
       (run-hook-with-args 'faltoo-bridge-claude-hook workspace process event))
      (t
       (let* ((request-id (alist-get 'id event))
@@ -331,6 +331,18 @@ Claude's echo and turns come back through `faltoo-bridge-claude-hook'."
                                (payload . ((text . ,text)))))
              "\n"))
     process))
+
+(defun faltoo-bridge-claude-request (workspace command &optional payload)
+  "Run COMMAND with PAYLOAD in WORKSPACE's Claude daemon; return its reply event.
+Waits for Claude, which answers within a second even mid-turn."
+  (let (reply done ok)
+    (faltoo-bridge--daemon-stream
+     (list command) (cons (cons 'workspace workspace) payload)
+     (lambda (event) (setq reply event))
+     (lambda (success) (setq done t ok success)))
+    (while (not done) (accept-process-output nil 0.05))
+    (unless ok (user-error "Claude: %s" (alist-get 'text reply)))
+    reply))
 
 (defun faltoo-bridge-btw (workspace question on-event on-done)
   "Stream the answer to side QUESTION from an unsaved fork of WORKSPACE's session."

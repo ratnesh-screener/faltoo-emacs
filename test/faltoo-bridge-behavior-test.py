@@ -858,6 +858,21 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
         self.assertEqual(written, [{"type": "user", "message": {"role": "user", "content": "Hi"}}])
         self.assertEqual(emitted, [{"type": "submitted"}])
 
+    def test_local_command_output_is_a_status_line_not_a_prompt(self):
+        """Scenario: Output Claude echoes for a model switch is a status line, idle or mid-turn."""
+        bridge = load_claude_bridge()
+        output = replay("<local-command-stdout>Set model to `opus (claude-opus-5-5)`</local-command-stdout>")
+        for messages in ([output], [replay("Go"), text_delta("Working"), output, RESULT_OK]):
+            with self.subTest(mid_turn=len(messages) > 1):
+                emitted = []
+                bridge._emit_payload = emitted.append
+                turns = bridge.ClaudeTurns(Path("/repo"))
+                for message in messages:
+                    turns.handle(message)
+
+                self.assertIn({"type": "status", "text": "Set model to `opus (claude-opus-5-5)`"}, emitted)
+                self.assertEqual(sum(event.get("type") == "prompt" for event in emitted), len(messages) > 1)
+
     def test_steer_shows_inline_where_claude_takes_it(self):
         """Scenario: A steer Claude takes mid-turn is a line in that answer, not a new turn."""
         bridge = load_claude_bridge()
@@ -1027,6 +1042,73 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
         self.assertEqual(written, ["/compact keep the bridge", "/compact"])
         self.assertEqual(emitted, [{"type": "submitted"}, {"type": "submitted"}])
 
+    def test_model_and_effort_switch_live_and_survive_a_restart(self):
+        """Scenario: /model and /effort go to the running Claude and its next restart."""
+        models = [
+            {"value": "opus", "resolvedModel": "claude-opus-5-5", "supportedEffortLevels": ["low", "max"]},
+            {"value": "claude-haiku-5-5", "resolvedModel": "claude-haiku-5-5", "disabled": True},
+        ]
+        replies = {
+            "list_models": {"subtype": "success", "response": {"models": models}},
+            "get_settings": {"subtype": "success", "response": {"applied": {"model": "claude-opus-5-5", "effort": "low"}}},
+            "set_model": {"subtype": "success", "response": {}},
+            "apply_flag_settings": {"subtype": "success", "response": {}},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge, workspace = self.claude_home(tmpdir)
+            bridge._set_session_id(workspace, "s1")
+            emitted, written, started = [], [], []
+            bridge._emit_payload = emitted.append
+
+            async def exec_child(*args, **_kwargs):
+                started.append(args)
+                return types.SimpleNamespace(stderr=types.SimpleNamespace(read=lambda: asyncio.sleep(0, b"")))
+
+            bridge.asyncio.create_subprocess_exec = exec_child
+
+            async def run():
+                daemon = bridge.ClaudeDaemon(workspace, "claude", 60)
+
+                async def no_reader(*_args):
+                    pass
+
+                daemon._read = no_reader
+
+                def write(data):
+                    request = json.loads(data)
+                    written.append(request["request"])
+                    reply = {"request_id": request["request_id"], **replies[request["request"]["subtype"]]}
+                    asyncio.get_running_loop().call_soon(
+                        daemon.handle, {"type": "control_response", "response": reply}
+                    )
+
+                daemon.child = types.SimpleNamespace(stdin=types.SimpleNamespace(write=write))
+                await daemon.request({"id": "1", "command": "models", "payload": {}})
+                await daemon.request({"id": "2", "command": "set-model", "payload": {"value": "opus"}})
+                await daemon.request({"id": "3", "command": "set-effort", "payload": {"value": "max"}})
+                # A restart, e.g. after idle expiry, keeps the session's choices.
+                daemon.child = None
+                await daemon._start_child()
+                daemon.idle_timer.cancel()
+
+            asyncio.run(run())
+
+        self.assertEqual(
+            written,
+            [{"subtype": "list_models"}, {"subtype": "get_settings"},
+             {"subtype": "set_model", "model": "opus"},
+             {"subtype": "apply_flag_settings", "settings": {"effortLevel": "max"}}],
+        )
+        # Models Claude Code can't use yet are left out.
+        self.assertEqual(
+            emitted,
+            [{"id": "1", "type": "models", "models": models[:1], "model": "claude-opus-5-5", "effort": "low"},
+             {"id": "1", "type": "complete", "ok": True},
+             {"id": "2", "type": "complete", "ok": True},
+             {"id": "3", "type": "complete", "ok": True}],
+        )
+        self.assertEqual(started[0][-4:], ("--model", "opus", "--effort", "max"))
+
     def test_failed_claude_turns_report_cancel_or_error(self):
         """Scenario: Interrupted turns read as cancelled; other failures show their error."""
         bridge = load_claude_bridge()
@@ -1111,6 +1193,7 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
             {"type": "user", "isCompactSummary": True, "message": {"content": "This session is being continued..."}},
             {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "sub"}]}},
             {"type": "assistant", "message": {"content": [{"type": "text", "text": "Fixed.\n"}]}},
+            {"type": "user", "message": {"content": "<local-command-stdout>Set model to `opus (claude-opus-5-5)`</local-command-stdout>"}},
             {"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}},
             {"type": "user", "origin": {"kind": "task-notification"}, "message": {
                 "content": "<task-notification>\n<summary>Task done</summary>\n</task-notification>"}},
@@ -1130,6 +1213,7 @@ class ClaudeBridgeBehaviorTest(unittest.TestCase):
                 ("tool", "Steer: skip the tests"),
                 ("tool", "Conversation compacted: 18,862 → 1,737 tokens"),
                 ("assistant", "Fixed."),
+                ("tool", "Set model to `opus (claude-opus-5-5)`"),
                 ("user", "# Background update\n\nsource: Claude Code\n\n## message\nTask done"),
             ],
         )

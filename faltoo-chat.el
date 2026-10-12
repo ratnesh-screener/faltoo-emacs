@@ -406,15 +406,16 @@ On a transcript `Agent:' line, open that sub-agent directly."
           (setq faltoo-chat-prompt-marker nil
                 faltoo-chat-prompt-heading-marker nil))))))
 
-(defun faltoo-chat-append-user-message (text &optional workspace)
-  "Append TEXT as a user turn in the workspace transcript."
+(defun faltoo-chat-append-message (text &optional workspace role)
+  "Append TEXT as a ROLE message to the workspace transcript.
+ROLE defaults to a user turn; a tool ROLE quotes TEXT after the last answer."
   (with-current-buffer (faltoo-chat-buffer workspace)
     (when (and (markerp faltoo-chat-prompt-marker)
                (string-empty-p (faltoo-chat--prompt-text)))
       (faltoo-chat-clear-user-prompt workspace))
     (let ((inhibit-read-only t))
       (goto-char (point-max))
-      (faltoo-chat--insert-message `((role . "user") (text . ,text))))))
+      (faltoo-chat--insert-message `((role . ,(or role "user")) (text . ,text))))))
 
 (defun faltoo-chat-send ()
   "Send the current workspace transcript prompt."

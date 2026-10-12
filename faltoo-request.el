@@ -261,7 +261,7 @@ START is called with the event and completion callbacks."
       (let ((text (plist-get entry :text)))
         (if (faltoo-bridge-claude-p workspace)
             (faltoo-request-claude-submit workspace entry)
-          (faltoo-chat-append-user-message text workspace)
+          (faltoo-chat-append-message text workspace)
           (faltoo-request-stream
            (list "append-message")
            (list (cons 'workspace workspace) (cons 'text text))
@@ -273,7 +273,7 @@ START is called with the event and completion callbacks."
 COMMAND defaults to a prompt; ENTRY's :send, when present, is sent instead
 of its text. The section opens now; the turn after Claude echoes it streams
 into it."
-  (faltoo-chat-append-user-message (plist-get entry :text) workspace)
+  (faltoo-chat-append-message (plist-get entry :text) workspace)
   (faltoo-request--stream
    workspace "Submitting queued message..."
    (plist-get entry :popup-buffer) nil (plist-get entry :on-done)
@@ -303,11 +303,15 @@ without a prompt echo was started by Claude and follows its notification."
       ("prompt"
        (if entry
            (puthash workspace (plist-put entry :echoed t) faltoo-request-claude-prompts)
-         (faltoo-chat-append-user-message (alist-get 'text event) workspace)))
+         (faltoo-chat-append-message (alist-get 'text event) workspace)))
+      ("status"
+       (if (faltoo-workspace-submitting-p workspace)
+           (faltoo-request--route-event `((classes . "status") ,(assq 'text event)) workspace nil nil)
+         (faltoo-chat-append-message (alist-get 'text event) workspace "tool")))
       ("notification"
        ;; A sent prompt's section is already open; its heading would split it.
        (unless (faltoo-workspace-submitting-p workspace)
-         (faltoo-chat-append-user-message (alist-get 'text event) workspace)))
+         (faltoo-chat-append-message (alist-get 'text event) workspace)))
       ("turn"
        (let ((id (alist-get 'id event))
              (callbacks (plist-get entry :callbacks)))
